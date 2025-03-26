@@ -172,9 +172,33 @@ def test_connection(connection_id: int, db: Session = Depends(get_db)):
         return ConnectionTestResponse(success=False, message=str(e))
 
 
+@router.get("/connections/{connection_id}/schemas", response_model=List[str])
+def get_schemas(connection_id: int, db: Session = Depends(get_db)):
+    """Get all schemas for a database connection."""
+    db_service = DatabaseService(db)
+    
+    # Check if connection exists
+    existing_connection = db_service.get_connection(connection_id)
+    if not existing_connection:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Connection with ID {connection_id} not found"
+        )
+    
+    # Get schemas
+    try:
+        schemas = db_service.get_schemas(connection_id)
+        return schemas
+    except Exception as e:
+        logger.error(f"Error getting schemas: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting schemas: {str(e)}"
+        )
+
 @router.get("/connections/{connection_id}/tables", response_model=List[str])
-def get_tables(connection_id: int, db: Session = Depends(get_db)):
-    """Get all tables for a database connection."""
+def get_tables(connection_id: int, schema: Optional[str] = None, db: Session = Depends(get_db)):
+    """Get all tables for a database connection. Optionally specify a schema."""
     db_service = DatabaseService(db)
     
     # Check if connection exists
@@ -187,7 +211,7 @@ def get_tables(connection_id: int, db: Session = Depends(get_db)):
     
     # Get tables
     try:
-        tables = db_service.get_tables(connection_id)
+        tables = db_service.get_tables(connection_id, schema=schema)
         return tables
     except Exception as e:
         logger.error(f"Error getting tables: {str(e)}")

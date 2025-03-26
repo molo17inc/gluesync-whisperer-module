@@ -51,8 +51,8 @@ deploy:
         VERSION="latest"
       fi
       
-      APP_NAME=${APP_NAME:-"database-automator"}
-      DOCKER_REGISTRY=${DOCKER_REGISTRY:-"registry.gitlab.com/molo17srl/automator"}
+      APP_NAME=${APP_NAME:-"database-whisperer"}
+      DOCKER_REGISTRY=${DOCKER_REGISTRY:-"registry.gitlab.com/molo17srl/whisperer"}
       
       DEFAULT_TAG="${DOCKER_REGISTRY}/${APP_NAME}:${VERSION}"
       LATEST_TAG="${DOCKER_REGISTRY}/${APP_NAME}:latest"

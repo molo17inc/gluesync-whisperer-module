@@ -37,7 +37,7 @@ from schemas import (
     TableListResponse,
     TableSchemaResponse
 )
-from services.automator_service import AutomatorService
+from services.whisperer_service import WhispererService
 from services.connection_service import ConnectionService
 
 # Setup logger
@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/automation", tags=["automation"])
 
 # Store active automation tasks
-active_automations: Dict[str, AutomatorService] = {}
+active_automations: Dict[str, WhispererService] = {}
 
 @router.post("/connections/test", response_model=ConnectionTestResponse)
 async def test_connection(
@@ -66,9 +66,9 @@ async def test_connection(
     
     from services.database_service import DatabaseService
     db_service = DatabaseService(db)
-    automator = AutomatorService(db=db)
+    whisperer = WhispererService(db=db)
     
-    success, message = await automator.test_connection()
+    success, message = await whisperer.test_connection()
     return ConnectionTestResponse(success=success, message=message)
 
 
@@ -89,9 +89,9 @@ async def list_tables(
     
     from services.database_service import DatabaseService
     db_service = DatabaseService(db)
-    automator = AutomatorService(db=db)
+    whisperer = WhispererService(db=db)
     
-    tables = await automator.list_tables(connection_id=connection_id)
+    tables = await whisperer.list_tables(connection_id=connection_id)
     return TableListResponse(tables=tables)
 
 
@@ -113,9 +113,9 @@ async def get_table_schema(
     
     from services.database_service import DatabaseService
     db_service = DatabaseService(db)
-    automator = AutomatorService(db=db)
+    whisperer = WhispererService(db=db)
     
-    schema = await automator.get_table_schema(table_name)
+    schema = await whisperer.get_table_schema(table_name)
     if not schema:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -151,8 +151,8 @@ async def start_automation(
         status=ConnectionStatus.BUSY
     )
     
-    # Initialize automator service
-    automator = AutomatorService(
+    # Initialize whisperer service
+    whisperer = WhispererService(
         db_type=connection.db_type,
         host=connection.host,
         port=connection.port,
@@ -173,9 +173,9 @@ async def start_automation(
             await stop_automation_task(automation_id)
         
         # Start new automation
-        active_automations[automation_id] = automator
+        active_automations[automation_id] = whisperer
         background_tasks.add_task(
-            automator.run_automation,
+            whisperer.run_automation,
             table_name=table_name,
             on_complete=lambda: automation_complete(automation_id, connection.id)
         )
@@ -237,17 +237,17 @@ async def get_automation_status():
     """Get status of all running automations"""
     automations = []
     
-    for automation_id, automator in active_automations.items():
+    for automation_id, whisperer in active_automations.items():
         connection_id, table_name = automation_id.split("_", 1)
-        stats = automator.get_stats(table_name)
+        stats = whisperer.get_stats(table_name)
         
         automations.append({
             "automation_id": automation_id,
             "connection_id": int(connection_id),
             "table_name": table_name,
-            "operation_type": automator.operation_type.value,
-            "operation_delay": automator.operation_delay,
-            "batch_size": automator.batch_size,
+            "operation_type": whisperer.operation_type.value,
+            "operation_delay": whisperer.operation_delay,
+            "batch_size": whisperer.batch_size,
             "stats": stats
         })
     
@@ -257,8 +257,8 @@ async def get_automation_status():
 async def stop_automation_task(automation_id: str):
     """Helper function to stop an automation task"""
     if automation_id in active_automations:
-        automator = active_automations[automation_id]
-        await automator.stop_automation()
+        whisperer = active_automations[automation_id]
+        await whisperer.stop_automation()
         del active_automations[automation_id]
 
 

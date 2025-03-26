@@ -39,11 +39,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-class TableAutomator:
+class TableWhisperer:
     """Class to automate random operations on database tables."""
     
     def __init__(self, connector, table_name, delay=1.0, operations=None):
-        """Initialize the automator with a database connector and table name."""
+        """Initialize the whisperer with a database connector and table name."""
         self.connector = connector
         self.table_name = table_name
         self.delay = delay
@@ -67,15 +67,15 @@ class TableAutomator:
         self.column_patterns = {}
     
     def initialize(self):
-        """Initialize the automator by getting the table schema."""
+        """Initialize the whisperer by getting the table schema."""
         try:
             self.schema = self.connector.get_table_schema(self.table_name)
-            logger.info(f"Initialized automator for table {self.table_name}")
+            logger.info(f"Initialized whisperer for table {self.table_name}")
             # Now that we have schema information, introspect the table
             self.introspect_table()
             return True
         except Exception as e:
-            logger.error(f"Error initializing automator: {str(e)}")
+            logger.error(f"Error initializing whisperer: {str(e)}")
             return False
     
     def introspect_table(self):
@@ -636,7 +636,7 @@ class TableAutomator:
             return False
     
     def run(self):
-        """Run the automator continuously."""
+        """Run the whisperer continuously."""
         self.running = True
         
         try:
@@ -653,10 +653,10 @@ class TableAutomator:
                     logger.info(f"Operation counts: {self.operation_count}")
         
         except KeyboardInterrupt:
-            logger.info("Automator stopped by user")
+            logger.info("Whisperer stopped by user")
             self.running = False
         except Exception as e:
-            logger.error(f"Error in automator: {str(e)}")
+            logger.error(f"Error in whisperer: {str(e)}")
             traceback.print_exc()
             self.running = False
         finally:
@@ -694,23 +694,23 @@ def main():
             logger.error("Failed to connect to database")
             sys.exit(1)
         
-        # Create automator
-        automator = TableAutomator(
+        # Create whisperer
+        whisperer = TableWhisperer(
             connector=connector,
             table_name=args.table,
             delay=args.delay,
             operations=args.operations
         )
         
-        # Initialize automator
-        if not automator.initialize():
-            logger.error("Failed to initialize automator")
+        # Initialize whisperer
+        if not whisperer.initialize():
+            logger.error("Failed to initialize whisperer")
             sys.exit(1)
         
-        # Run automator
-        logger.info(f"Starting automator for table {args.table} with delay {args.delay}s")
+        # Run whisperer
+        logger.info(f"Starting whisperer for table {args.table} with delay {args.delay}s")
         logger.info(f"Operations to perform: {args.operations}")
-        automator.run()
+        whisperer.run()
     
     finally:
         # Disconnect

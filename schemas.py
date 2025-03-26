@@ -147,7 +147,7 @@ class TableSchemaResponse(BaseModel):
 
 class TableOperationRequest(BaseModel):
     connection_id: int
-    table_names: List[str]
+    table_ids: List[int]
     operation_type: OperationType = OperationType.ALL
     operation_delay: float = 1.0
     batch_size: int = 1

@@ -70,8 +70,8 @@ def discover_gluesync_test_databases(gluesync_test_suite_path):
     
     return databases
 
-def register_databases_with_automator(host, port, databases):
-    """Register discovered databases with the automator service."""
+def register_databases_with_whisperer(host, port, databases):
+    """Register discovered databases with the whisperer service."""
     base_url = f"http://{host}:{port}/api"
     
     for db_info in databases:
@@ -107,7 +107,7 @@ def register_databases_with_automator(host, port, databases):
             
             # Construct a connection based on common defaults
             connection_data = {
-                "name": f"GlueSync-{dir_name}",
+                "name": f"Gluesync-{dir_name}",
                 "description": f"Auto-discovered from gluesync-test-suite: {dir_name}",
                 "db_type": db_type,
                 "host": "localhost",
@@ -125,7 +125,7 @@ def register_databases_with_automator(host, port, databases):
                 connection_data["username"] = None
                 connection_data["password"] = None
             
-            # Register with automator
+            # Register with whisperer
             logger.info(f"Registering database: {connection_data['name']}")
             response = requests.post(f"{base_url}/connections", json=connection_data)
             if response.status_code == 201:
@@ -176,8 +176,8 @@ def register_databases_with_automator(host, port, databases):
 def main():
     parser = argparse.ArgumentParser(description="Discover and connect to databases in gluesync-test-suite")
     parser.add_argument("--gluesync-path", required=True, help="Path to gluesync-test-suite repository")
-    parser.add_argument("--automator-host", default="localhost", help="Automator API host")
-    parser.add_argument("--automator-port", default=8000, type=int, help="Automator API port")
+    parser.add_argument("--whisperer-host", default="localhost", help="Whisperer API host")
+    parser.add_argument("--whisperer-port", default=8000, type=int, help="Whisperer API port")
     
     args = parser.parse_args()
     
@@ -191,10 +191,10 @@ def main():
     databases = discover_gluesync_test_databases(args.gluesync_path)
     logger.info(f"Found {len(databases)} potential database configurations")
     
-    # Register with automator
+    # Register with whisperer
     if databases:
-        logger.info(f"Registering databases with automator at {args.automator_host}:{args.automator_port}...")
-        register_databases_with_automator(args.automator_host, args.automator_port, databases)
+        logger.info(f"Registering databases with whisperer at {args.whisperer_host}:{args.whisperer_port}...")
+        register_databases_with_whisperer(args.whisperer_host, args.whisperer_port, databases)
 
 if __name__ == "__main__":
     main()

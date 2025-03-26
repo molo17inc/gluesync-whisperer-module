@@ -102,7 +102,7 @@ def create_table_config(table: TableConfigCreate, db: Session = Depends(get_db))
         )
 
 
-@router.get("/connections/{connection_id}/tables", response_model=List[TableConfigResponse])
+@router.get("/connections/{connection_id}/table-configs", response_model=List[TableConfigResponse])
 def get_tables_for_connection(
     connection_id: int, 
     skip: int = 0, 
@@ -197,6 +197,56 @@ def delete_table(table_id: int, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error deleting table configuration: {str(e)}"
+        )
+
+
+@router.get("/connections/{connection_id}/schemas", response_model=List[str])
+def get_schemas(connection_id: int, db: Session = Depends(get_db)):
+    """Get all schemas for a database connection."""
+    db_service = DatabaseService(db)
+    
+    # Check if connection exists
+    connection = db_service.get_connection(connection_id)
+    if not connection:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Connection with ID {connection_id} not found"
+        )
+    
+    # Get schemas
+    try:
+        schemas = db_service.get_schemas(connection_id)
+        return schemas
+    except Exception as e:
+        logger.error(f"Error getting schemas: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting schemas: {str(e)}"
+        )
+
+
+@router.get("/connections/{connection_id}/tables", response_model=List[str])
+def get_database_tables(connection_id: int, schema: str = None, db: Session = Depends(get_db)):
+    """Get all tables from the database for a connection. Optionally specify a schema."""
+    db_service = DatabaseService(db)
+    
+    # Check if connection exists
+    connection = db_service.get_connection(connection_id)
+    if not connection:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Connection with ID {connection_id} not found"
+        )
+    
+    # Get tables
+    try:
+        tables = db_service.get_tables(connection_id, schema=schema)
+        return tables
+    except Exception as e:
+        logger.error(f"Error getting database tables: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting database tables: {str(e)}"
         )
 
 

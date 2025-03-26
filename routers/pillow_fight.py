@@ -45,7 +45,7 @@ active_pillow_fights: Dict[str, PillowFightService] = {}
 # Schema for pillow fight response
 class PillowFightResponse(BaseModel):
     connection_id: int
-    tables: List[str]
+    table_ids: List[int]
     operation_types: List[str]
     operation_delay: float
     batch_size: int
@@ -56,7 +56,8 @@ class PillowFightResponse(BaseModel):
 class PillowFightStatusItem(BaseModel):
     fight_id: str
     connection_id: int
-    table_name: str
+    table_id: int
+    table_name: str  # Keep table_name for display purposes
     operation_types: List[str]
     operation_delay: float
     batch_size: int
@@ -77,6 +78,7 @@ async def start_pillow_fight(
 ):
     """Start a pillow fight (automated operations) on tables."""
     connection_service = ConnectionService(db)
+    table_service = TableService(db)
     connection = connection_service.get_connection(request.connection_id)
     
     if not connection:
@@ -117,8 +119,21 @@ async def start_pillow_fight(
     
     # Register the pillow fight
     fight_ids = []
-    for table_name in request.table_names:
-        fight_id = f"{connection.id}_{table_name}"
+    table_ids_found = []
+    
+    for table_id in request.table_ids:
+        # Get table config from database
+        table_config = table_service.get_table(table_id)
+        if not table_config:
+            logger.warning(f"Table with ID {table_id} not found, skipping")
+            continue
+            
+        if table_config.connection_id != connection.id:
+            logger.warning(f"Table with ID {table_id} does not belong to connection {connection.id}, skipping")
+            continue
+            
+        table_name = table_config.table_name
+        fight_id = f"{connection.id}_{table_id}"
         
         # Stop existing pillow fight if running
         if fight_id in active_pillow_fights:
@@ -135,33 +150,51 @@ async def start_pillow_fight(
         )
         
         fight_ids.append(fight_id)
+        table_ids_found.append(table_id)
+    
+    if not table_ids_found:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No valid tables found for the provided table IDs"
+        )
     
     return PillowFightResponse(
         connection_id=connection.id,
-        tables=request.table_names,
+        table_ids=table_ids_found,
         operation_types=operations,
         operation_delay=request.operation_delay,
         batch_size=request.batch_size,
         fight_ids=fight_ids,
-        message=f"Started pillow fight for {len(request.table_names)} tables"
+        message=f"Started pillow fight for {len(table_ids_found)} tables"
     )
 
 
-@router.post("/stop/{connection_id}/{table_name}", status_code=status.HTTP_200_OK)
+@router.post("/stop/{connection_id}/{table_id}", status_code=status.HTTP_200_OK)
 async def stop_pillow_fight(
     connection_id: int,
-    table_name: str,
+    table_id: int,
     db: Session = Depends(get_db)
 ):
     """Stop a pillow fight for a specific table."""
-    fight_id = f"{connection_id}_{table_name}"
+    fight_id = f"{connection_id}_{table_id}"
     
     if fight_id not in active_pillow_fights:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No active pillow fight found for table {table_name}"
+            detail=f"No active pillow fight found for table ID {table_id}"
         )
     
+    # Get table name for the table ID
+    table_service = TableService(db)
+    table_config = table_service.get_table(table_id)
+    
+    if not table_config:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Table with ID {table_id} not found"
+        )
+        
+    table_name = table_config.table_name
     pillow_fight = active_pillow_fights[fight_id]
     await pillow_fight.stop_pillow_fight(table_name)
     
@@ -183,14 +216,28 @@ async def stop_pillow_fight(
 async def stop_all_pillow_fights(db: Session = Depends(get_db)):
     """Stop all running pillow fights."""
     connection_ids = set()
+    table_service = TableService(db)
     
     # Stop all pillow fights
     for fight_id in list(active_pillow_fights.keys()):
-        connection_id, table_name = fight_id.split("_", 1)
+        connection_id, table_id_str = fight_id.split("_", 1)
         connection_ids.add(int(connection_id))
         
-        pillow_fight = active_pillow_fights[fight_id]
-        await pillow_fight.stop_pillow_fight(table_name)
+        try:
+            # Convert table_id from string to int
+            table_id = int(table_id_str)
+            
+            # Look up the table info from the database
+            table_config = table_service.get_table(table_id)
+            if not table_config:
+                logger.warning(f"Table with ID {table_id} not found when stopping all pillow fights")
+                continue
+                
+            table_name = table_config.table_name
+            pillow_fight = active_pillow_fights[fight_id]
+            await pillow_fight.stop_pillow_fight(table_name)
+        except Exception as e:
+            logger.error(f"Error stopping pillow fight {fight_id}: {str(e)}")
     
     # Update all connections to CONNECTED
     connection_service = ConnectionService(db)
@@ -204,30 +251,46 @@ async def stop_all_pillow_fights(db: Session = Depends(get_db)):
 
 
 @router.get("/status", response_model=PillowFightStatusResponse, status_code=status.HTTP_200_OK)
-async def get_pillow_fight_status():
+async def get_pillow_fight_status(db: Session = Depends(get_db)):
     """Get status of all running pillow fights."""
     status_items = []
+    table_service = TableService(db)
     
     for fight_id, pillow_fight in active_pillow_fights.items():
-        connection_id, table_name = fight_id.split("_", 1)
-        stats = pillow_fight.get_stats(table_name)
+        connection_id, table_id_str = fight_id.split("_", 1)
         
-        start_time = stats.get("start_time")
-        last_operation_time = stats.get("last_operation_time")
-        
-        status_items.append(PillowFightStatusItem(
-            fight_id=fight_id,
-            connection_id=int(connection_id),
-            table_name=table_name,
-            operation_types=pillow_fight.operation_types,
-            operation_delay=pillow_fight.operation_delay,
-            batch_size=pillow_fight.batch_size,
-            start_time=start_time.isoformat() if start_time else None,
-            last_operation_time=last_operation_time.isoformat() if last_operation_time else None,
-            status=stats.get("status", "unknown"),
-            operations=stats.get("operations", {"insert": 0, "update": 0, "delete": 0}),
-            duration=stats.get("duration")
-        ))
+        try:
+            # Convert table_id from string to int
+            table_id = int(table_id_str)
+            
+            # Look up the table info from the database
+            table_config = table_service.get_table(table_id)
+            if not table_config:
+                logger.warning(f"Table with ID {table_id} not found, skipping status")
+                continue
+                
+            table_name = table_config.table_name
+            stats = pillow_fight.get_stats(table_name)
+            
+            start_time = stats.get("start_time")
+            last_operation_time = stats.get("last_operation_time")
+            
+            status_items.append(PillowFightStatusItem(
+                fight_id=fight_id,
+                connection_id=int(connection_id),
+                table_id=table_id,
+                table_name=table_name,
+                operation_types=pillow_fight.operation_types,
+                operation_delay=pillow_fight.operation_delay,
+                batch_size=pillow_fight.batch_size,
+                start_time=start_time.isoformat() if start_time else None,
+                last_operation_time=last_operation_time.isoformat() if last_operation_time else None,
+                status=stats.get("status", "unknown"),
+                operations=stats.get("operations", {"insert": 0, "update": 0, "delete": 0}),
+                duration=stats.get("duration")
+            ))
+        except Exception as e:
+            logger.error(f"Error processing fight_id {fight_id}: {str(e)}")
     
     return PillowFightStatusResponse(pillow_fights=status_items)
 

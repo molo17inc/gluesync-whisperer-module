@@ -35,8 +35,8 @@ os.makedirs(logs_dir, exist_ok=True)
 
 
 class Settings(BaseSettings):
-    # Database configuration for automator's own database
-    DB_URL: str = os.getenv("DB_URL", f"sqlite:///./data/automator.db")
+    # Database configuration for whisperer's own database
+    DB_URL: str = os.getenv("DB_URL", f"sqlite:///./data/whisperer.db")
     
     # Server configuration
     HOST: str = os.getenv("HOST", "0.0.0.0")

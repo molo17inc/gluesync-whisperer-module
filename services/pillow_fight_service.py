@@ -231,18 +231,18 @@ class PillowFightService:
                     on_complete()
                 return
             
-            # Create table automator from run_auto_operations.py
-            from run_auto_operations import TableAutomator
+            # Create table whisperer from run_auto_operations.py
+            from run_auto_operations import TableWhisperer
             
-            automator = TableAutomator(
+            whisperer = TableWhisperer(
                 connector=connector,
                 table_name=table_name,
                 delay=self.operation_delay,
                 operations=self.operation_types
             )
             
-            if not automator.initialize():
-                logger.error(f"Failed to initialize automator for table {table_name}")
+            if not whisperer.initialize():
+                logger.error(f"Failed to initialize whisperer for table {table_name}")
                 self.operation_stats[fight_id]["status"] = "failed"
                 if on_complete:
                     on_complete()
@@ -250,11 +250,11 @@ class PillowFightService:
             
             # Run operations until stopped
             while not self.stop_events[fight_id].is_set():
-                operation_success = automator.perform_random_operation()
+                operation_success = whisperer.perform_random_operation()
                 
                 if operation_success:
                     # Update stats
-                    for op_type, count in automator.operation_count.items():
+                    for op_type, count in whisperer.operation_count.items():
                         self.operation_stats[fight_id]["operations"][op_type] = count
                     
                     self.operation_stats[fight_id]["last_operation_time"] = datetime.now()

@@ -40,11 +40,11 @@ from config import settings
 # Configure logging
 logger = logging.getLogger(__name__)
 
-# Global dictionary to track running automators
-running_automators = {}
+# Global dictionary to track running whisperers
+running_whisperers = {}
 
 
-class AutomatorService:
+class WhispererService:
     def __init__(self, db: Session):
         self.db = db
         self.stop_events = {}  # Connection ID -> threading.Event
@@ -81,9 +81,9 @@ class AutomatorService:
             logger.error(f"Failed to list tables: {str(e)}")
             return []
 
-    def start_automator(self, connection_id: int) -> None:
-        """Start the automator for a connection."""
-        global running_automators
+    def start_whisperer(self, connection_id: int) -> None:
+        """Start the whisperer for a connection."""
+        global running_whisperers
         
         # Get the connection
         db_connection = self.db.query(DatabaseConnection).filter(
@@ -104,26 +104,26 @@ class AutomatorService:
             # Reset the event if it exists
             self.stop_events[connection_id].clear()
         
-        # Check if there's already an automator running for this connection
-        if connection_id in running_automators:
-            logger.info(f"Automator already running for connection {connection_id}")
+        # Check if there's already an whisperer running for this connection
+        if connection_id in running_whisperers:
+            logger.info(f"Whisperer already running for connection {connection_id}")
             return
         
-        # Start the automator in a new thread
-        automator_thread = threading.Thread(
-            target=self._run_automator,
+        # Start the whisperer in a new thread
+        whisperer_thread = threading.Thread(
+            target=self._run_whisperer,
             args=(connection_id, self.stop_events[connection_id]),
             daemon=True
         )
-        automator_thread.start()
+        whisperer_thread.start()
         
-        # Track the running automator
-        running_automators[connection_id] = automator_thread
-        logger.info(f"Started automator for connection {connection_id}")
+        # Track the running whisperer
+        running_whisperers[connection_id] = whisperer_thread
+        logger.info(f"Started whisperer for connection {connection_id}")
 
-    def stop_automator(self, connection_id: int) -> None:
-        """Stop the automator for a connection."""
-        global running_automators
+    def stop_whisperer(self, connection_id: int) -> None:
+        """Stop the whisperer for a connection."""
+        global running_whisperers
         
         # Get the connection
         db_connection = self.db.query(DatabaseConnection).filter(
@@ -133,12 +133,12 @@ class AutomatorService:
         if not db_connection:
             raise ValueError(f"Connection with ID {connection_id} not found")
         
-        # Check if the automator is running
-        if connection_id not in running_automators:
-            logger.info(f"No automator running for connection {connection_id}")
+        # Check if the whisperer is running
+        if connection_id not in running_whisperers:
+            logger.info(f"No whisperer running for connection {connection_id}")
             return
         
-        # Signal the automator to stop
+        # Signal the whisperer to stop
         if connection_id in self.stop_events:
             self.stop_events[connection_id].set()
         
@@ -147,13 +147,13 @@ class AutomatorService:
         self.db.commit()
         
         # Remove from tracking
-        if connection_id in running_automators:
-            del running_automators[connection_id]
+        if connection_id in running_whisperers:
+            del running_whisperers[connection_id]
         
-        logger.info(f"Stopped automator for connection {connection_id}")
+        logger.info(f"Stopped whisperer for connection {connection_id}")
 
-    def pause_automator(self, connection_id: int) -> None:
-        """Pause the automator for a connection."""
+    def pause_whisperer(self, connection_id: int) -> None:
+        """Pause the whisperer for a connection."""
         # Get the connection
         db_connection = self.db.query(DatabaseConnection).filter(
             DatabaseConnection.id == connection_id
@@ -162,19 +162,19 @@ class AutomatorService:
         if not db_connection:
             raise ValueError(f"Connection with ID {connection_id} not found")
         
-        # Check if the automator is running
-        if connection_id not in running_automators:
-            logger.info(f"No automator running for connection {connection_id}")
+        # Check if the whisperer is running
+        if connection_id not in running_whisperers:
+            logger.info(f"No whisperer running for connection {connection_id}")
             return
         
         # Update the connection status to paused
         db_connection.status = ConnectionStatus.PAUSED
         self.db.commit()
         
-        logger.info(f"Paused automator for connection {connection_id}")
+        logger.info(f"Paused whisperer for connection {connection_id}")
 
-    def resume_automator(self, connection_id: int) -> None:
-        """Resume the automator for a connection."""
+    def resume_whisperer(self, connection_id: int) -> None:
+        """Resume the whisperer for a connection."""
         # Get the connection
         db_connection = self.db.query(DatabaseConnection).filter(
             DatabaseConnection.id == connection_id
@@ -183,19 +183,19 @@ class AutomatorService:
         if not db_connection:
             raise ValueError(f"Connection with ID {connection_id} not found")
         
-        # Check if the automator is paused
+        # Check if the whisperer is paused
         if db_connection.status != ConnectionStatus.PAUSED:
-            logger.info(f"Automator for connection {connection_id} is not paused")
+            logger.info(f"Whisperer for connection {connection_id} is not paused")
             return
         
         # Update the connection status to running
         db_connection.status = ConnectionStatus.RUNNING
         self.db.commit()
         
-        logger.info(f"Resumed automator for connection {connection_id}")
+        logger.info(f"Resumed whisperer for connection {connection_id}")
 
-    def _run_automator(self, connection_id: int, stop_event: threading.Event) -> None:
-        """Run the automator for a connection."""
+    def _run_whisperer(self, connection_id: int, stop_event: threading.Event) -> None:
+        """Run the whisperer for a connection."""
         try:
             # Create a new session for this thread
             from database import SessionLocal
@@ -227,12 +227,12 @@ class AutomatorService:
             db_service = DatabaseService(db)
             engine = db_service._get_engine(db_connection)
             
-            # Main loop for the automator
+            # Main loop for the whisperer
             while not stop_event.is_set():
                 # Refresh connection status from database
                 db.refresh(db_connection)
                 
-                # Check if the automator is paused
+                # Check if the whisperer is paused
                 if db_connection.status == ConnectionStatus.PAUSED:
                     time.sleep(1)
                     continue
@@ -267,7 +267,7 @@ class AutomatorService:
                     time.sleep(1)
         
         except Exception as e:
-            logger.error(f"Error running automator for connection {connection_id}: {str(e)}")
+            logger.error(f"Error running whisperer for connection {connection_id}: {str(e)}")
             
             try:
                 # Update the connection status to error
@@ -287,9 +287,9 @@ class AutomatorService:
                 db.close()
             
             # Remove from tracking
-            global running_automators
-            if connection_id in running_automators:
-                del running_automators[connection_id]
+            global running_whisperers
+            if connection_id in running_whisperers:
+                del running_whisperers[connection_id]
 
     def _perform_operation(self, engine, db: Session, table_config: TableConfig) -> None:
         """Perform a random operation on a table."""

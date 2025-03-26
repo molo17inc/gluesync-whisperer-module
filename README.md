@@ -71,7 +71,7 @@ Copyright (C) 2025 MOLO17. All rights reserved.
 
 You can configure the application using the following environment variables:
 
-- `DB_URL`: Database URL for automator's own database (default: `sqlite:///./data/automator.db`)
+- `DB_URL`: Database URL for whisperer's own database (default: `sqlite:///./data/whisperer.db`)
 - `HOST`: Server host (default: `0.0.0.0`)
 - `PORT`: Server port (default: `8000`)
 - `DEBUG`: Enable debug mode (default: `False`)
@@ -116,10 +116,10 @@ You can configure the application using the following environment variables:
 
 1. Build the Docker image:
 ```bash
-docker build -t automator .
+docker build -t whisperer .
 ```
 
 2. Run the container:
 ```bash
-docker run -d -p 8000:8000 -v ./data:/app/data -v ./logs:/app/logs --name automator automator
+docker run -d -p 8000:8000 -v ./data:/app/data -v ./logs:/app/logs --name whisperer whisperer
 ```

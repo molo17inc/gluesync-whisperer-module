@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 
 from models import TableConfig, OperationType
 from schemas import TableConfigCreate, TableConfigUpdate, TableOperationRequest
-from services.automator_service import AutomatorService
+from services.whisperer_service import WhispererService
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 class TableService:
     def __init__(self, db: Session):
         self.db = db
-        self.automator_service = AutomatorService(db)
+        self.whisperer_service = WhispererService(db)
 
     def create_table(
         self, 
@@ -153,5 +153,5 @@ class TableService:
                     primary_keys=schema.primary_keys
                 )
         
-        # Start the automator for the connection
-        self.automator_service.start_automator(connection_id)
+        # Start the whisperer for the connection
+        self.whisperer_service.start_whisperer(connection_id)

@@ -1,9 +1,9 @@
 version: '3.8'
 
 services:
-  automator:
+  whisperer:
     build: .
-    container_name: automator
+    container_name: whisperer
     restart: unless-stopped
     ports:
       - "8000:8000"
@@ -11,7 +11,7 @@ services:
       - ./data:/app/data
       - ./logs:/app/logs
     environment:
-      - DB_URL=sqlite:///./data/automator.db
+      - DB_URL=sqlite:///./data/whisperer.db
       - HOST=0.0.0.0
       - PORT=8000
       - DEBUG=false

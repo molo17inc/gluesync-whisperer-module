@@ -245,6 +245,11 @@ class DatabaseConnector:
                 # Try to get schema from connection
                 schema = self.database
                 
+            # Make sure schema is never None for databases that require it
+            if schema is None and self.db_type == DatabaseType.MYSQL:
+                # For MySQL, use the database name if schema isn't specified
+                schema = self.database
+                
             # Get columns with detailed information
             columns = {}
             
@@ -266,15 +271,14 @@ class DatabaseConnector:
             else:
                 # For other databases, use the specialized query
                 query = self.sql_statements.get_columns_statement(schema, table_name)
-                if '?' in query:
-                    # For parameterized queries
-                    if self.db_type == DatabaseType.ORACLE:
-                        params = {'schema': schema, 'table': table_name}
-                    else:
-                        params = [schema, table_name]
-                    column_results = self.execute_query(query.replace('?', ':param'), params=params)
-                else:
-                    column_results = self.execute_query(query)
+                
+                # Always use named parameters
+                params = {}
+                if schema is not None:
+                    params['schema'] = schema
+                params['table'] = table_name
+                
+                column_results = self.execute_query(query, params=params)
                 
                 # Process column results based on database type
                 for col in column_results:
@@ -319,20 +323,16 @@ class DatabaseConnector:
                     # For SQLite, primary keys already in column info
                     primary_keys = [name for name, col in columns.items() if col['primary_key']]
                 else:
-                    # For other databases, use dedicated query
+                    # For other databases, use dedicated query with named parameters
                     query = self.sql_statements.get_primary_keys_statement(schema, table_name)
-                    if '?' in query:
-                        # For parameterized queries
-                            # Convert to named parameters for all database types
-                            named_params = {}
-                            if schema:
-                                named_params['schema'] = schema
-                            if table_name:
-                                named_params['table'] = table_name
-                            # The SQL statements now use named parameters directly, no need to replace ?
-                            pk_results = self.execute_query(query, params=named_params)
-                    else:
-                        pk_results = self.execute_query(query)
+                    
+                    # Prepare parameters
+                    named_params = {'table': table_name}
+                    if schema is not None:
+                        named_params['schema'] = schema
+                    
+                    # Execute query with parameters
+                    pk_results = self.execute_query(query, params=named_params)
                     
                     if pk_results:
                         for pk_row in pk_results:
@@ -480,32 +480,19 @@ class DatabaseConnector:
         
         try:
             with self.engine.connect() as conn:
-                # Handle named parameter conversion if needed
-                # Convert from :param style to %(param)s style if needed
-                modified_query = query
-                modified_params = params
-                
-                if params is not None and ':' in query:
-                    # Convert :param style to %(param)s style
+                # For MySQL, which uses a different parameter style, convert the query
+                if params is not None and self.db_type == DatabaseType.MYSQL and ':' in query:
+                    # Convert :param style to %(param)s style for MySQL
                     import re
                     param_pattern = r':(\w+)'
-                    matches = re.findall(param_pattern, query)
-                    
-                    # Create a new params dict with SQLAlchemy-compatible keys
-                    modified_params = {}
-                    for match in matches:
-                        if match in params:
-                            modified_params[match] = params[match]
-                    
-                    # Replace :param with %(param)s in the query
                     modified_query = re.sub(param_pattern, r'%(\1)s', query)
-                
-                # Create SQLAlchemy text object with parameters if provided
-                sql_text = text(modified_query)
+                    sql_text = text(modified_query)
+                else:
+                    sql_text = text(query)
                 
                 # Execute query with or without parameters
-                if modified_params is not None:
-                    result = conn.execute(sql_text, modified_params)
+                if params is not None:
+                    result = conn.execute(sql_text, params)
                 else:
                     result = conn.execute(sql_text)
                 

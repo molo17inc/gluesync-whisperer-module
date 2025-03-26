@@ -56,7 +56,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     DB_URL=sqlite:///./data/whisperer.db \
     # CORS settings \
     ALLOWED_ORIGINS=* \
-    # Automator settings \
+    # Whisperer settings \
     DEFAULT_OPERATION_DELAY=1.0 \
     DEFAULT_BATCH_SIZE=1 \
     MAX_OPERATIONS=1000 \

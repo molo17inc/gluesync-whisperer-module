@@ -144,7 +144,34 @@ class DatabaseService:
             logger.error(f"Connection test failed: {str(e)}")
             return ConnectionTestResponse(success=False, message=f"Connection failed: {str(e)}")
 
-    def get_tables(self, connection_id: int) -> List[str]:
+    def get_schemas(self, connection_id: int) -> List[str]:
+        """Get all schemas for a database connection."""
+        db_connection = self.get_connection(connection_id)
+        
+        # Get the database engine
+        engine = self._get_engine(db_connection)
+        
+        # Get all schemas
+        inspector = inspect(engine)
+        try:
+            schemas = inspector.get_schema_names()
+            return schemas
+        except Exception as e:
+            logger.error(f"Error getting schemas: {str(e)}")
+            # For databases that don't support schemas or have a different mechanism
+            if db_connection.db_type == DatabaseType.MYSQL:
+                # For MySQL, databases are essentially schemas
+                with engine.connect() as conn:
+                    result = conn.execute(sqlalchemy.text("SHOW DATABASES"))
+                    return [row[0] for row in result]
+            elif db_connection.db_type == DatabaseType.SQLITE:
+                # SQLite doesn't have traditional schemas
+                return ['main']
+            else:
+                # Return a default if we can't get schemas
+                return [db_connection.database_name if db_connection.database_name else 'default']
+                
+    def get_tables(self, connection_id: int, schema: str = None) -> List[str]:
         """Get all tables for a database connection."""
         db_connection = self.get_connection(connection_id)
         
@@ -153,9 +180,17 @@ class DatabaseService:
         
         # Get all tables
         inspector = inspect(engine)
-        # For some databases like PostgreSQL, we should specify the schema
-        if db_connection.db_type == DatabaseType.POSTGRESQL:
-            return inspector.get_table_names(schema='public')
+        
+        # If schema is not specified, use appropriate default based on database type
+        if schema is None:
+            if db_connection.db_type == DatabaseType.POSTGRESQL:
+                schema = 'public'
+            elif db_connection.db_type == DatabaseType.MYSQL:
+                schema = db_connection.database_name
+                
+        # Get tables for the specified schema if applicable to this database type    
+        if schema and db_connection.db_type not in [DatabaseType.SQLITE]:
+            return inspector.get_table_names(schema=schema)
         else:
             return inspector.get_table_names()
 
