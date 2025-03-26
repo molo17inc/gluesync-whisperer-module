@@ -15,6 +15,23 @@ A specialized module for orchestrating database operations. This application ena
 
 ## Installation
 
+### Database Driver Requirements
+
+Gluesync Whisperer supports multiple database types, each requiring specific Python drivers:
+
+| Database Type | Required Driver Packages | Notes |
+|--------------|--------------------------|-------|
+| MySQL | `pymysql` | Included in requirements.txt |
+| PostgreSQL | `psycopg2-binary` | Included in requirements.txt |
+| SQLite | Built-in SQLAlchemy support | No additional packages needed |
+| MSSQL | `pyodbc` | Requires ODBC drivers to be installed on the system |
+| Oracle | `cx_Oracle` | May require Oracle client libraries |
+| AS400/DB2 | `ibm_db`, `ibm_db_sa` | Requires IBM DB2 client libraries |
+
+All required drivers are included in the Dockerfile for containerized deployment.
+
+### Local Installation
+
 1. Clone the repository with its submodules:
 
    ```bash

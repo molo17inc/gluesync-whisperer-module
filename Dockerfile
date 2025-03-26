@@ -73,6 +73,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     curl \
     openssl \
+    # Dependencies for IBM DB2/AS400 driver
+    wget \
+    unzip \
+    libaio1 \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -81,6 +85,8 @@ COPY --from=builder /wheels /wheels
 
 # Copy only necessary application files
 COPY ./requirements.txt .
+
+# Wait for the SDK installation step below
 COPY ./entrypoint.sh .
 COPY ./app.py .
 COPY ./config.py .
@@ -106,8 +112,11 @@ RUN pip install websockets==11.0.3
 # Install the SDK from the wheel if exists
 RUN if [ -d "/wheels" ] && [ "$(ls -A /wheels)" ]; then pip install /wheels/*; else echo "No SDK wheels found, continuing without SDK"; fi
 
-# Install other Python dependencies
+# Install all Python dependencies including database drivers
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Special handling for IBM DB2/AS400 drivers that may require additional steps
+RUN pip install --no-cache-dir ibm_db ibm_db_sa
 
 # Expose port
 EXPOSE 8000
