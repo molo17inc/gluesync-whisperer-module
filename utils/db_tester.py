@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""
+ * This file is part of Database Automator.
+ *
+ * Database Automator is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * Database Automator is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Database Automator.  If not, see <http://www.gnu.org/licenses/>.
+"""
+
+import argparse
+import logging
+import os
+import sys
+import sqlalchemy
+from sqlalchemy import create_engine, inspect
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from models import DatabaseType
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+def build_connection_string(db_type, host, port, username, password, database_name):
+    """Build a connection string based on database type and parameters."""
+    if db_type == DatabaseType.MYSQL:
+        return f"mysql+pymysql://{username}:{password}@{host}:{port}/{database_name}"
+    elif db_type == DatabaseType.POSTGRESQL:
+        return f"postgresql://{username}:{password}@{host}:{port}/{database_name}"
+    elif db_type == DatabaseType.SQLITE:
+        return f"sqlite:///{database_name}"
+    elif db_type == DatabaseType.MSSQL:
+        driver = "ODBC+Driver+17+for+SQL+Server"
+        return f"mssql+pyodbc://{username}:{password}@{host}:{port}/{database_name}?driver={driver}"
+    elif db_type == DatabaseType.ORACLE:
+        return f"oracle+cx_oracle://{username}:{password}@{host}:{port}/{database_name}"
+    else:
+        raise ValueError(f"Unsupported database type: {db_type}")
+
+def test_connection(connection_string):
+    """Test a database connection."""
+    try:
+        engine = create_engine(connection_string)
+        with engine.connect() as conn:
+            conn.execute(sqlalchemy.text("SELECT 1"))
+        logger.info("Connection successful!")
+        return engine
+    except Exception as e:
+        logger.error(f"Connection failed: {str(e)}")
+        return None
+
+def get_tables(engine):
+    """Get all tables in the database."""
+    inspector = inspect(engine)
+    tables = inspector.get_table_names()
+    logger.info(f"Found {len(tables)} tables:")
+    for table in tables:
+        logger.info(f" - {table}")
+    return tables
+
+def get_table_schema(engine, table_name):
+    """Get the schema of a table."""
+    inspector = inspect(engine)
+    
+    # Get columns
+    columns = inspector.get_columns(table_name)
+    logger.info(f"Table {table_name} has {len(columns)} columns:")
+    for column in columns:
+        logger.info(f" - {column['name']}: {column['type']} (nullable: {column.get('nullable', True)})")
+    
+    # Get primary keys
+    pk_constraint = inspector.get_pk_constraint(table_name)
+    if pk_constraint and 'constrained_columns' in pk_constraint:
+        logger.info(f"Primary keys: {', '.join(pk_constraint['constrained_columns'])}")
+    else:
+        logger.info("No primary keys found")
+
+def main():
+    parser = argparse.ArgumentParser(description="Test database connections and explore schema")
+    parser.add_argument("--type", required=True, choices=[t.value for t in DatabaseType], help="Database type")
+    parser.add_argument("--host", help="Database host")
+    parser.add_argument("--port", help="Database port")
+    parser.add_argument("--username", help="Database username")
+    parser.add_argument("--password", help="Database password")
+    parser.add_argument("--database", required=True, help="Database name/path")
+    parser.add_argument("--list-tables", action="store_true", help="List all tables")
+    parser.add_argument("--table", help="Table to examine")
+    
+    args = parser.parse_args()
+    
+    # Build connection string
+    db_type = DatabaseType(args.type)
+    if db_type == DatabaseType.SQLITE:
+        connection_string = build_connection_string(db_type, None, None, None, None, args.database)
+    else:
+        connection_string = build_connection_string(
+            db_type, args.host, args.port, args.username, args.password, args.database
+        )
+    
+    # Test connection
+    logger.info(f"Testing connection to {args.type} database...")
+    engine = test_connection(connection_string)
+    if not engine:
+        sys.exit(1)
+    
+    # List tables if requested
+    if args.list_tables:
+        tables = get_tables(engine)
+    
+    # Examine table if specified
+    if args.table:
+        get_table_schema(engine, args.table)
+
+if __name__ == "__main__":
+    main()
