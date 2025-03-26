@@ -23,13 +23,12 @@ COPY ./gluesync-sdk ./gluesync-sdk
 # Install specific websockets version first to avoid compatibility issues
 RUN pip install websockets==11.0.3
 
-# Install the SDK from the submodule and create a wheel (if submodule exists)
+# Check SDK directory and create wheels directory
 RUN pip install wheel && \
-    if [ -d "./gluesync-sdk" ]; then \
+    mkdir -p /wheels && \
+    if [ -d "./gluesync-sdk" ] && [ -f "./gluesync-sdk/setup.py" ]; then \
         cd ./gluesync-sdk && \
         pip wheel -w /wheels .; \
-    else \
-        mkdir -p /wheels; \
     fi
 
 # Final stage
@@ -105,7 +104,7 @@ RUN if [ -f "/app/entrypoint.sh" ]; then chmod +x /app/entrypoint.sh; fi
 RUN pip install websockets==11.0.3
 
 # Install the SDK from the wheel if exists
-RUN if [ -d "/wheels" ] && [ "$(ls -A /wheels)" ]; then pip install /wheels/*; fi
+RUN if [ -d "/wheels" ] && [ "$(ls -A /wheels)" ]; then pip install /wheels/*; else echo "No SDK wheels found, continuing without SDK"; fi
 
 # Install other Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt

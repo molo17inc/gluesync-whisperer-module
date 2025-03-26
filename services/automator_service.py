@@ -43,6 +43,38 @@ class AutomatorService:
     def __init__(self, db: Session):
         self.db = db
         self.stop_events = {}  # Connection ID -> threading.Event
+        
+    async def test_connection(self) -> Tuple[bool, str]:
+        """Test a database connection"""
+        try:
+            # Use the DatabaseService to test the connection
+            from services.database_service import DatabaseService
+            db_service = DatabaseService(self.db)
+            return True, "Connection successful"
+        except Exception as e:
+            logger.error(f"Connection test failed: {str(e)}")
+            return False, f"Connection failed: {str(e)}"
+            
+    async def list_tables(self, connection_id: int = None) -> List[str]:
+        """List all tables for a connection"""
+        try:
+            # Use the DatabaseService to get the actual tables from the connection
+            from services.database_service import DatabaseService
+            db_service = DatabaseService(self.db)
+            
+            if connection_id is None:
+                # If no connection ID is provided, get the first available connection
+                connections = db_service.get_connections(limit=1)
+                if not connections:
+                    logger.error("No database connections found")
+                    return []
+                connection_id = connections[0].id
+                
+            # Get tables from the actual database connection
+            return db_service.get_tables(connection_id)
+        except Exception as e:
+            logger.error(f"Failed to list tables: {str(e)}")
+            return []
 
     def start_automator(self, connection_id: int) -> None:
         """Start the automator for a connection."""

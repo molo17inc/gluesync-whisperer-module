@@ -38,6 +38,8 @@ class ConnectionStatus(enum.Enum):
     RUNNING = "running"
     ERROR = "error"
     PAUSED = "paused"
+    BUSY = "busy"
+    CONNECTED = "connected"
 
 
 class DatabaseType(enum.Enum):
