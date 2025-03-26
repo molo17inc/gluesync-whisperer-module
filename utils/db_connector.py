@@ -525,7 +525,14 @@ class DatabaseConnector:
             raise RuntimeError("Not connected to database")
         
         try:
-            with self.engine.connect() as conn:
+            # Check if query is a data modification query (not a SELECT)
+            is_modification_query = False
+            query_upper = query.strip().upper()
+            if query_upper.startswith(('INSERT', 'UPDATE', 'DELETE', 'CREATE', 'ALTER', 'DROP', 'TRUNCATE')):
+                is_modification_query = True
+            
+            # Use transaction for data modification queries
+            with self.engine.begin() if is_modification_query else self.engine.connect() as conn:
                 # Convert the query to SQLAlchemy text object
                 sql_text = text(query)
                 
@@ -594,6 +601,9 @@ class DatabaseConnector:
                 else:
                     # No parameters - execute the query as-is
                     result = conn.execute(sql_text)
+                
+                # Note: When using engine.begin(), the transaction is automatically committed
+                # when the context manager exits. No need for explicit commit.
                 
                 # For SELECT queries
                 if result.returns_rows:
