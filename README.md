@@ -4,27 +4,32 @@ A specialized module for orchestrating database operations. This application ena
 
 ## Features
 
-- Connect to multiple database types (MySQL, PostgreSQL, SQLite, MSSQL, Oracle)
+- Connect to multiple database types (MySQL, PostgreSQL, SQLite, MSSQL, Oracle, AS400)
 - Configure tables for automated operations
 - Control operation types (insert, update, delete, or all)
 - Set delay between operations and batch sizes
 - View operation logs and connection status
 - REST API for configuration and control
+- Robust parameter handling for all database types
+- Automatic transaction management for data modification operations
 
 ## Installation
 
 1. Clone the repository with its submodules:
+
    ```bash
    git clone --recursive https://gitlab.com/molo17-public/gluesync/gluesync-whisperer-module.git
    cd gluesync-whisperer-module
    ```
 
 2. Install dependencies:
+
    ```bash
    pip install -r requirements.txt
    ```
 
 3. Initialize the database:
+
    ```bash
    python3 init_db.py
    ```
@@ -37,14 +42,26 @@ A specialized module for orchestrating database operations. This application ena
 python3 app.py
 ```
 
-The API server will start on <http://0.0.0.0:8000> by default.
+The API server will start on <http://0.0.0.0:1717> by default.
+
+### Using Docker
+
+You can also run the application using Docker:
+
+```bash
+# Build the Docker image
+docker build -t gluesync-whisperer .
+
+# Run the container
+docker run -d -p 1717:1717 --name whisperer gluesync-whisperer
+```
 
 ### API Documentation
 
 Once the server is running, access the API documentation at:
 
-- Swagger UI: <http://localhost:8000/docs>
-- ReDoc: <http://localhost:8000/redoc>
+- Swagger UI: <http://localhost:1717/docs>
+- ReDoc: <http://localhost:1717/redoc>
 
 ## License
 
@@ -73,7 +90,7 @@ You can configure the application using the following environment variables:
 
 - `DB_URL`: Database URL for whisperer's own database (default: `sqlite:///./data/whisperer.db`)
 - `HOST`: Server host (default: `0.0.0.0`)
-- `PORT`: Server port (default: `8000`)
+- `PORT`: Server port (default: `1717`)
 - `DEBUG`: Enable debug mode (default: `False`)
 - `SSL_ENABLED`: Enable SSL (default: `False`)
 - `SSL_CERT_FILE`: Path to SSL certificate file
@@ -95,7 +112,7 @@ You can configure the application using the following environment variables:
 - `PUT /api/connections/{connection_id}`: Update a connection
 - `DELETE /api/connections/{connection_id}`: Delete a connection
 - `POST /api/connections/{connection_id}/test`: Test a connection
-- `GET /api/connections/{connection_id}/tables`: List tables in the database
+- `GET /api/connections/{connection_id}/tables?schema={schema}`: List tables in the database (schema parameter required)
 - `PUT /api/connections/{connection_id}/status`: Update connection status (start/stop/pause)
 
 ### Table Configuration
@@ -106,7 +123,89 @@ You can configure the application using the following environment variables:
 - `GET /api/tables/{table_id}`: Get table configuration details
 - `PUT /api/tables/{table_id}`: Update a table configuration
 - `DELETE /api/tables/{table_id}`: Delete a table configuration
-- `GET /api/connections/{connection_id}/tables/{table_name}/schema`: Get table schema
+- `GET /api/connections/{connection_id}/tables/{table_name}/schema?schema={schema}`: Get table schema (schema parameter required)
+
+## Database Support
+
+### Supported Database Types
+
+Gluesync Whisperer supports the following database types with their specific parameter handling:
+
+#### MySQL
+
+- Uses `%s` placeholders in SQL queries
+- Automatically handles parameter escaping and quoting
+- Properly commits transactions for data modification operations
+
+#### PostgreSQL
+
+- Uses named parameters (`:param`) in SQL queries
+- Works well with standard SQLAlchemy parameter binding
+
+#### Oracle
+
+- Uses named parameters (`:param`) in SQL queries
+- Properly handles schema and table name parameters
+
+#### SQL Server (MSSQL)
+
+- Uses named parameters (`:param`) in SQL queries
+- Works with SQLAlchemy's parameter binding
+
+#### SQLite
+
+- Supports both named parameters (`:param`) and question mark (`?`) placeholders
+- All operations are automatically committed
+
+#### AS400/DB2
+
+- Supports both named parameters and question mark placeholders depending on configuration
+- Parameter binding adapted for AS400's specific requirements
+
+### Transaction Management
+
+The application automatically handles transactions for all database types:
+
+- Data modification operations (INSERT, UPDATE, DELETE) are automatically committed when successful
+- Transactions are automatically rolled back in case of errors
+- Read operations (SELECT) don't require transaction management
+
+### Parameter Binding and Security
+
+Parameter binding is implemented securely for all database types to prevent SQL injection:
+
+- Parameters are properly escaped and quoted based on their type
+- MySQL parameter handling avoids the double-escaping issue
+- Named parameters are correctly mapped for all database types
+- Positional parameters are converted to the appropriate format for each database
+
+## Troubleshooting
+
+### Common Issues
+
+#### Connection Issues
+
+- Verify database credentials and connection parameters
+- Check that the database server is accessible from the application
+- Ensure proper database driver is installed
+
+#### Parameter Binding Errors
+
+- Make sure to provide schema parameter for all operations that require it
+- Check SQL statement syntax for compatibility with your database
+- Verify parameter types match the column types in your database
+
+#### Transaction Not Committed
+
+- The application now automatically handles transaction commits
+- If you still encounter issues, check database permissions
+- Some databases may have autocommit settings that conflict with application settings
+
+#### Schema Requirements
+
+- Most API endpoints requiring table access now explicitly require a schema parameter
+- This prevents ambiguity and ensures correct data retrieval
+- For example: `/api/connections/{connection_id}/tables?schema=your_schema`
 
 ### Operations
 
@@ -115,11 +214,13 @@ You can configure the application using the following environment variables:
 ## Docker Usage
 
 1. Build the Docker image:
-```bash
-docker build -t whisperer .
-```
+
+   ```bash
+   docker build -t gluesync-whisperer .
+   ```
 
 2. Run the container:
-```bash
-docker run -d -p 8000:8000 -v ./data:/app/data -v ./logs:/app/logs --name whisperer whisperer
-```
+
+   ```bash
+   docker run -d -p 1717:1717 --name whisperer gluesync-whisperer
+   ```
