@@ -37,7 +37,7 @@ class MySqlSqlStatements(BaseSqlStatements):
         return """
         SELECT TABLE_NAME
         FROM INFORMATION_SCHEMA.TABLES
-        WHERE TABLE_SCHEMA = :schema
+        WHERE TABLE_SCHEMA = %s
         """
     
     def get_columns_statement(self, schema=None, table=None):
@@ -70,8 +70,8 @@ class MySqlSqlStatements(BaseSqlStatements):
                 ON TC.TABLE_SCHEMA = KCU.TABLE_SCHEMA
                    AND TC.TABLE_NAME = KCU.TABLE_NAME
                    AND TC.CONSTRAINT_NAME = KCU.CONSTRAINT_NAME
-        WHERE C.TABLE_SCHEMA = :schema
-           AND C.TABLE_NAME = :table
+        WHERE C.TABLE_SCHEMA = %s
+           AND C.TABLE_NAME = %s
         ORDER BY C.ORDINAL_POSITION
         """
     
@@ -85,8 +85,8 @@ class MySqlSqlStatements(BaseSqlStatements):
             AND TC.TABLE_SCHEMA = KCU.TABLE_SCHEMA
             AND TC.TABLE_NAME = KCU.TABLE_NAME
         WHERE TC.CONSTRAINT_TYPE = 'PRIMARY KEY'
-            AND TC.TABLE_SCHEMA = :schema
-            AND TC.TABLE_NAME = :table
+            AND TC.TABLE_SCHEMA = %s
+            AND TC.TABLE_NAME = %s
         ORDER BY KCU.ORDINAL_POSITION
         """
     
@@ -104,8 +104,8 @@ class MySqlSqlStatements(BaseSqlStatements):
             AND TC.TABLE_NAME = KCU.TABLE_NAME
         WHERE KCU.REFERENCED_TABLE_NAME IS NOT NULL
             AND TC.CONSTRAINT_TYPE = 'FOREIGN KEY'
-            AND KCU.TABLE_SCHEMA = :schema
-            AND KCU.TABLE_NAME = :table
+            AND KCU.TABLE_SCHEMA = %s
+            AND KCU.TABLE_NAME = %s
         """
     
     def count_rows_statement(self, table):

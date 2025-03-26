@@ -472,7 +472,6 @@ class DatabaseConnector:
                 'foreign_keys': foreign_keys,
                 'indexes': indexes
             }
-    
     def execute_query(self, query, params=None, max_rows=100):
         """Execute a query with optional parameters and return the results."""
         if not self.engine:
@@ -480,19 +479,29 @@ class DatabaseConnector:
         
         try:
             with self.engine.connect() as conn:
-                # For MySQL, which uses a different parameter style, convert the query
-                if params is not None and self.db_type == DatabaseType.MYSQL and ':' in query:
-                    # Convert :param style to %(param)s style for MySQL
-                    import re
-                    param_pattern = r':(\w+)'
-                    modified_query = re.sub(param_pattern, r'%(\1)s', query)
-                    sql_text = text(modified_query)
-                else:
-                    sql_text = text(query)
+                sql_text = text(query)
                 
                 # Execute query with or without parameters
                 if params is not None:
-                    result = conn.execute(sql_text, params)
+                    # For MySQL with %s placeholders, convert named params to positional order
+                    if self.db_type == DatabaseType.MYSQL and "%s" in query:
+                        # Extract values in the order they appear in the query
+                        if isinstance(params, dict):
+                            # Assume schema comes first, then table if both exist
+                            positional_params = []
+                            if "schema" in params:
+                                positional_params.append(params["schema"])
+                            if "table" in params:
+                                positional_params.append(params["table"])
+                            if "column" in params:
+                                positional_params.append(params["column"])
+                            result = conn.execute(sql_text, *positional_params)
+                        else:
+                            # If already a list/tuple, pass as is
+                            result = conn.execute(sql_text, *params)
+                    else:
+                        # Use standard parameter binding for other cases
+                        result = conn.execute(sql_text, params)
                 else:
                     result = conn.execute(sql_text)
                 
@@ -509,7 +518,7 @@ class DatabaseConnector:
                     return rows
                 else:
                     # For UPDATE/INSERT/DELETE queries
-                    return {'affected_rows': result.rowcount}
+                    return {"affected_rows": result.rowcount}
         
         except SQLAlchemyError as e:
             logger.error(f"Error executing query: {str(e)}")
