@@ -209,7 +209,103 @@ Parameter binding is implemented securely for all database types to prevent SQL 
 
 ### Operations
 
+#### Primary Operations API (Recommended)
+
 - `POST /api/operations`: Start automated operations on tables
+  - Request body:
+
+    ```json
+    {
+      "connection_id": 1,
+      "table_ids": [1, 2, 3],
+      "operation_type": "ALL",
+      "operation_delay": 1.0,
+      "batch_size": 1
+    }
+    ```
+
+  - The `connection_id` is the ID of the database connection
+  - The `table_ids` is an array of table configuration IDs to operate on
+  - The `operation_type` can be one of: `INSERT`, `UPDATE`, `DELETE`, `ALL`
+  - `operation_delay` is in seconds (minimum 0.1)
+  - `batch_size` is the number of operations to perform in a batch (minimum 1)
+
+#### Alternative Automation API
+
+- `POST /api/v1/automation/start`: Start automated operations on tables
+  - Request body should contain connection ID, operation parameters, and table names
+
+- `POST /api/v1/automation/stop/{connection_id}/{table_name}`: Stop automation for a specific table
+  - Path parameters:
+    - `connection_id`: ID of the database connection
+    - `table_name`: Name of the table to stop automation for
+
+### PillowFight (Load Testing)
+
+PillowFight is a specialized testing and load generation feature designed to simulate high-volume database operations for system resilience testing.
+
+#### What is PillowFight?
+
+Unlike regular operations that are meant for actual data synchronization, PillowFight is specifically designed for:
+
+- Stress testing your database systems
+- Simulating high-volume operation scenarios
+- Validating system performance under load
+- Testing error handling and recovery mechanisms
+
+PillowFight can run multiple operation types concurrently (INSERT, UPDATE, DELETE) and maintains detailed statistics about the operations performed.
+
+#### PillowFight API
+
+- `POST /api/v1/pillow-fight/start`: Start a PillowFight test
+  - Request body:
+
+    ```json
+    {
+      "connection_id": 1,
+      "table_ids": [1, 2, 3],
+      "operation_type": "ALL",
+      "operation_delay": 0.1,
+      "batch_size": 10
+    }
+    ```
+
+  - The `connection_id` is the ID of the database connection
+  - The `table_ids` is an array of table configuration IDs to operate on
+  - The `operation_type` determines which operations to include in the test:
+    - `INSERT`: Only perform inserts
+    - `UPDATE`: Only perform updates
+    - `DELETE`: Only perform deletes
+    - `ALL`: Perform all three operation types concurrently
+  - `operation_delay` is in seconds (lower values create more intensive tests)
+  - `batch_size` is the number of operations to perform in a batch (higher values increase load)
+
+- `GET /api/v1/pillow-fight/status`: Get status of active PillowFight tests
+  - Returns a list of all active PillowFight tests with statistics on operations performed
+
+- `POST /api/v1/pillow-fight/stop/{connection_id}/{table_id}`: Stop a PillowFight test
+  - Path parameters:
+    - `connection_id`: ID of the database connection
+    - `table_id`: ID of the table to stop testing
+
+#### When to Use PillowFight vs. Regular Operations
+
+| Feature | PillowFight | Regular Operations |
+|---------|------------|--------------------|
+| **Purpose** | Testing and stress simulation | Actual data synchronization |
+| **Operation Types** | Can run multiple types concurrently | One operation type at a time |
+| **Data Integrity** | Generates test data that may need cleanup | Creates legitimate synchronized data |
+| **Performance Impact** | Designed to push system limits | Optimized for production use |
+| **Monitoring** | Detailed statistics for test analysis | Basic operation logging |
+
+#### Example Use Case
+
+Before deploying a new database schema or application version to production, use PillowFight to:
+
+1. Validate that your system can handle the expected operation volume
+2. Identify potential bottlenecks under high load
+3. Test recovery procedures if operations fail
+4. Measure performance metrics for different operation types
 
 ## Docker Usage
 
