@@ -32,6 +32,7 @@ from models import DatabaseType, OperationType, ConnectionStatus
 from schemas import TableOperationRequest
 from services.pillow_fight_service import PillowFightService
 from services.connection_service import ConnectionService
+from services.table_service import TableService
 
 # Setup logger
 logging.basicConfig(level=logging.INFO)

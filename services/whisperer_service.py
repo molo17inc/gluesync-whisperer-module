@@ -60,8 +60,16 @@ class WhispererService:
             logger.error(f"Connection test failed: {str(e)}")
             return False, f"Connection failed: {str(e)}"
             
-    async def list_tables(self, connection_id: int = None) -> List[str]:
-        """List all tables for a connection"""
+    async def list_tables(self, connection_id: int = None, schema: str = None) -> List[str]:
+        """List all tables for a connection
+        
+        Args:
+            connection_id: Database connection ID
+            schema: Schema name (required for most databases)
+            
+        Returns:
+            List of table names
+        """
         try:
             # Use the DatabaseService to get the actual tables from the connection
             from services.database_service import DatabaseService
@@ -76,7 +84,11 @@ class WhispererService:
                 connection_id = connections[0].id
                 
             # Get tables from the actual database connection
-            return db_service.get_tables(connection_id)
+            # Schema is required for most database types and will raise an error if missing
+            return db_service.get_tables(connection_id, schema=schema)
+        except ValueError as e:
+            # Pass through the schema error from the database service
+            raise ValueError(str(e))
         except Exception as e:
             logger.error(f"Failed to list tables: {str(e)}")
             return []

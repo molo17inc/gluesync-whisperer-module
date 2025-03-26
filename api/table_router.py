@@ -59,7 +59,8 @@ def create_table_config(table: TableConfigCreate, db: Session = Depends(get_db))
     
     # Check if table exists in the database
     try:
-        tables = db_service.get_tables(table.connection_id)
+        # Use the schema_name provided in the request
+        tables = db_service.get_tables(table.connection_id, schema=table.schema_name)
         if table.table_name not in tables:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

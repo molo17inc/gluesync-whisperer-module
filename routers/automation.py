@@ -75,9 +75,10 @@ async def test_connection(
 @router.get("/connections/{connection_id}/tables", response_model=TableListResponse)
 async def list_tables(
     connection_id: int,
+    schema: str,
     db: Session = Depends(get_db)
 ):
-    """List all tables for a connection"""
+    """List all tables for a connection with the specified schema"""
     connection_service = ConnectionService(db)
     connection = connection_service.get_connection(connection_id)
     
@@ -91,8 +92,15 @@ async def list_tables(
     db_service = DatabaseService(db)
     whisperer = WhispererService(db=db)
     
-    tables = await whisperer.list_tables(connection_id=connection_id)
-    return TableListResponse(tables=tables)
+    try:
+        tables = await whisperer.list_tables(connection_id=connection_id, schema=schema)
+        return TableListResponse(tables=tables)
+    except ValueError as e:
+        # If schema is missing or invalid, return appropriate error
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
 
 
 @router.get("/connections/{connection_id}/tables/{table_name}/schema", response_model=TableSchemaResponse)

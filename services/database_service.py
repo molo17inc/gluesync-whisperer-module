@@ -172,7 +172,18 @@ class DatabaseService:
                 return [db_connection.database_name if db_connection.database_name else 'default']
                 
     def get_tables(self, connection_id: int, schema: str = None) -> List[str]:
-        """Get all tables for a database connection."""
+        """Get all tables for a database connection.
+        
+        Args:
+            connection_id: ID of the database connection
+            schema: Schema name to filter tables (required for most databases)
+            
+        Returns:
+            List of table names
+            
+        Raises:
+            ValueError: If schema is not provided for databases that require it
+        """
         db_connection = self.get_connection(connection_id)
         
         # Get the database engine
@@ -181,18 +192,21 @@ class DatabaseService:
         # Get all tables
         inspector = inspect(engine)
         
-        # If schema is not specified, use appropriate default based on database type
+        # For database types that require schemas, make sure one is provided
         if schema is None:
-            if db_connection.db_type == DatabaseType.POSTGRESQL:
-                schema = 'public'
-            elif db_connection.db_type == DatabaseType.MYSQL:
-                schema = db_connection.database_name
+            # SQLite doesn't use schemas in the traditional sense
+            if db_connection.db_type == DatabaseType.SQLITE:
+                return inspector.get_table_names()
+            else:
+                # For all other database types, require a schema
+                schemas = self.get_schemas(connection_id)
+                schema_list = "\n - ".join(schemas)
+                error_msg = f"Schema parameter is required. Available schemas:\n - {schema_list}"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
                 
-        # Get tables for the specified schema if applicable to this database type    
-        if schema and db_connection.db_type not in [DatabaseType.SQLITE]:
-            return inspector.get_table_names(schema=schema)
-        else:
-            return inspector.get_table_names()
+        # Get tables for the specified schema
+        return inspector.get_table_names(schema=schema)
 
     def get_table_schema(self, connection_id: int, table_name: str) -> TableSchemaResponse:
         """Get the schema of a table."""
