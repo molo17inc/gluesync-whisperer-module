@@ -2,18 +2,23 @@
 """
  * This file is part of Database Automator.
  *
- * Database Automator is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Database Automator is dual-licensed under the following licenses:
  *
- * Database Automator is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * 1. GNU General Public License (GPL) Version 3
+ *    You may use, modify, and distribute this software under the terms of the GPL v3.
+ *    See the LICENSE-GPL file or <http://www.gnu.org/licenses/gpl-3.0.html> for details.
+ *    This option is available at no cost, but any derivative works must also be licensed under GPL v3.
  *
- * You should have received a copy of the GNU General Public License
- * along with Database Automator.  If not, see <http://www.gnu.org/licenses/>.
+ * 2. MOLO17 Commercial License
+ *    Alternatively, you may use this software under the MOLO17 Commercial License,
+ *    which includes a warranty and permits proprietary use. Contact MOLO17 at info@molo17.com
+ *    for licensing terms and conditions.
+ *
+ * You must choose one of these licenses to use this software. Using this software implies
+ * acceptance of one of these licenses. See the accompanying LICENSE files or contact
+ * MOLO17 for more information.
+ *
+ * Copyright (C) 2025 MOLO17. All rights reserved.
 """
 
 import enum
