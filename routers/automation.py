@@ -59,14 +59,9 @@ async def test_connection(
             detail=f"Connection with id {connection_request.connection_id} not found"
         )
     
-    automator = AutomatorService(
-        db_type=connection.db_type,
-        host=connection.host,
-        port=connection.port,
-        database=connection.database_name,
-        username=connection.username,
-        password=connection.password
-    )
+    from services.database_service import DatabaseService
+    db_service = DatabaseService(db)
+    automator = AutomatorService(db=db)
     
     success, message = await automator.test_connection()
     return ConnectionTestResponse(success=success, message=message)
@@ -87,16 +82,11 @@ async def list_tables(
             detail=f"Connection with id {connection_id} not found"
         )
     
-    automator = AutomatorService(
-        db_type=connection.db_type,
-        host=connection.host,
-        port=connection.port,
-        database=connection.database_name,
-        username=connection.username,
-        password=connection.password
-    )
+    from services.database_service import DatabaseService
+    db_service = DatabaseService(db)
+    automator = AutomatorService(db=db)
     
-    tables = await automator.list_tables()
+    tables = await automator.list_tables(connection_id=connection_id)
     return TableListResponse(tables=tables)
 
 
@@ -116,14 +106,9 @@ async def get_table_schema(
             detail=f"Connection with id {connection_id} not found"
         )
     
-    automator = AutomatorService(
-        db_type=connection.db_type,
-        host=connection.host,
-        port=connection.port,
-        database=connection.database_name,
-        username=connection.username,
-        password=connection.password
-    )
+    from services.database_service import DatabaseService
+    db_service = DatabaseService(db)
+    automator = AutomatorService(db=db)
     
     schema = await automator.get_table_schema(table_name)
     if not schema:

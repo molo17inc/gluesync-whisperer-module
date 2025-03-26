@@ -38,6 +38,8 @@ class ConnectionStatus(enum.Enum):
     RUNNING = "running"
     ERROR = "error"
     PAUSED = "paused"
+    BUSY = "busy"
+    CONNECTED = "connected"
 
 
 class DatabaseType(enum.Enum):
@@ -46,6 +48,7 @@ class DatabaseType(enum.Enum):
     SQLITE = "sqlite"
     MSSQL = "mssql"
     ORACLE = "oracle"
+    AS400 = "as400"
 
 
 class DatabaseConnection(Base):

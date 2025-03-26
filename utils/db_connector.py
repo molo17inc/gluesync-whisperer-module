@@ -28,6 +28,7 @@ from sqlalchemy.exc import SQLAlchemyError
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from models import DatabaseType
+from utils.sql_statements import get_sql_statements
 
 # Configure logging
 logging.basicConfig(
@@ -48,6 +49,20 @@ def build_connection_string(db_type, host, port, username, password, database_na
         return f"mssql+pyodbc://{username}:{password}@{host}:{port}/{database_name}?driver=ODBC+Driver+17+for+SQL+Server"
     elif db_type == DatabaseType.ORACLE:
         return f"oracle+cx_oracle://{username}:{password}@{host}:{port}/{database_name}"
+    elif db_type == DatabaseType.AS400:
+        # IBM i Series uses 'ibm_db_sa' dialect, or 'pyodbc' with the proper driver
+        # This requires installing either:
+        #   - ibm_db and ibm_db_sa packages (pip install ibm_db ibm_db_sa)
+        #   - pyodbc with IBM i Access ODBC Driver installed on the system
+        # 
+        # Default port for IBM i is 446 but can be overridden
+        # Format: ibm_db_sa://username:password@host:port/database
+        # Alternatively with pyodbc: pyodbc://username:password@dsn_name
+        if host and port:
+            return f"ibm_db_sa://{username}:{password}@{host}:{port}/{database_name}"
+        else:
+            # If no host/port, assume DSN configuration with pyodbc
+            return f"pyodbc://{username}:{password}@{database_name}?driver=IBM+i+Access+ODBC+Driver"
     else:
         raise ValueError(f"Unsupported database type: {db_type}")
 
@@ -64,6 +79,8 @@ class DatabaseConnector:
         self.password = password
         self.engine = None
         self.inspector = None
+        # Initialize database-specific SQL statements based on type
+        self.sql_statements = get_sql_statements(db_type)
     
     def connect(self):
         """Connect to the database."""
@@ -86,12 +103,49 @@ class DatabaseConnector:
             # Create inspector
             self.inspector = inspect(self.engine)
             
-            logger.info(f"Connected to {self.db_type.value} database")
+            # Get database version
+            self.version = self.get_database_version()
+            
+            logger.info(f"Connected to {self.db_type.value} database version {self.version}")
             return True
         
         except SQLAlchemyError as e:
             logger.error(f"Error connecting to database: {str(e)}")
             return False
+            
+    def get_database_version(self):
+        """Get the database version using database-specific SQL statements."""
+        try:
+            if not self.engine:
+                return "unknown"
+                
+            # Get version SQL statement from our specialized SQL statements
+            version_query = self.sql_statements.get_version_statement()
+            
+            # Execute the version query
+            result = self.execute_query(version_query)
+            
+            if result and len(result) > 0:
+                # Extract version info from result
+                row = result[0]
+                
+                # Different databases return version in different column names
+                if 'VERSION()' in row:
+                    return row['VERSION()']
+                elif 'version' in row:
+                    return row['version']
+                elif 'VERSION' in row:
+                    return row['VERSION']
+                elif 'BANNER' in row: # Oracle specific
+                    return row['BANNER']
+                else:
+                    # Return first column's value if we can't identify a specific version column
+                    return list(row.values())[0]
+            
+            return "unknown"
+        except Exception as e:
+            logger.warning(f"Error getting database version: {str(e)}")
+            return "unknown"
     
     def disconnect(self):
         """Disconnect from the database."""
@@ -99,77 +153,320 @@ class DatabaseConnector:
             self.engine.dispose()
             logger.info("Disconnected from database")
     
-    def get_tables(self):
+    def get_tables(self, schema=None):
         """Get a list of all tables in the database."""
-        if not self.inspector:
+        if not self.engine:
             raise RuntimeError("Not connected to database")
         
-        tables = self.inspector.get_table_names()
-        logger.info(f"Found {len(tables)} tables:")
-        for table in tables:
-            logger.info(f" - {table}")
-        
-        return tables
+        try:
+            # Use specialized SQL statements specific to the database type
+            if schema is None and self.db_type != DatabaseType.SQLITE:
+                # Try to get schema from connection
+                schema = self.database
+            
+            if self.db_type == DatabaseType.SQLITE:
+                # For SQLite, which doesn't have schemas in the traditional sense
+                query = self.sql_statements.get_tables_statement()
+                result = self.execute_query(query)
+            else:
+                # For databases with schemas
+                query = self.sql_statements.get_tables_statement(schema)
+                result = self.execute_query(query.replace('?', ':schema'), params={'schema': schema})
+            
+            tables = []
+            if result:
+                # Extract table names, handling different result structures
+                if isinstance(result, list) and len(result) > 0:
+                    if 'TABLE_NAME' in result[0]:
+                        tables = [row['TABLE_NAME'] for row in result]
+                    elif 'table_name' in result[0]:
+                        tables = [row['table_name'] for row in result]
+                    elif len(result[0]) == 1:  # One-column result
+                        tables = [list(row.values())[0] for row in result]
+            
+            logger.info(f"Found {len(tables)} tables in schema {schema}")
+            for table in tables:
+                logger.debug(f" - {table}")
+            
+            return tables
+        except Exception as e:
+            logger.error(f"Error getting tables: {str(e)}")
+            # Fallback to SQLAlchemy inspect method
+            tables = self.inspector.get_table_names()
+            logger.info(f"Using SQLAlchemy inspector, found {len(tables)} tables")
+            return tables
+            
+    def get_tables_info(self, schema=None):
+        """Get comprehensive information about all tables in the database.
+        This is useful for dynamically detecting table relationships."""
+        if not self.engine:
+            raise RuntimeError("Not connected to database")
+            
+        try:
+            # Get all table names first
+            tables = self.get_tables(schema)
+            
+            # For each table, get schema information
+            tables_info = {}
+            for table in tables:
+                try:
+                    # Get detailed table schema
+                    table_schema = self.get_table_schema(table, schema)
+                    tables_info[table] = {
+                        'columns': list(table_schema['columns'].keys()),
+                        'primary_keys': table_schema['primary_keys'],
+                        'foreign_keys': table_schema['foreign_keys']
+                    }
+                except Exception as e:
+                    logger.warning(f"Error getting schema for table {table}: {str(e)}")
+            
+            return tables_info
+        except Exception as e:
+            logger.error(f"Error getting tables info: {str(e)}")
+            return {}
     
-    def get_table_schema(self, table_name):
-        """Get the schema of a table."""
-        if not self.inspector:
+    def get_table_schema(self, table_name, schema=None):
+        """Get the schema of a table using database-specific SQL queries."""
+        if not self.engine:
             raise RuntimeError("Not connected to database")
         
-        # Get columns
-        columns = {}
-        for column in self.inspector.get_columns(table_name):
-            columns[column['name']] = {
-                'type': str(column['type']),
-                'nullable': column.get('nullable', True),
-                'default': str(column.get('default', None)),
-                'primary_key': False  # Will be updated below
+        try:
+            # Use specialized SQL statements for this database type
+            if schema is None and self.db_type != DatabaseType.SQLITE:
+                # Try to get schema from connection
+                schema = self.database
+                
+            # Get columns with detailed information
+            columns = {}
+            
+            # Use database-specific column query
+            if self.db_type == DatabaseType.SQLITE:
+                query = self.sql_statements.get_columns_statement(table=table_name)
+                column_results = self.execute_query(query)
+                
+                # SQLite PRAGMA table_info returns different column names
+                for col in column_results:
+                    name = col.get('name')
+                    columns[name] = {
+                        'type': col.get('type', ''),
+                        'nullable': col.get('notnull', 1) == 0,  # 0 means nullable in SQLite
+                        'default': col.get('dflt_value'),
+                        'primary_key': col.get('pk', 0) == 1,  # 1 means primary key
+                        'extra': ''
+                    }
+            else:
+                # For other databases, use the specialized query
+                query = self.sql_statements.get_columns_statement(schema, table_name)
+                if '?' in query:
+                    # For parameterized queries
+                    if self.db_type == DatabaseType.ORACLE:
+                        params = {'schema': schema, 'table': table_name}
+                    else:
+                        params = [schema, table_name]
+                    column_results = self.execute_query(query.replace('?', ':param'), params=params)
+                else:
+                    column_results = self.execute_query(query)
+                
+                # Process column results based on database type
+                for col in column_results:
+                    # Normalize column names (handle case sensitivity)
+                    col_dict = {k.lower(): v for k, v in col.items()}
+                    
+                    # Extract common properties, adapting to various DB naming conventions
+                    name = col_dict.get('column_name') or next((col_dict[k] for k in col_dict if 'column_name' in k.lower()), '')
+                    data_type = col_dict.get('data_type') or next((col_dict[k] for k in col_dict if 'data_type' in k.lower()), '')
+                    is_nullable = col_dict.get('is_nullable', 'YES') in ('YES', 'yes', 'Y', 'y', True, 1)
+                    is_primary = col_dict.get('is_primary_key', 0) in (1, True, 'YES', 'yes', 'Y', 'y')
+                    default_val = col_dict.get('column_default') or col_dict.get('default')
+                    extra = col_dict.get('extra', '')
+                    
+                    # For MySQL, examine COLUMN_KEY and EXTRA for primary key and auto_increment
+                    if self.db_type == DatabaseType.MYSQL:
+                        if col_dict.get('column_key') == 'PRI':
+                            is_primary = True
+                        extra = col_dict.get('extra', '')
+                    
+                    # For PostgreSQL, check for identity columns
+                    if self.db_type == DatabaseType.POSTGRESQL and 'identity' in str(default_val).lower():
+                        extra = 'auto_increment'
+                        
+                    # For MS SQL Server, check for identity property
+                    if self.db_type == DatabaseType.MSSQL and col_dict.get('is_identity', 0) in (1, True):
+                        extra = 'auto_increment'
+                    
+                    # Store normalized column info
+                    columns[name] = {
+                        'type': data_type,
+                        'nullable': is_nullable,
+                        'default': default_val,
+                        'primary_key': is_primary,
+                        'extra': extra
+                    }
+            
+            # Get primary keys specifically
+            primary_keys = []
+            try:
+                if self.db_type == DatabaseType.SQLITE:
+                    # For SQLite, primary keys already in column info
+                    primary_keys = [name for name, col in columns.items() if col['primary_key']]
+                else:
+                    # For other databases, use dedicated query
+                    query = self.sql_statements.get_primary_keys_statement(schema, table_name)
+                    if '?' in query:
+                        # For parameterized queries
+                        if self.db_type == DatabaseType.ORACLE:
+                            params = {'schema': schema, 'table': table_name}
+                        else:
+                            params = [schema, table_name]
+                        pk_results = self.execute_query(query.replace('?', ':param'), params=params)
+                    else:
+                        pk_results = self.execute_query(query)
+                    
+                    if pk_results:
+                        for pk_row in pk_results:
+                            # Extract column name (adapt to various DB naming conventions)
+                            pk_col = next((pk_row[k] for k in pk_row if 'column_name' in k.lower()), None)
+                            if pk_col and pk_col in columns:
+                                primary_keys.append(pk_col)
+                                columns[pk_col]['primary_key'] = True
+            except Exception as e:
+                logger.warning(f"Error getting primary keys: {str(e)}")
+                # Fallback to SQLAlchemy inspector
+                pk_constraint = self.inspector.get_pk_constraint(table_name)
+                if pk_constraint and 'constrained_columns' in pk_constraint:
+                    primary_keys = pk_constraint['constrained_columns']
+                    for pk in primary_keys:
+                        if pk in columns:
+                            columns[pk]['primary_key'] = True
+            
+            # Get foreign keys
+            foreign_keys = []
+            try:
+                if self.db_type != DatabaseType.SQLITE:
+                    query = self.sql_statements.get_foreign_keys_statement(schema, table_name)
+                    if '?' in query:
+                        # For parameterized queries
+                        if self.db_type == DatabaseType.ORACLE:
+                            params = {'schema': schema, 'table': table_name}
+                        else:
+                            params = [schema, table_name]
+                        fk_results = self.execute_query(query.replace('?', ':param'), params=params)
+                    else:
+                        fk_results = self.execute_query(query)
+                    
+                    if fk_results:
+                        for fk_row in fk_results:
+                            # Extract and normalize foreign key information
+                            fk_dict = {k.lower(): v for k, v in fk_row.items()}
+                            column = fk_dict.get('column_name') or next((fk_dict[k] for k in fk_dict if 'column_name' in k.lower()), None)
+                            ref_schema = fk_dict.get('referenced_table_schema') or schema
+                            ref_table = fk_dict.get('referenced_table_name') or fk_dict.get('referenced_table')
+                            ref_column = fk_dict.get('referenced_column_name') or fk_dict.get('referenced_column')
+                            
+                            if column and ref_table and ref_column:
+                                foreign_keys.append({
+                                    'constrained_columns': [column],
+                                    'referred_schema': ref_schema,
+                                    'referred_table': ref_table,
+                                    'referred_columns': [ref_column]
+                                })
+            except Exception as e:
+                logger.warning(f"Error getting foreign keys: {str(e)}")
+                # Fallback to SQLAlchemy inspector
+                for fk in self.inspector.get_foreign_keys(table_name):
+                    foreign_keys.append({
+                        'constrained_columns': fk.get('constrained_columns', []),
+                        'referred_table': fk.get('referred_table', ''),
+                        'referred_columns': fk.get('referred_columns', [])
+                    })
+            
+            # Get indexes - primarily use SQLAlchemy here as index info is complex
+            indexes = []
+            try:
+                for idx in self.inspector.get_indexes(table_name):
+                    indexes.append({
+                        'name': idx.get('name', ''),
+                        'columns': idx.get('column_names', []),
+                        'unique': idx.get('unique', False)
+                    })
+            except Exception as e:
+                logger.warning(f"Error getting indexes: {str(e)}")
+            
+            # Return consolidated schema information
+            return {
+                'table_name': table_name,
+                'columns': columns,
+                'primary_keys': primary_keys,
+                'foreign_keys': foreign_keys,
+                'indexes': indexes
             }
         
-        # Get primary keys
-        primary_keys = []
-        pk_constraint = self.inspector.get_pk_constraint(table_name)
-        if pk_constraint and 'constrained_columns' in pk_constraint:
-            primary_keys = pk_constraint['constrained_columns']
-            for pk in primary_keys:
-                if pk in columns:
-                    columns[pk]['primary_key'] = True
-        
-        # Get foreign keys
-        foreign_keys = []
-        for fk in self.inspector.get_foreign_keys(table_name):
-            foreign_keys.append({
-                'constrained_columns': fk.get('constrained_columns', []),
-                'referred_table': fk.get('referred_table', ''),
-                'referred_columns': fk.get('referred_columns', [])
-            })
-        
-        # Get indexes
-        indexes = []
-        for idx in self.inspector.get_indexes(table_name):
-            indexes.append({
-                'name': idx.get('name', ''),
-                'columns': idx.get('column_names', []),
-                'unique': idx.get('unique', False)
-            })
-        
-        return {
-            'table_name': table_name,
-            'columns': columns,
-            'primary_keys': primary_keys,
-            'foreign_keys': foreign_keys,
-            'indexes': indexes
-        }
+        except Exception as e:
+            logger.error(f"Error getting table schema: {str(e)}")
+            # Fallback to the original SQLAlchemy-based implementation
+            logger.info("Falling back to SQLAlchemy inspector for schema info")
+            
+            # Get columns using SQLAlchemy inspector
+            columns = {}
+            for column in self.inspector.get_columns(table_name):
+                columns[column['name']] = {
+                    'type': str(column['type']),
+                    'nullable': column.get('nullable', True),
+                    'default': str(column.get('default', None)),
+                    'primary_key': False,  # Will be updated below
+                    'extra': ''
+                }
+            
+            # Get primary keys
+            primary_keys = []
+            pk_constraint = self.inspector.get_pk_constraint(table_name)
+            if pk_constraint and 'constrained_columns' in pk_constraint:
+                primary_keys = pk_constraint['constrained_columns']
+                for pk in primary_keys:
+                    if pk in columns:
+                        columns[pk]['primary_key'] = True
+            
+            # Get foreign keys
+            foreign_keys = []
+            for fk in self.inspector.get_foreign_keys(table_name):
+                foreign_keys.append({
+                    'constrained_columns': fk.get('constrained_columns', []),
+                    'referred_table': fk.get('referred_table', ''),
+                    'referred_columns': fk.get('referred_columns', [])
+                })
+            
+            # Get indexes
+            indexes = []
+            for idx in self.inspector.get_indexes(table_name):
+                indexes.append({
+                    'name': idx.get('name', ''),
+                    'columns': idx.get('column_names', []),
+                    'unique': idx.get('unique', False)
+                })
+            
+            return {
+                'table_name': table_name,
+                'columns': columns,
+                'primary_keys': primary_keys,
+                'foreign_keys': foreign_keys,
+                'indexes': indexes
+            }
     
-    def execute_query(self, query, max_rows=100):
-        """Execute a query and return the results."""
+    def execute_query(self, query, params=None, max_rows=100):
+        """Execute a query with optional parameters and return the results."""
         if not self.engine:
             raise RuntimeError("Not connected to database")
         
         try:
             with self.engine.connect() as conn:
-                # Execute query
-                result = conn.execute(text(query))
+                # Create SQLAlchemy text object with parameters if provided
+                sql_text = text(query)
+                
+                # Execute query with or without parameters
+                if params is not None:
+                    result = conn.execute(sql_text, params)
+                else:
+                    result = conn.execute(sql_text)
                 
                 # For SELECT queries
                 if result.returns_rows:
