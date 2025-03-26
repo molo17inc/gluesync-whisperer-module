@@ -1,4 +1,4 @@
-# GlueSync Whisperer
+# Gluesync Whisperer
 
 A specialized module for orchestrating database operations. This application enables you to connect to various database types and perform controlled insert, update, and delete operations based on user-defined configurations, creating a "pillow fight" of database activity.
 
@@ -14,20 +14,20 @@ A specialized module for orchestrating database operations. This application ena
 ## Installation
 
 1. Clone the repository with its submodules:
-```bash
-git clone --recursive https://gitlab.com/molo17-public/gluesync/gluesync-whisperer-module.git
-cd gluesync-whisperer-module
-```
+   ```bash
+   git clone --recursive https://gitlab.com/molo17-public/gluesync/gluesync-whisperer-module.git
+   cd gluesync-whisperer-module
+   ```
 
 2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+   ```bash
+   pip install -r requirements.txt
+   ```
 
 3. Initialize the database:
-```bash
-python3 init_db.py
-```
+   ```bash
+   python3 init_db.py
+   ```
 
 ## Usage
 

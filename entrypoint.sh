@@ -1,7 +1,7 @@
 #!/bin/bash
-# This file is part of GlueSync Whisperer.
+# This file is part of Gluesync Whisperer.
 #
-# GlueSync Whisperer is free software: you can redistribute it and/or modify
+# Gluesync Whisperer is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
@@ -12,7 +12,7 @@
 # GNU General Public License for more details.
 #
 # You should have received a copy of the GNU General Public License
-# along with GlueSync Whisperer.  If not, see <http://www.gnu.org/licenses/>.
+# along with Gluesync Whisperer.  If not, see <http://www.gnu.org/licenses/>.
 
 set -e
 
@@ -42,5 +42,5 @@ echo "Initializing database..."
 python3 -c "from database import Base, engine; Base.metadata.create_all(bind=engine)"
 
 # Start the application
-echo "Starting GlueSync Whisperer..."
+echo "Starting Gluesync Whisperer..."
 exec python3 app.py
