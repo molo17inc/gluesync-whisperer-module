@@ -272,13 +272,33 @@ class DatabaseConnector:
                 # For other databases, use the specialized query
                 query = self.sql_statements.get_columns_statement(schema, table_name)
                 
-                # Always use named parameters
-                params = {}
-                if schema is not None:
-                    params['schema'] = schema
-                params['table'] = table_name
-                
-                column_results = self.execute_query(query, params=params)
+                # For MySQL, directly substitute parameters to avoid escaping issues
+                if self.db_type == DatabaseType.MYSQL:
+                    # Directly substitute parameters in the query for MySQL
+                    # This is a special case to work around the %s escaping issue
+                    from sqlalchemy import text
+                    
+                    # Replace the %s with concrete values
+                    import re
+                    # Extract the SQL parts before and after WHERE clause
+                    match = re.search(r'(.*WHERE\s+C\.TABLE_SCHEMA\s*=\s*)%s(\s*AND\s+C\.TABLE_NAME\s*=\s*)%s(.*)', query, re.DOTALL | re.IGNORECASE)
+                    
+                    if match:
+                        part1, part2, part3 = match.groups()
+                        # Create a query with literal values
+                        formatted_query = f"{part1}'{schema}'{part2}'{table_name}'{part3}"
+                        column_results = self.execute_query(formatted_query)
+                    else:
+                        # Fallback to inspector if we can't parse the query
+                        logger.warning("Could not parse MySQL query pattern, falling back to SQLAlchemy inspector")
+                        return self.inspector.get_columns(table_name)
+                else:
+                    # For other databases, use the standard parameter mechanism
+                    params = {}
+                    if schema is not None:
+                        params['schema'] = schema
+                    params['table'] = table_name
+                    column_results = self.execute_query(query, params=params)
                 
                 # Process column results based on database type
                 for col in column_results:
@@ -356,24 +376,51 @@ class DatabaseConnector:
             try:
                 if self.db_type != DatabaseType.SQLITE:
                     query = self.sql_statements.get_foreign_keys_statement(schema, table_name)
-                    if '?' in query:
-                        # For parameterized queries
-                            # Convert to named parameters for all database types
-                            named_params = {}
-                            if schema:
-                                named_params['schema'] = schema
-                            if table_name:
-                                named_params['table'] = table_name
-                            # Replace all ? with named parameters
-                            modified_query = query
-                            param_count = 1
-                            while '?' in modified_query:
-                                param_name = f':p{param_count}'
-                                modified_query = modified_query.replace('?', param_name, 1)
-                                param_count += 1
-                            fk_results = self.execute_query(modified_query, params=named_params)
+                    
+                    # Handle different parameter styles based on database type
+                    if self.db_type == DatabaseType.MYSQL and "%s" in query:
+                        # For MySQL with %s placeholders, use direct string formatting
+                        params = []
+                        if schema:
+                            params.append(schema)
+                        if table_name:
+                            params.append(table_name)
+                            
+                        # Safely format the query
+                        formatted_query = query
+                        for param in params:
+                            placeholder_pos = formatted_query.find("%s")
+                            if placeholder_pos >= 0:
+                                # Apply proper quoting
+                                quoted_value = f"'{param}'" if isinstance(param, str) else str(param)
+                                formatted_query = formatted_query[:placeholder_pos] + quoted_value + formatted_query[placeholder_pos+2:]
+                        
+                        # Execute the formatted query without parameters
+                        fk_results = self.execute_query(formatted_query)
+                    elif '?' in query:
+                        # For parameterized queries with ? placeholders
+                        # Convert to named parameters for all database types
+                        named_params = {}
+                        if schema:
+                            named_params['schema'] = schema
+                        if table_name:
+                            named_params['table'] = table_name
+                        # Replace all ? with named parameters
+                        modified_query = query
+                        param_count = 1
+                        while '?' in modified_query:
+                            param_name = f':p{param_count}'
+                            modified_query = modified_query.replace('?', param_name, 1)
+                            param_count += 1
+                        fk_results = self.execute_query(modified_query, params=named_params)
                     else:
-                        fk_results = self.execute_query(query)
+                        # For other parameter styles (named parameters)
+                        params = {}
+                        if schema:
+                            params['schema'] = schema
+                        if table_name:
+                            params['table'] = table_name
+                        fk_results = self.execute_query(query, params=params)
                     
                     if fk_results:
                         for fk_row in fk_results:
@@ -479,30 +526,73 @@ class DatabaseConnector:
         
         try:
             with self.engine.connect() as conn:
+                # Convert the query to SQLAlchemy text object
                 sql_text = text(query)
                 
-                # Execute query with or without parameters
+                # Handle different parameter styles based on database type
                 if params is not None:
-                    # For MySQL with %s placeholders, convert named params to positional order
+                    # CASE 1: MySQL with %s placeholders
                     if self.db_type == DatabaseType.MYSQL and "%s" in query:
-                        # Extract values in the order they appear in the query
+                        # MySQL needs special handling for %s placeholders
+                        # Use direct string interpolation with proper quoting
+                        param_values = []
+                        
+                        # Extract parameter values in the correct order
                         if isinstance(params, dict):
-                            # Assume schema comes first, then table if both exist
-                            positional_params = []
+                            # Extract values for named parameters in expected order
                             if "schema" in params:
-                                positional_params.append(params["schema"])
+                                param_values.append(params["schema"])
                             if "table" in params:
-                                positional_params.append(params["table"])
+                                param_values.append(params["table"])
                             if "column" in params:
-                                positional_params.append(params["column"])
-                            result = conn.execute(sql_text, *positional_params)
+                                param_values.append(params["column"])
+                        elif isinstance(params, (list, tuple)):
+                            param_values = list(params)
                         else:
-                            # If already a list/tuple, pass as is
-                            result = conn.execute(sql_text, *params)
+                            # Single parameter
+                            param_values = [params]
+                        
+                        # Safely replace each %s with properly quoted values
+                        formatted_query = query
+                        for value in param_values:
+                            placeholder_pos = formatted_query.find("%s")
+                            if placeholder_pos >= 0:
+                                # Apply proper quoting based on value type
+                                quoted_value = f"'{value}'" if isinstance(value, str) else str(value)
+                                formatted_query = formatted_query[:placeholder_pos] + quoted_value + formatted_query[placeholder_pos+2:]
+                        
+                        # Execute with the safely interpolated query
+                        sql_text = text(formatted_query)
+                        result = conn.execute(sql_text)
+                    
+                    # CASE 2: PostgreSQL/Oracle with named parameters (:param)
+                    elif self.db_type in [DatabaseType.POSTGRESQL, DatabaseType.ORACLE, DatabaseType.MSSQL] and any(f":{param}" in query for param in ["schema", "table", "column"]):
+                        # These databases work well with SQLAlchemy's named parameter binding
+                        result = conn.execute(sql_text, params)
+                    
+                    # CASE 3: SQLite with named parameters (:param)
+                    elif self.db_type == DatabaseType.SQLITE and any(f":{param}" in query for param in ["schema", "table", "column"]):
+                        # SQLite works with both named parameters and ? placeholders
+                        result = conn.execute(sql_text, params)
+                    
+                    # CASE 4: AS400/DB2 with parameter markers
+                    elif self.db_type == DatabaseType.AS400:
+                        # AS400/DB2 uses ? or :name parameter markers depending on configuration
+                        # If query contains ? placeholders and params is a list/tuple
+                        if "?" in query and isinstance(params, (list, tuple)):
+                            # Convert list to dict with positional keys for SQLAlchemy
+                            positional_dict = {i: val for i, val in enumerate(params)}
+                            result = conn.execute(sql_text, positional_dict)
+                        else:
+                            # Otherwise use standard parameter binding
+                            result = conn.execute(sql_text, params)
+                    
+                    # CASE 5: Any other database or parameter style
                     else:
-                        # Use standard parameter binding for other cases
+                        # Use standard SQLAlchemy parameter binding as fallback
                         result = conn.execute(sql_text, params)
                 else:
+                    # No parameters - execute the query as-is
                     result = conn.execute(sql_text)
                 
                 # For SELECT queries
