@@ -51,10 +51,11 @@ deploy:
         VERSION="latest"
       fi
       
-      APP_NAME=${APP_NAME:-"database-whisperer"}
-      
-      DEFAULT_TAG="${DOCKER_REGISTRY}/${APP_NAME}:${VERSION}"
-      LATEST_TAG="${DOCKER_REGISTRY}/${APP_NAME}:latest"
+      DEFAULT_NAME=${DOCKER_REGISTRY}/${APP_NAME}
+      ADDITIONAL_TAG="${DEFAULT_NAME}:${TAGPART}"
+
+      DEFAULT_TAG="${DEFAULT_NAME}:${VERSION}"
+      LATEST_TAG="${DEFAULT_NAME}:latest"
 
     # Set up Docker Buildx for multi-platform builds
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" $CI_REGISTRY
