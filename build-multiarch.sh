@@ -35,4 +35,4 @@ docker buildx build \
   .
 
 echo "Multi-architecture image built successfully!"
-echo "You can run it with: docker-compose up -d"
+echo "You can run it with: docker compose up -d"
