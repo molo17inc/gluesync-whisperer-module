@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  automator:
+    build: .
+    container_name: automator
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - DB_URL=sqlite:///./data/automator.db
+      - HOST=0.0.0.0
+      - PORT=8000
+      - DEBUG=false
+      - DEFAULT_OPERATION_DELAY=1.0
+      - DEFAULT_BATCH_SIZE=1
+      - MAX_OPERATIONS=0
+      - INSERT_WEIGHT=0.33
+      - UPDATE_WEIGHT=0.33
+      - DELETE_WEIGHT=0.34

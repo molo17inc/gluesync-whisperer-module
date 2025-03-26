@@ -1,0 +1,117 @@
+# Build stage for SDK installation
+FROM python:3.11-slim AS builder
+
+WORKDIR /build
+
+# Set environment variables for Python and dependency installation
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libc6-dev \
+    python3-dev \
+    && apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy only the SDK submodule (if available)
+COPY ./gluesync-sdk ./gluesync-sdk
+
+# Install specific websockets version first to avoid compatibility issues
+RUN pip install websockets==11.0.3
+
+# Install the SDK from the submodule and create a wheel (if submodule exists)
+RUN pip install wheel && \
+    if [ -d "./gluesync-sdk" ]; then \
+        cd ./gluesync-sdk && \
+        pip wheel -w /wheels .; \
+    else \
+        mkdir -p /wheels; \
+    fi
+
+# Final stage
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Create Gluesync default directories and app data directory
+RUN mkdir -p /opt/gluesync/data && \
+    mkdir -p /app/data && \
+    chmod 777 /app/data
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    # Core Hub settings \
+    CORE_HUB_URL= \
+    ENTITY_START_TIMEOUT=2 \
+    # API Server settings \
+    HOST=0.0.0.0 \
+    PORT=1717 \
+    DEBUG=False \
+    # Database settings \
+    DATA_DIR=/app/data \
+    DB_URL=sqlite:///./data/whisperer.db \
+    # CORS settings \
+    ALLOWED_ORIGINS=* \
+    # Automator settings \
+    DEFAULT_OPERATION_DELAY=1.0 \
+    DEFAULT_BATCH_SIZE=1 \
+    MAX_OPERATIONS=1000 \
+    # Gluesync SDK settings using default paths \
+    GLUESYNC_LICENSE_FILE=/opt/gluesync/data/gs-license.dat \
+    SSL_ENABLED=False \
+    GLUESYNC_SECURITY_CONFIG=/opt/gluesync/data/security-config.json \
+    SSL_SKIP_VERIFY=True
+
+# Install system dependencies for database drivers and runtime requirements
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    unixodbc-dev \
+    libpq-dev \
+    curl \
+    openssl \
+    && apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy wheels from builder stage
+COPY --from=builder /wheels /wheels
+
+# Copy only necessary application files
+COPY ./requirements.txt .
+COPY ./entrypoint.sh .
+COPY ./app.py .
+COPY ./config.py .
+COPY ./models.py .
+COPY ./schemas.py .
+COPY ./database.py .
+COPY ./utils ./utils
+COPY ./api ./api
+COPY ./routers ./routers
+COPY ./services ./services
+COPY ./jdbc_drivers ./jdbc_drivers
+COPY ./run_auto_operations.py .
+
+# Create logs directory
+RUN mkdir -p /app/logs
+
+# Make entrypoint script executable
+RUN if [ -f "/app/entrypoint.sh" ]; then chmod +x /app/entrypoint.sh; fi
+
+# Install specific websockets version first to avoid compatibility issues
+RUN pip install websockets==11.0.3
+
+# Install the SDK from the wheel if exists
+RUN if [ -d "/wheels" ] && [ "$(ls -A /wheels)" ]; then pip install /wheels/*; fi
+
+# Install other Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Expose port
+EXPOSE 8000
+
+# Command to run the application
+CMD ["python3", "app.py"]
