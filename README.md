@@ -48,7 +48,7 @@ Once the server is running, access the API documentation at:
 
 ## License
 
-Database Automator (Gluesync Whisperer) is dual-licensed under the following licenses:
+Gluesync Whisperer (Gluesync Whisperer) is dual-licensed under the following licenses:
 
 1. **GNU General Public License (GPL) Version 3**  
    You may use, modify, and distribute this software under the terms of the GPL v3.  

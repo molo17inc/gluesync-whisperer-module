@@ -1,5 +1,5 @@
-# This file is part of Database Automator.
-# Database Automator is dual-licensed under the following licenses:
+# This file is part of Gluesync Whisperer.
+# Gluesync Whisperer is dual-licensed under the following licenses:
 
 # 1. GNU General Public License (GPL) Version 3
 #    You may use, modify, and distribute this software under the terms of the GPL v3.
@@ -35,7 +35,7 @@ deploy:
       variables:
         DOCKER_TLS_CERTDIR: ""
   script:
-    - echo "Building & deploying Database Automator..."
+    - echo "Building & deploying Gluesync Whisperer..."
     
     # Initialize and update the Git submodule
     - git submodule init
