@@ -24,12 +24,12 @@ if [ -n "$CORE_HUB_URL" ]; then
     echo "Waiting for CoreHub to be available at $CORE_HUB_URL..."
     timeout=30
     counter=0
-    until curl -s --head --fail "$CORE_HUB_URL" > /dev/null 2>&1 || [ $counter -eq $timeout ]; do
+    until curl -s --head --fail "$CORE_HUB_URL" >/dev/null 2>&1 || [ $counter -eq $timeout ]; do
         echo "Waiting for CoreHub to become available... ($counter/$timeout)"
-        counter=$((counter+1))
+        counter=$((counter + 1))
         sleep 1
     done
-    
+
     if [ $counter -eq $timeout ]; then
         echo "CoreHub did not become available in time, but continuing anyway..."
     else

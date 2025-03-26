@@ -33,7 +33,7 @@ from sqlalchemy.exc import SQLAlchemyError
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from models import DatabaseType
-from utils.sql_statements import get_sql_statements
+from utils.sql import get_sql_statements
 
 # Configure logging
 logging.basicConfig(
@@ -176,7 +176,11 @@ class DatabaseConnector:
             else:
                 # For databases with schemas
                 query = self.sql_statements.get_tables_statement(schema)
-                result = self.execute_query(query.replace('?', ':schema'), params={'schema': schema})
+                if '?' in query:
+                        # The SQL statements now use named parameters directly, no need to replace ?
+                    result = self.execute_query(query, params={'schema': schema})
+                else:
+                    result = self.execute_query(query, params={'schema': schema})
             
             tables = []
             if result:
@@ -319,11 +323,14 @@ class DatabaseConnector:
                     query = self.sql_statements.get_primary_keys_statement(schema, table_name)
                     if '?' in query:
                         # For parameterized queries
-                        if self.db_type == DatabaseType.ORACLE:
-                            params = {'schema': schema, 'table': table_name}
-                        else:
-                            params = [schema, table_name]
-                        pk_results = self.execute_query(query.replace('?', ':param'), params=params)
+                            # Convert to named parameters for all database types
+                            named_params = {}
+                            if schema:
+                                named_params['schema'] = schema
+                            if table_name:
+                                named_params['table'] = table_name
+                            # The SQL statements now use named parameters directly, no need to replace ?
+                            pk_results = self.execute_query(query, params=named_params)
                     else:
                         pk_results = self.execute_query(query)
                     
@@ -351,11 +358,20 @@ class DatabaseConnector:
                     query = self.sql_statements.get_foreign_keys_statement(schema, table_name)
                     if '?' in query:
                         # For parameterized queries
-                        if self.db_type == DatabaseType.ORACLE:
-                            params = {'schema': schema, 'table': table_name}
-                        else:
-                            params = [schema, table_name]
-                        fk_results = self.execute_query(query.replace('?', ':param'), params=params)
+                            # Convert to named parameters for all database types
+                            named_params = {}
+                            if schema:
+                                named_params['schema'] = schema
+                            if table_name:
+                                named_params['table'] = table_name
+                            # Replace all ? with named parameters
+                            modified_query = query
+                            param_count = 1
+                            while '?' in modified_query:
+                                param_name = f':p{param_count}'
+                                modified_query = modified_query.replace('?', param_name, 1)
+                                param_count += 1
+                            fk_results = self.execute_query(modified_query, params=named_params)
                     else:
                         fk_results = self.execute_query(query)
                     
@@ -464,12 +480,32 @@ class DatabaseConnector:
         
         try:
             with self.engine.connect() as conn:
+                # Handle named parameter conversion if needed
+                # Convert from :param style to %(param)s style if needed
+                modified_query = query
+                modified_params = params
+                
+                if params is not None and ':' in query:
+                    # Convert :param style to %(param)s style
+                    import re
+                    param_pattern = r':(\w+)'
+                    matches = re.findall(param_pattern, query)
+                    
+                    # Create a new params dict with SQLAlchemy-compatible keys
+                    modified_params = {}
+                    for match in matches:
+                        if match in params:
+                            modified_params[match] = params[match]
+                    
+                    # Replace :param with %(param)s in the query
+                    modified_query = re.sub(param_pattern, r'%(\1)s', query)
+                
                 # Create SQLAlchemy text object with parameters if provided
-                sql_text = text(query)
+                sql_text = text(modified_query)
                 
                 # Execute query with or without parameters
-                if params is not None:
-                    result = conn.execute(sql_text, params)
+                if modified_params is not None:
+                    result = conn.execute(sql_text, modified_params)
                 else:
                     result = conn.execute(sql_text)
                 

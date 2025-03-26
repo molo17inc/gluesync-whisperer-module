@@ -486,10 +486,10 @@ class TableAutomator:
                     fk_query = """
                     SELECT TABLE_NAME, COLUMN_NAME 
                     FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE 
-                    WHERE REFERENCED_TABLE_NAME = ? AND REFERENCED_COLUMN_NAME = ? 
+                    WHERE REFERENCED_TABLE_NAME = :table AND REFERENCED_COLUMN_NAME = :column 
                     AND CONSTRAINT_SCHEMA = DATABASE()
                     """
-                    fk_results = self.connector.execute_query(fk_query, params=[self.table_name, 'ID'])
+                    fk_results = self.connector.execute_query(fk_query, params={'table': self.table_name, 'column': 'ID'})
                     
                     if fk_results:
                         # If we have actual FK information, use that instead of guessing
@@ -506,7 +506,7 @@ class TableAutomator:
                 dependent_column = None
                 
                 # Create a custom connector that doesn't log expected errors
-                from utils.db_connector import DBConnector
+                from utils.db_connector import DatabaseConnector
                 class QuietConnector:
                     def __init__(self, connector):
                         self._connector = connector
@@ -515,30 +515,49 @@ class TableAutomator:
                         try:
                             return self._connector.execute_query(query, params)
                         except Exception as e:
-                            if "Unknown column" in str(e):
-                                # This is an expected error during FK discovery - log at debug level
+                            # Log expected errors during discovery at debug level
+                            if any(err in str(e) for err in ["Unknown column", "doesn't exist", "no such table"]):
                                 logger.debug(f"Foreign key check: {str(e)}")
                                 return None
-                            # For other errors, let them propagate
-                            raise
+                            # For other errors, log but continue
+                            logger.debug(f"Error in quiet connector: {str(e)}")
+                            return None
                 
                 quiet_connector = QuietConnector(self.connector)
                 
                 # Check each potential related table
                 for related_table in potential_related_tables:
-                    for fk_col in potential_fk_cols:
-                        check_query = f"SELECT COUNT(*) as count FROM {related_table} WHERE {fk_col} = {record_id}"
-                        check_result = quiet_connector.execute_query(check_query)
+                    # First check if table exists
+                    try:
+                        # Get the columns for this table to avoid "unknown column" errors
+                        schema_query = f"SELECT * FROM {related_table} LIMIT 0"
+                        schema_result = quiet_connector.execute_query(schema_query)
                         
-                        if check_result and check_result[0]['count'] > 0:
-                            logger.info(f"Found dependent records in {related_table}.{fk_col} for {self.table_name} ID {record_id}")
-                            has_dependent_records = True
-                            dependent_table = related_table
-                            dependent_column = fk_col
-                            break
-                    
-                    if has_dependent_records:
-                        break
+                        # Only proceed if the table exists
+                        if schema_result is not None:
+                            # Check if any of our potential FK columns exist in this table
+                            existing_columns = self.connector.get_table_schema(related_table).get('columns', {})
+                            existing_fk_cols = [col for col in potential_fk_cols if col in existing_columns]
+                            
+                            # Only try columns that actually exist in the table
+                            for fk_col in existing_fk_cols:
+                                check_query = f"SELECT COUNT(*) as count FROM {related_table} WHERE {fk_col} = {record_id}"
+                                check_result = quiet_connector.execute_query(check_query)
+                                
+                                if check_result and check_result[0]['count'] > 0:
+                                    logger.info(f"Found dependent records in {related_table}.{fk_col} for {self.table_name} ID {record_id}")
+                                    has_dependent_records = True
+                                    dependent_table = related_table
+                                    dependent_column = fk_col
+                                    break
+                        
+                            if has_dependent_records:
+                                break
+                    except Exception as e:
+                        # If the table doesn't exist or we can't query it, just continue
+                        logger.debug(f"Skipping table {related_table}: {str(e)}")
+                        
+
                 
                 # If we found dependent records, try to find an alternative record to delete
                 if has_dependent_records and len(results) > 1:
