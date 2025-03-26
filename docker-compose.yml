@@ -2,18 +2,21 @@ version: '3.8'
 
 services:
   whisperer:
-    build: .
+    image: gluesync-whisperer:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: whisperer
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "1717:1717"
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
     environment:
       - DB_URL=sqlite:///./data/whisperer.db
       - HOST=0.0.0.0
-      - PORT=8000
+      - PORT=1717
       - DEBUG=false
       - DEFAULT_OPERATION_DELAY=1.0
       - DEFAULT_BATCH_SIZE=1

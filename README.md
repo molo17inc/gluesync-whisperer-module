@@ -26,9 +26,9 @@ Gluesync Whisperer supports multiple database types, each requiring specific Pyt
 | SQLite | Built-in SQLAlchemy support | No additional packages needed |
 | MSSQL | `pyodbc` | Requires ODBC drivers to be installed on the system |
 | Oracle | `cx_Oracle` | May require Oracle client libraries |
-| AS400/DB2 | `ibm_db`, `ibm_db_sa` | Requires IBM DB2 client libraries |
+| AS400/DB2 | `ibm_db`, `ibm_db_sa` | **x86_64 platform only** - Not compatible with ARM-based platforms (M1/M2 Macs) |
 
-All required drivers are included in the Dockerfile for containerized deployment.
+All required drivers are included in the Dockerfile for containerized deployment on compatible platforms. For ARM-based systems (like M1/M2 Macs), AS400/DB2 support is disabled automatically during the build process.
 
 ### Local Installation
 
@@ -326,6 +326,8 @@ Before deploying a new database schema or application version to production, use
 
 ## Docker Usage
 
+### Basic Docker Build
+
 1. Build the Docker image:
 
    ```bash
@@ -337,3 +339,34 @@ Before deploying a new database schema or application version to production, use
    ```bash
    docker run -d -p 1717:1717 --name whisperer gluesync-whisperer
    ```
+
+### Multi-Architecture Docker Build
+
+Gluesync Whisperer supports multi-architecture Docker builds for both ARM64 (Apple Silicon/M1/M2) and AMD64 (Intel/x86_64) platforms.
+
+#### Platform-Specific Support Notes
+
+- **x86_64/AMD64**: Full support for all database types, including AS400/DB2
+- **ARM64/Apple Silicon**: Support for MySQL, PostgreSQL, SQLite, MSSQL, and Oracle; AS400/DB2 support is disabled due to driver incompatibility
+
+#### Using the Multi-Architecture Build Script
+
+1. Use the provided build script to create a multi-architecture image:
+
+   ```bash
+   ./build-multiarch.sh
+   ```
+
+2. Run using Docker Compose:
+
+   ```bash
+   docker-compose up -d
+   ```
+
+3. Check the logs:
+
+   ```bash
+   docker-compose logs -f
+   ```
+
+The Docker image will automatically detect the platform it's running on and enable or disable AS400 support accordingly.

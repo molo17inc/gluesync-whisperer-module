@@ -1,0 +1,6 @@
+# AS400/DB2 specific requirements
+# These packages are only compatible with x86_64 architecture
+# Do not attempt to install on ARM-based platforms (M1/M2 Macs)
+
+ibm_db_sa>=0.4.1  # SQLAlchemy dialect for DB2/AS400
+ibm-db>=3.2.6     # IBM DB2 database driver

@@ -275,13 +275,20 @@ class DatabaseService:
             return f"oracle+cx_oracle://{connection.username}:{connection.password}@{connection.host}:{connection.port}/{connection.database_name}"
         
         elif connection.db_type == DatabaseType.AS400:
-            # AS400: ibm_db_sa://username:password@host/database_name
-            # Note: port is typically ignored for AS400, using the default port
-            if connection.database_name:
-                return f"ibm_db_sa://{connection.username}:{connection.password}@{connection.host}/{connection.database_name}"
-            else:
-                # If no database name is provided, connect without specifying one
-                return f"ibm_db_sa://{connection.username}:{connection.password}@{connection.host}"
+            # Check if ibm_db_sa is available
+            try:
+                import ibm_db_sa
+                # AS400: ibm_db_sa://username:password@host/database_name
+                # Note: port is typically ignored for AS400, using the default port
+                if connection.database_name:
+                    return f"ibm_db_sa://{connection.username}:{connection.password}@{connection.host}/{connection.database_name}"
+                else:
+                    # If no database name is provided, connect without specifying one
+                    return f"ibm_db_sa://{connection.username}:{connection.password}@{connection.host}"
+            except ImportError:
+                # ibm_db_sa module not available, likely due to ARM architecture
+                logger.error("IBM DB2/AS400 drivers not available. This is expected on ARM-based platforms.")
+                raise ValueError("IBM DB2/AS400 drivers are not installed or not compatible with this platform.")
         
         else:
             raise ValueError(f"Unsupported database type: {connection.db_type}")

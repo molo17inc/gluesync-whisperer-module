@@ -97,7 +97,7 @@ COPY ./utils ./utils
 COPY ./api ./api
 COPY ./routers ./routers
 COPY ./services ./services
-COPY ./jdbc_drivers ./jdbc_drivers
+# JDBC drivers removed to reduce image size
 COPY ./run_auto_operations.py .
 
 # Create logs directory
@@ -115,8 +115,16 @@ RUN if [ -d "/wheels" ] && [ "$(ls -A /wheels)" ]; then pip install /wheels/*; e
 # Install all Python dependencies including database drivers
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Special handling for IBM DB2/AS400 drivers that may require additional steps
-RUN pip install --no-cache-dir ibm_db ibm_db_sa
+# Copy AS400 requirements file
+COPY ./requirements-as400.txt .
+
+# Conditionally install IBM DB2/AS400 drivers only on x86_64 architecture
+RUN if [ "$(uname -m)" = "x86_64" ]; then \
+    echo "Installing IBM DB2/AS400 drivers on x86_64 architecture" && \
+    pip install --no-cache-dir -r requirements-as400.txt || echo "Failed to install IBM DB2 drivers, continuing without AS400 support"; \
+    else \
+    echo "Skipping IBM DB2/AS400 drivers on non-x86_64 architecture: $(uname -m)"; \
+    fi
 
 # Expose port
 EXPOSE 8000

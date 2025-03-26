@@ -5,18 +5,16 @@ pydantic>=1.10.7
 pydantic-settings>=2.0.0
 python-dotenv>=1.0.0
 
-# Database drivers
+# Database drivers - Core
 pymysql>=1.0.2  # MySQL
 psycopg2-binary>=2.9.6  # PostgreSQL
 pyodbc>=4.0.35  # MSSQL
 cx_Oracle>=8.3.0  # Oracle
-ibm_db_sa>=0.3.8  # AS400/DB2
 
 # Testing and utilities
 pytest>=7.3.1
 httpx>=0.24.0
 python-multipart>=0.0.6
 aiofiles>=23.1.0
-JPype1>=1.4.1
 requests>=2.30.0
 Faker>=18.4.0
