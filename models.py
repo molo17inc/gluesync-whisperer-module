@@ -48,6 +48,7 @@ class DatabaseType(enum.Enum):
     SQLITE = "sqlite"
     MSSQL = "mssql"
     ORACLE = "oracle"
+    AS400 = "as400"
 
 
 class DatabaseConnection(Base):

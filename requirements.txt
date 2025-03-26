@@ -14,3 +14,4 @@ python-multipart>=0.0.6
 aiofiles>=23.1.0
 JPype1>=1.4.1
 requests>=2.30.0
+Faker>=18.4.0
