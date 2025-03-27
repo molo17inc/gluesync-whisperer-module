@@ -42,10 +42,20 @@ logger = logging.getLogger(__name__)
 class TableWhisperer:
     """Class to automate random operations on database tables."""
     
-    def __init__(self, connector, table_name, delay=1.0, operations=None):
-        """Initialize the whisperer with a database connector and table name."""
+    def __init__(self, connector, table_name, schema_name=None, delay=1.0, operations=None, pre_existing_schema=None):
+        """Initialize the whisperer with a database connector and table name.
+        
+        Args:
+            connector: Database connector instance
+            table_name: Name of the table to operate on
+            schema_name: Schema name for databases that require it
+            delay: Delay between operations
+            operations: List of operations to perform
+            pre_existing_schema: Optional pre-existing schema info from table configuration
+        """
         self.connector = connector
         self.table_name = table_name
+        self.schema_name = schema_name
         self.delay = delay
         self.operations = operations or ["insert", "update", "delete"]
         self.operation_weights = {
@@ -53,7 +63,8 @@ class TableWhisperer:
             "update": 0.33,
             "delete": 0.34
         }
-        self.schema = None
+        # Use pre-existing schema if provided
+        self.schema = pre_existing_schema or None
         self.running = False
         self.operation_count = {op: 0 for op in self.operations}
         
@@ -65,12 +76,49 @@ class TableWhisperer:
         # Analyze existing data (sampling) if available
         self.sample_data = {}
         self.column_patterns = {}
+        
+        # Store whether this is an AS400 database for later use
+        self.is_as400 = hasattr(self.connector, 'db_type') and self.connector.db_type.name == 'AS400'
+        
+        # Initialize the qualified table name
+        self._set_qualified_table_name()
+        
+    def _set_qualified_table_name(self):
+        """Initialize the qualified table name based on database type."""
+        # For AS400, always qualify with schema/library if available
+        if self.is_as400 and self.schema_name:
+            self.qualified_table_name = f"{self.schema_name}.{self.table_name}"
+        else:
+            # For other database types, use the table name as-is
+            self.qualified_table_name = self.table_name
+            
+    def get_qualified_table_name(self):
+        """Get the properly qualified table name for the database type."""
+        return self.qualified_table_name
+    
+
     
     def initialize(self):
-        """Initialize the whisperer by getting the table schema."""
+        """Initialize the whisperer by getting the table schema if not already provided."""
         try:
-            self.schema = self.connector.get_table_schema(self.table_name)
+            # If we already have schema information from table config, use that
+            if self.schema is not None:
+                logger.info(f"Using pre-existing schema for table {self.table_name}")
+                return True
+                
+            # Otherwise, get schema from the database
+            logger.info(f"Fetching schema for table {self.table_name}")
+            # For AS400, we need to pass the schema name when getting table schema
+            if hasattr(self.connector, 'db_type') and self.connector.db_type.name == 'AS400' and self.schema_name:
+                self.schema = self.connector.get_table_schema(self.table_name, self.schema_name)
+            else:
+                self.schema = self.connector.get_table_schema(self.table_name)
+                
             logger.info(f"Initialized whisperer for table {self.table_name}")
+            
+            # Store whether this is an AS400 database for later use
+            self.is_as400 = hasattr(self.connector, 'db_type') and self.connector.db_type.name == 'AS400'
+            
             # Now that we have schema information, introspect the table
             self.introspect_table()
             return True
@@ -82,11 +130,16 @@ class TableWhisperer:
         """Analyze the table structure and sample data to understand patterns."""
         try:
             # Use the get_table_schema method which now has specialized SQL for each DB type
-            logger.info(f"Introspecting table {self.table_name} using database-specific methods")
+            qualified_name = self.get_qualified_table_name()
+            logger.info(f"Introspecting table {qualified_name}")
             
-            # This will already set self.schema, but let's make sure we have the latest
-            # schema in case the table changed since initialization
-            self.schema = self.connector.get_table_schema(self.table_name)
+            # Only retrieve schema if we don't already have it
+            if self.schema is None:
+                logger.info(f"Fetching schema for table introspection")
+                if self.is_as400 and self.schema_name:
+                    self.schema = self.connector.get_table_schema(self.table_name, self.schema_name)
+                else:
+                    self.schema = self.connector.get_table_schema(self.table_name)
             
             # The schema now contains enhanced information:
             # - columns: detailed column specifications including types, nullability, etc.
@@ -102,14 +155,28 @@ class TableWhisperer:
             try:
                 # Use proper SQL quotes based on the database type
                 if hasattr(self.connector, 'db_type'):
-                    sample_query = self.connector.sql_statements.count_rows_statement(self.table_name)
+                    # Use the appropriate count query with schema name for AS400
+                    if self.is_as400 and self.schema_name:
+                        sample_query = self.connector.sql_statements.count_rows_statement(self.table_name, self.schema_name)
+                    else:
+                        sample_query = self.connector.sql_statements.count_rows_statement(self.table_name)
+                    
                     row_count = self.connector.execute_query(sample_query)[0]['count']
-                    logger.info(f"Table {self.table_name} has {row_count} rows")
+                    logger.info(f"Table {self.get_qualified_table_name()} has {row_count} rows")
                     
                     # Only get sample data if the table is not empty
                     if row_count > 0:
-                        sample_query = f"SELECT * FROM {self.table_name} LIMIT 5"
-                sample = self.connector.execute_query(sample_query)
+                        # Use qualified table name and correct syntax for AS400
+                        if self.is_as400 and self.schema_name:
+                            # AS400 doesn't support LIMIT, use FETCH FIRST syntax
+                            sample_query = f"SELECT * FROM {self.schema_name}.{self.table_name} FETCH FIRST 5 ROWS ONLY"
+                        else:
+                            sample_query = f"SELECT * FROM {self.table_name} LIMIT 5"
+                        
+                        # Execute the query
+                        sample = self.connector.execute_query(sample_query)
+                    else:
+                        sample = []
                 
                 if sample:
                     # Store sample data for reference
@@ -125,16 +192,19 @@ class TableWhisperer:
                 logger.debug(f"Could not get sample data for {self.table_name}: {str(e)}")
             
             # Analyze column patterns based on name, type and sample data
-            for col_info in structure:
-                # Handle different structures returned by different DB engines
-                if 'Field' in col_info:
-                    col_name = col_info['Field']
-                    col_type = col_info['Type']
-                elif 'COLUMN_NAME' in col_info:
-                    col_name = col_info['COLUMN_NAME']
+            if not self.schema or 'columns' not in self.schema:
+                logger.warning(f"No column information available for {self.get_qualified_table_name()}")
+                return
+                
+            # Use the columns from the schema we've already retrieved
+            for col_name, col_info in self.schema['columns'].items():
+                # Extract column type based on available information
+                if 'type' in col_info:
+                    col_type = col_info['type']
+                elif 'DATA_TYPE' in col_info:
                     col_type = col_info['DATA_TYPE']
                 else:
-                    continue
+                    col_type = "UNKNOWN"
                 
                 # Map column names to likely data types
                 pattern = self.detect_column_pattern(col_name, col_type)
@@ -379,7 +449,7 @@ class TableWhisperer:
             values_str = ", ".join([str(v) for v in values])
             
             # Create query with direct value substitution - avoids double escaping issues
-            final_query = f"INSERT INTO {self.table_name} ({columns_str}) VALUES ({values_str})"
+            final_query = f"INSERT INTO {self.get_qualified_table_name()} ({columns_str}) VALUES ({values_str})"
             
             # Execute query
             result = self.connector.execute_query(final_query)
@@ -405,9 +475,21 @@ class TableWhisperer:
             
             primary_key = primary_keys[0]
             
-            # Get all IDs from the table
-            query = f"SELECT {primary_key} FROM {self.table_name}"
-            results = self.connector.execute_query(query)
+            # Get all IDs from the table with JVM error handling
+            try:
+                query = f"SELECT {primary_key} FROM {self.qualified_table_name}"
+                results = self.connector.execute_query(query)
+            except Exception as e:
+                if "Java Virtual Machine is not running" in str(e):
+                    # Try to reconnect if JVM connection is lost
+                    logger.warning("JVM connection lost, attempting to reconnect...")
+                    self.connector.connect()
+                    # Try the query again
+                    query = f"SELECT {primary_key} FROM {self.qualified_table_name}"
+                    results = self.connector.execute_query(query)
+                else:
+                    # Re-raise if it's another error
+                    raise
             
             if not results:
                 logger.warning(f"No records found in table {self.table_name}, cannot perform update")
@@ -415,11 +497,16 @@ class TableWhisperer:
             
             record_id = random.choice(results)[primary_key]
             
-            # Choose a random column to update
-            updatable_columns = [
-                col_name for col_name, col_info in self.schema["columns"].items()
-                if not col_info["primary_key"]
-            ]
+            # Choose a random column to update - with safer error handling for schema structure
+            updatable_columns = []
+            for col_name, col_info in self.schema["columns"].items():
+                try:
+                    # Check if the column is a primary key - safely handle missing 'primary_key' field
+                    is_primary_key = col_info.get("primary_key", False)
+                    if not is_primary_key and col_name not in self.schema["primary_keys"]:
+                        updatable_columns.append(col_name)
+                except Exception as e:
+                    logger.warning(f"Error processing column {col_name}: {str(e)}")
             
             if not updatable_columns:
                 logger.warning(f"No updatable columns found for table {self.table_name}, cannot perform update")
@@ -430,7 +517,7 @@ class TableWhisperer:
             
             # Prepare query
             value_str = f"'{value}'" if isinstance(value, str) else str(value)
-            query = f"UPDATE {self.table_name} SET {column} = {value_str} WHERE {primary_key} = {record_id}"
+            query = f"UPDATE {self.qualified_table_name} SET {column} = {value_str} WHERE {primary_key} = {record_id}"
             
             # Execute query
             result = self.connector.execute_query(query)
@@ -456,9 +543,21 @@ class TableWhisperer:
             
             primary_key = primary_keys[0]
             
-            # Get all IDs from the table
-            query = f"SELECT {primary_key} FROM {self.table_name}"
-            results = self.connector.execute_query(query)
+            # Get all IDs from the table with JVM error handling
+            try:
+                query = f"SELECT {primary_key} FROM {self.qualified_table_name}"
+                results = self.connector.execute_query(query)
+            except Exception as e:
+                if "Java Virtual Machine is not running" in str(e):
+                    # Try to reconnect if JVM connection is lost
+                    logger.warning("JVM connection lost, attempting to reconnect...")
+                    self.connector.connect()
+                    # Try the query again
+                    query = f"SELECT {primary_key} FROM {self.qualified_table_name}"
+                    results = self.connector.execute_query(query)
+                else:
+                    # Re-raise if it's another error
+                    raise
             
             if not results:
                 logger.warning(f"No records found in table {self.table_name}, cannot perform delete")
@@ -582,7 +681,7 @@ class TableWhisperer:
                 return self.perform_update()
             
             # Prepare query
-            query = f"DELETE FROM {self.table_name} WHERE {primary_key} = {record_id}"
+            query = f"DELETE FROM {self.qualified_table_name} WHERE {primary_key} = {record_id}"
             
             try:
                 # Execute query

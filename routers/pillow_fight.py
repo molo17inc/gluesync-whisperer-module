@@ -116,6 +116,7 @@ async def start_pillow_fight(
         operation_types=operations,
         operation_delay=request.operation_delay,
         batch_size=request.batch_size
+        # Schema name will be passed per table
     )
     
     # Register the pillow fight
@@ -143,11 +144,23 @@ async def start_pillow_fight(
         # Store the pillow fight service
         active_pillow_fights[fight_id] = pillow_fight
         
-        # Start new pillow fight
+        # Get schema name for AS400 databases
+        schema_name = table_config.schema_name if connection.db_type == DatabaseType.AS400 else None
+        
+        # Log if we have a schema for AS400
+        if connection.db_type == DatabaseType.AS400:
+            if schema_name:
+                logger.info(f"Using schema '{schema_name}' for AS400 table '{table_name}'")
+            else:
+                logger.warning(f"No schema provided for AS400 table '{table_name}', will use default schema")
+        
+        # Start new pillow fight - pass the table configuration to use its schema info
         background_tasks.add_task(
             pillow_fight.start_pillow_fight,
             table_name=table_name,
-            on_complete=lambda: pillow_fight_complete(fight_id, connection.id)
+            schema_name=schema_name,
+            on_complete=lambda: pillow_fight_complete(fight_id, connection.id),
+            table_config=table_config
         )
         
         fight_ids.append(fight_id)
@@ -196,8 +209,16 @@ async def stop_pillow_fight(
         )
         
     table_name = table_config.table_name
+    schema_name = table_config.schema_name
     pillow_fight = active_pillow_fights[fight_id]
-    await pillow_fight.stop_pillow_fight(table_name)
+    
+    # Use schema_name for AS400
+    connection_service = ConnectionService(db)
+    connection = connection_service.get_connection(connection_id)
+    if connection and connection.db_type == DatabaseType.AS400 and schema_name:
+        await pillow_fight.stop_pillow_fight(table_name, schema_name)
+    else:
+        await pillow_fight.stop_pillow_fight(table_name)
     
     # Check if there are any other pillow fights for this connection
     connection_fights = [fid for fid in active_pillow_fights.keys() if fid.startswith(f"{connection_id}_")]
@@ -235,8 +256,18 @@ async def stop_all_pillow_fights(db: Session = Depends(get_db)):
                 continue
                 
             table_name = table_config.table_name
+            schema_name = table_config.schema_name
             pillow_fight = active_pillow_fights[fight_id]
-            await pillow_fight.stop_pillow_fight(table_name)
+            
+            # Get connection to check if it's AS400
+            connection_service = ConnectionService(db)
+            connection = connection_service.get_connection(int(connection_id))
+            
+            # Use schema_name for AS400
+            if connection and connection.db_type == DatabaseType.AS400 and schema_name:
+                await pillow_fight.stop_pillow_fight(table_name, schema_name)
+            else:
+                await pillow_fight.stop_pillow_fight(table_name)
         except Exception as e:
             logger.error(f"Error stopping pillow fight {fight_id}: {str(e)}")
     
@@ -271,7 +302,17 @@ async def get_pillow_fight_status(db: Session = Depends(get_db)):
                 continue
                 
             table_name = table_config.table_name
-            stats = pillow_fight.get_stats(table_name)
+            schema_name = table_config.schema_name
+            
+            # Get connection to check if it's AS400
+            connection_service = ConnectionService(db)
+            connection = connection_service.get_connection(int(connection_id))
+            
+            # Get stats with schema name for AS400
+            if connection and connection.db_type == DatabaseType.AS400 and schema_name:
+                stats = pillow_fight.get_stats(table_name, schema_name)
+            else:
+                stats = pillow_fight.get_stats(table_name)
             
             start_time = stats.get("start_time")
             last_operation_time = stats.get("last_operation_time")

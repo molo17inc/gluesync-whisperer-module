@@ -247,13 +247,132 @@ def is_select_query(sql_query: str) -> bool:
     """Check if a query is a SELECT statement."""
     return sql_query.strip().upper().startswith("SELECT")
 
-def execute_query(connection: jaydebeapi.Connection, query: str) -> List[Tuple]:
-    """Execute a SQL query on the given connection."""
+def execute_query(connection: jaydebeapi.Connection, query: str, params=None, max_rows=100) -> List[Dict]:
+    """Execute a SQL query on the given connection with parameter support.
+    
+    Args:
+        connection: JDBC connection object
+        query: SQL query to execute
+        params: Dictionary of parameter name/value pairs
+        max_rows: Maximum number of rows to return
+        
+    Returns:
+        List of dictionaries with column names as keys
+    """
     cursor = None
     try:
         cursor = connection.cursor()
-        cursor.execute(query)
-        return cursor.fetchall() if is_select_query(query) else None
+        
+        # Handle parameter substitution if params provided
+        if params:
+            # AS400 does not support named parameters in dynamic SQL
+            # We must use direct string substitution for all parameters
+            query_with_params = query
+            
+            if isinstance(params, dict):
+                # Replace each named parameter with its properly formatted value
+                for param_name, param_value in params.items():
+                    # Look for different parameter patterns
+                    patterns = [f':{param_name}', f'%({param_name})s', f'?{param_name}', f'${param_name}']
+                    
+                    for pattern in patterns:
+                        if pattern in query_with_params:
+                            # Format values based on type
+                            if param_value is None:
+                                formatted_value = 'NULL'
+                            elif isinstance(param_value, str):
+                                # Escape single quotes for SQL safety
+                                escaped_value = param_value.replace("'", "''")
+                                formatted_value = f"'{escaped_value}'"
+                            elif isinstance(param_value, bool):
+                                formatted_value = '1' if param_value else '0'
+                            else:
+                                formatted_value = str(param_value)
+                                
+                            # Replace parameter with formatted value
+                            query_with_params = query_with_params.replace(pattern, formatted_value)
+                
+                logger.debug(f"Executing query with substituted parameters: {query_with_params}")
+                cursor.execute(query_with_params)
+            elif isinstance(params, (list, tuple)):
+                # For positional parameters, we need to manually substitute ? placeholders
+                parts = query_with_params.split('?')
+                if len(parts) > 1:
+                    final_query = parts[0]
+                    for i, part in enumerate(parts[1:]):
+                        if i < len(params):
+                            param_value = params[i]
+                            if param_value is None:
+                                formatted_value = 'NULL'
+                            elif isinstance(param_value, str):
+                                # Escape single quotes for SQL safety
+                                escaped_value = param_value.replace("'", "''")
+                                formatted_value = f"'{escaped_value}'"
+                            elif isinstance(param_value, bool):
+                                formatted_value = '1' if param_value else '0'
+                            else:
+                                formatted_value = str(param_value)
+                        else:
+                            formatted_value = '?'
+                        final_query += formatted_value + part
+                    
+                    logger.debug(f"Executing query with substituted positional parameters: {final_query}")
+                    cursor.execute(final_query)
+                else:
+                    # No ? placeholders found, execute with parameters directly
+                    logger.debug(f"Executing query with parameters but no placeholders found: {query_with_params}")
+                    cursor.execute(query_with_params)
+            else:
+                # Single parameter (not a dict or list)
+                if '?' in query_with_params:
+                    # Format the single parameter appropriately
+                    if params is None:
+                        formatted_value = 'NULL'
+                    elif isinstance(params, str):
+                        escaped_value = params.replace("'", "''")
+                        formatted_value = f"'{escaped_value}'"
+                    elif isinstance(params, bool):
+                        formatted_value = '1' if params else '0'
+                    else:
+                        formatted_value = str(params)
+                        
+                    # Replace ? with the formatted value
+                    query_with_params = query_with_params.replace('?', formatted_value)
+                    logger.debug(f"Executing query with substituted single parameter: {query_with_params}")
+                    cursor.execute(query_with_params)
+                else:
+                    logger.debug(f"Executing query with single parameter but no placeholders found: {query_with_params}")
+                    cursor.execute(query_with_params)
+        else:
+            # No parameters
+            logger.debug(f"Executing query without parameters: {query}")
+            cursor.execute(query)
+        
+        # If it's a SELECT query, fetch results
+        if is_select_query(query):
+            # Fetch column information
+            column_info = cursor.description
+            column_names = [col[0] for col in column_info] if column_info else []
+            
+            # Fetch rows with limit
+            if max_rows > 0:
+                rows = cursor.fetchmany(max_rows)
+            else:
+                rows = cursor.fetchall()
+            
+            # Convert rows to dictionaries with column names as keys
+            result = []
+            for row in rows:
+                row_dict = {}
+                for i, value in enumerate(row):
+                    if i < len(column_names):
+                        row_dict[column_names[i]] = value
+                    else:
+                        row_dict[f'column_{i}'] = value
+                result.append(row_dict)
+            
+            return result
+        return None
     except Exception as e:
         logger.error(f"JDBC: Query execution error: {str(e)}, in Query: '{query}'")
         raise

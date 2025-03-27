@@ -249,7 +249,7 @@ class DatabaseService:
         # Handle JDBC connections separately for AS400
         if db_connection.db_type == DatabaseType.AS400 and hasattr(engine, 'connection'):
             try:
-                # For JDBC, we need to use a direct approach
+                # For JDBC, we need to use a direct approach with SQL queries
                 columns = {}
                 primary_keys = []
                 
@@ -258,29 +258,182 @@ class DatabaseService:
                 
                 cursor = engine.connection.cursor()
                 try:
-                    # Get columns for the table
-                    metadata = cursor.connection.getMetaData()
+                    # Determine schema to use
                     schema = schema_name or (db_connection.database_name if db_connection.database_name else None)
+                    if not schema:
+                        logger.warning("No schema provided for AS400 table, using default schema")
+                        # Try to use the connection user's schema as default
+                        schema = db_connection.username
                     
-                    rs = metadata.getColumns(None, schema, table_name, "%")
-                    while rs.next():
-                        column_name = rs.getString("COLUMN_NAME")
-                        data_type = rs.getString("TYPE_NAME")
-                        nullable = (rs.getInt("NULLABLE") == 1)
-                        columns[column_name] = {
-                            'name': column_name,
-                            'type': data_type,
-                            'nullable': nullable
-                        }
-                    rs.close()
+                    # Try to use the AS400SqlStatements class that works in production,
+                    # but handle compatibility issues with different AS400 systems
+                    from utils.sql.as400 import AS400SqlStatements
+                    as400_sql = AS400SqlStatements()
                     
-                    # Get primary keys
-                    rs = metadata.getPrimaryKeys(None, schema, table_name)
-                    while rs.next():
-                        column_name = rs.getString("COLUMN_NAME")
-                        primary_keys.append(column_name)
-                    rs.close()
+                    # Get columns for the table
+                    logger.debug(f"Getting columns for table {schema}.{table_name}")
                     
+                    # First try a simple direct query for better compatibility
+                    columns_query = f"""
+                    SELECT 
+                        COLUMN_NAME, 
+                        ORDINAL_POSITION,
+                        DATA_TYPE, 
+                        LENGTH,
+                        NUMERIC_SCALE,
+                        COLUMN_TEXT,
+                        IS_NULLABLE, 
+                        COLUMN_DEFAULT
+                    FROM QSYS2.SYSCOLUMNS 
+                    WHERE TABLE_SCHEMA = '{schema}' AND TABLE_NAME = '{table_name}'
+                    ORDER BY ORDINAL_POSITION
+                    """
+                    
+                    try:
+                        cursor.execute(columns_query)
+                        column_rows = cursor.fetchall()
+                        
+                        for row in column_rows:
+                            # Safely extract column information based on the available columns
+                            column_name = row[0]  # COLUMN_NAME
+                            
+                            # Handle different column positions carefully
+                            ordinal_position = row[1] if len(row) > 1 else None
+                            data_type = row[2] if len(row) > 2 else None
+                            length = row[3] if len(row) > 3 else None
+                            numeric_scale = row[4] if len(row) > 4 else None
+                            description = row[5] if len(row) > 5 else None
+                            nullable = row[6] == 'YES' if len(row) > 6 else True  # Default to nullable
+                            default_value = row[7] if len(row) > 7 else None
+                            
+                            # Don't try to access row[9] directly as it might not exist
+                            is_primary_key = False  # We'll determine primary keys separately
+                            
+                            # Build type info string
+                            type_info = data_type
+                            if data_type.upper() in ('DECIMAL', 'NUMERIC') and length is not None:
+                                if numeric_scale is not None:
+                                    type_info = f"{data_type}({length},{numeric_scale})"
+                                else:
+                                    type_info = f"{data_type}({length})"
+                            elif data_type.upper() in ('CHAR', 'VARCHAR') and length is not None:
+                                type_info = f"{data_type}({length})"
+                                
+                            columns[column_name] = {
+                                'name': column_name,
+                                'type': type_info,
+                                'nullable': nullable,
+                                'default': default_value,
+                                'description': description,
+                                'is_primary_key': is_primary_key
+                            }
+                            
+                            # Build primary keys list based on column information
+                            if is_primary_key and column_name not in primary_keys:
+                                primary_keys.append(column_name)
+                                
+                    except Exception as col_err:
+                        logger.error(f"Error getting columns: {col_err}")
+                        raise
+                    
+                    # For primary keys, we need to use a simplified approach that works across
+                    # different AS400 database versions
+                    
+                    # APPROACH 1: Use SYSIBM.SQLPRIMARYKEYS if available (JDBC standard catalog)
+                    if not primary_keys:
+                        try:
+                            logger.debug(f"Getting primary keys using SYSIBM.SQLPRIMARYKEYS for {schema}.{table_name}")
+                            pk_query = f"""
+                            SELECT COLUMN_NAME 
+                            FROM SYSIBM.SQLPRIMARYKEYS 
+                            WHERE TABLE_SCHEM = '{schema}' 
+                              AND TABLE_NAME = '{table_name}' 
+                            ORDER BY KEY_SEQ
+                            """
+                            
+                            cursor.execute(pk_query)
+                            pk_rows = cursor.fetchall()
+                            
+                            for row in pk_rows:
+                                col_name = row[0]
+                                if col_name not in primary_keys:
+                                    primary_keys.append(col_name)
+                                    
+                                    # Update the is_primary_key flag for this column
+                                    if col_name in columns:
+                                        columns[col_name]['is_primary_key'] = True
+                        except Exception as pk_err:
+                            logger.debug(f"SQLPRIMARYKEYS approach failed: {pk_err}")
+                    
+                    # APPROACH 2: Try to find primary key info based on indexes
+                    if not primary_keys:
+                        try:
+                            logger.debug(f"Checking indexes for primary key on {schema}.{table_name}")
+                            idx_query = f"""
+                            SELECT COLUMN_NAME 
+                            FROM QSYS2.SYSINDEXES I
+                            JOIN QSYS2.SYSKEYS K ON I.INDEX_NAME = K.INDEX_NAME AND I.TABLE_SCHEMA = K.TABLE_SCHEMA AND I.TABLE_NAME = K.TABLE_NAME
+                            WHERE I.TABLE_SCHEMA = '{schema}'
+                              AND I.TABLE_NAME = '{table_name}'
+                              AND I.IS_UNIQUE = 'YES'
+                            ORDER BY K.ORDINAL_POSITION
+                            """
+                            
+                            cursor.execute(idx_query)
+                            pk_rows = cursor.fetchall()
+                            
+                            for row in pk_rows:
+                                col_name = row[0]
+                                if col_name not in primary_keys:
+                                    primary_keys.append(col_name)
+                                    
+                                    # Update the is_primary_key flag for this column
+                                    if col_name in columns:
+                                        columns[col_name]['is_primary_key'] = True
+                        except Exception as idx_err:
+                            logger.debug(f"Index-based primary key detection failed: {idx_err}")
+                    
+                    # If we still couldn't find primary keys, try a few fallback approaches
+                    if not primary_keys:
+                        # Try a simpler query that might work on older AS400 systems
+                        fallback_queries = [
+                            # Using SQLPRIMARYKEYS (ODBC/JDBC standard catalog function)
+                            f"""
+                            SELECT COLUMN_NAME 
+                            FROM SYSIBM.SQLPRIMARYKEYS 
+                            WHERE TABLE_SCHEM = '{schema}' 
+                              AND TABLE_NAME = '{table_name}' 
+                            ORDER BY KEY_SEQ
+                            """,
+                            # Simple NON-NULL unique index check
+                            f"""
+                            SELECT COLUMN_NAME 
+                            FROM QSYS2.SYSCOLUMNS 
+                            WHERE TABLE_SCHEMA = '{schema}' 
+                              AND TABLE_NAME = '{table_name}' 
+                              AND IS_NULLABLE = 'N'
+                            ORDER BY ORDINAL_POSITION
+                            FETCH FIRST 1 ROWS ONLY
+                            """
+                        ]
+                        
+                        for query in fallback_queries:
+                            try:
+                                cursor.execute(query)
+                                pk_rows = cursor.fetchall()
+                                if pk_rows:
+                                    for row in pk_rows:
+                                        col_name = row[0]
+                                        if col_name not in primary_keys:
+                                            primary_keys.append(col_name)
+                                            # Update the is_primary_key flag
+                                            if col_name in columns:
+                                                columns[col_name]['is_primary_key'] = True
+                                    if primary_keys:
+                                        break
+                            except Exception:
+                                # Ignore errors on fallback queries
+                                pass
                 finally:
                     cursor.close()
                 

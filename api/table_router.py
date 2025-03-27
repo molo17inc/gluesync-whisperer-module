@@ -86,7 +86,12 @@ def create_table_config(table: TableConfigCreate, db: Session = Depends(get_db))
     
     # Get table schema
     try:
-        schema = db_service.get_table_schema(connection_id=table.connection_id, table_name=table.table_name)
+        # Pass the schema_name to ensure we're getting the correct schema, especially important for AS400
+        schema = db_service.get_table_schema(
+            connection_id=table.connection_id, 
+            table_name=table.table_name, 
+            schema_name=table.schema_name
+        )
         
         # Create table configuration with schema information
         new_table = table_service.create_table(
@@ -252,7 +257,7 @@ def get_database_tables(connection_id: int, schema: str = None, db: Session = De
 
 
 @router.get("/connections/{connection_id}/tables/{table_name}/schema", response_model=TableSchemaResponse)
-def get_table_schema(connection_id: int, table_name: str, db: Session = Depends(get_db)):
+def get_table_schema(connection_id: int, table_name: str, schema_name: str = None, db: Session = Depends(get_db)):
     """Get the schema of a table in the database."""
     db_service = DatabaseService(db)
     
@@ -266,7 +271,8 @@ def get_table_schema(connection_id: int, table_name: str, db: Session = Depends(
     
     # Get table schema
     try:
-        schema = db_service.get_table_schema(connection_id=connection_id, table_name=table_name)
+        # Pass schema_name parameter if provided, especially important for AS400
+        schema = db_service.get_table_schema(connection_id=connection_id, table_name=table_name, schema_name=schema_name)
         return schema
     except Exception as e:
         logger.error(f"Error getting table schema: {str(e)}")

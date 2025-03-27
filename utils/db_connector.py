@@ -90,23 +90,79 @@ class DatabaseConnector:
     def connect(self):
         """Connect to the database."""
         try:
-            # Build connection string
-            if self.db_type == DatabaseType.SQLITE:
-                connection_string = build_connection_string(
-                    self.db_type, None, None, None, None, self.database
-                )
+            # Special handling for AS400 with JDBC support
+            if self.db_type == DatabaseType.AS400:
+                try:
+                    # First try native SQLAlchemy drivers (ibm_db_sa or pyodbc)
+                    connection_string = build_connection_string(
+                        self.db_type, self.host, self.port, self.username, self.password, self.database
+                    )
+                    self.engine = create_engine(connection_string)
+                    with self.engine.connect() as conn:
+                        conn.execute(text("SELECT 1"))
+                    
+                    # Create inspector
+                    self.inspector = inspect(self.engine)
+                except Exception as native_err:
+                    logger.warning(f"Native AS400 drivers not available: {native_err}. Falling back to JDBC.")
+                    # Fall back to JDBC approach if native drivers aren't available
+                    from utils.jdbc_utils import get_jdbc_drivers_path, connect_to_database, execute_query
+                    
+                    # Get JDBC driver paths
+                    jdbc_driver_paths = get_jdbc_drivers_path()
+                    
+                    # Format JDBC connection string for AS400
+                    jdbc_url = f"jdbc:as400://{self.host}/{self.database}"
+                    jdbc_driver = "com.ibm.as400.access.AS400JDBCDriver"
+                    
+                    # Connection properties
+                    connection_props = {
+                        "user": self.username,
+                        "password": self.password,
+                        "prompt": "false",
+                        "libraries": self.database
+                    }
+                    
+                    # Create a JDBC connection
+                    self.connection = connect_to_database(
+                        driver_path=jdbc_driver_paths,
+                        connection_string=jdbc_url,
+                        driverclass=jdbc_driver,
+                        driver_options=connection_props
+                    )
+                    
+                    # Store a reference to execute_query for JDBC
+                    self.jdbc_execute_query = execute_query
+                    
+                    # Create a wrapper engine object with necessary methods
+                    class JdbcEngineWrapper:
+                        def __init__(self, connection, execute_fn):
+                            self.connection = connection
+                            self.execute_query = execute_fn
+                    
+                    # Create an engine wrapper that mimics the needed SQLAlchemy engine functionality
+                    self.engine = JdbcEngineWrapper(self.connection, execute_query)
+                    self.version = "JDBC AS400"
+                    logger.info(f"Connected to {self.db_type.value} database via JDBC")
+                    return True
             else:
-                connection_string = build_connection_string(
-                    self.db_type, self.host, self.port, self.username, self.password, self.database
-                )
-            
-            # Create engine and test connection
-            self.engine = create_engine(connection_string)
-            with self.engine.connect() as conn:
-                conn.execute(text("SELECT 1"))
-            
-            # Create inspector
-            self.inspector = inspect(self.engine)
+                # Normal SQLAlchemy connection for other database types
+                if self.db_type == DatabaseType.SQLITE:
+                    connection_string = build_connection_string(
+                        self.db_type, None, None, None, None, self.database
+                    )
+                else:
+                    connection_string = build_connection_string(
+                        self.db_type, self.host, self.port, self.username, self.password, self.database
+                    )
+                
+                # Create engine and test connection
+                self.engine = create_engine(connection_string)
+                with self.engine.connect() as conn:
+                    conn.execute(text("SELECT 1"))
+                
+                # Create inspector
+                self.inspector = inspect(self.engine)
             
             # Get database version
             self.version = self.get_database_version()
@@ -115,6 +171,9 @@ class DatabaseConnector:
             return True
         
         except SQLAlchemyError as e:
+            logger.error(f"Error connecting to database: {str(e)}")
+            return False
+        except Exception as e:
             logger.error(f"Error connecting to database: {str(e)}")
             return False
             
@@ -362,19 +421,132 @@ class DatabaseConnector:
                                 primary_keys.append(pk_col)
                                 columns[pk_col]['primary_key'] = True
             except Exception as e:
-                logger.warning(f"Error getting primary keys: {str(e)}")
-                # Fallback to SQLAlchemy inspector
-                pk_constraint = self.inspector.get_pk_constraint(table_name)
-                if pk_constraint and 'constrained_columns' in pk_constraint:
-                    primary_keys = pk_constraint['constrained_columns']
-                    for pk in primary_keys:
-                        if pk in columns:
-                            columns[pk]['primary_key'] = True
+                logger.warning(f"Error getting primary keys via standard query: {str(e)}")
+                # Try JDBC metadata for AS400 if no keys found yet
+                if not primary_keys and self.db_type == DatabaseType.AS400:
+                    try:
+                        logger.info(f"Attempting JDBC metadata primary key detection for AS400 table {table_name}")
+                        
+                        # For JDBC connections, ensure we have a connection first
+                        if not hasattr(self, 'jdbc_conn') or not self.jdbc_conn:
+                            # Try to get the JDBC connection from the engine
+                            if hasattr(self, 'engine') and self.engine and hasattr(self.engine, 'connection'):
+                                self.jdbc_conn = self.engine.connection
+                                logger.info("Retrieved JDBC connection from engine for metadata operations")
+                            elif hasattr(self, 'connection_string'):
+                                # Reconnect using the connection_string if available
+                                from utils.jdbc_utils import connect_jdbc
+                                self.jdbc_conn = connect_jdbc(self.connection_string, self.username, self.password)
+                                logger.info("Established new JDBC connection for metadata operations")
+                        
+                        # Now use the connection's metadata
+                        if hasattr(self, 'jdbc_conn') and self.jdbc_conn:
+                            # Get metadata from the JDBC connection
+                            conn = self.jdbc_conn
+                            metadata = conn.getMetaData()
+                            
+                            # Use metadata to get primary keys
+                            schema_param = schema if schema else None
+                            rs = metadata.getPrimaryKeys(None, schema_param, table_name)
+                            
+                            # Extract primary key column names
+                            while rs.next():
+                                column_name = rs.getString("COLUMN_NAME")
+                                if column_name and column_name in columns:
+                                    primary_keys.append(column_name)
+                                    columns[column_name]['primary_key'] = True
+                            
+                            # Close the result set
+                            rs.close()
+                            
+                            if primary_keys:
+                                logger.info(f"Found primary keys for AS400 table {table_name} using JDBC metadata: {primary_keys}")
+                            else:
+                                logger.warning(f"No primary keys found for AS400 table {table_name} using JDBC metadata")
+                        else:
+                            logger.warning("No JDBC connection available for metadata retrieval even after reconnection attempt")
+                    except Exception as e2:
+                        logger.warning(f"Error with JDBC metadata primary key detection: {str(e2)}")
+                
+                # If still no primary keys, try SQLAlchemy inspector as a last resort
+                if not primary_keys and self.inspector:
+                    try:
+                        pk_constraint = self.inspector.get_pk_constraint(table_name)
+                        if pk_constraint and 'constrained_columns' in pk_constraint:
+                            primary_keys = pk_constraint['constrained_columns']
+                            for pk in primary_keys:
+                                if pk in columns:
+                                    columns[pk]['primary_key'] = True
+                    except Exception as e3:
+                        logger.warning(f"Error getting primary keys via SQLAlchemy: {str(e3)}")
             
             # Get foreign keys
             foreign_keys = []
             try:
-                if self.db_type != DatabaseType.SQLITE:
+                # Use JDBC metadata for AS400 foreign keys
+                if self.db_type == DatabaseType.AS400:
+                    # Ensure we have a valid JDBC connection first
+                    if not hasattr(self, 'jdbc_conn') or not self.jdbc_conn:
+                        # Try to get the JDBC connection from the engine
+                        if hasattr(self, 'engine') and self.engine and hasattr(self.engine, 'connection'):
+                            self.jdbc_conn = self.engine.connection
+                            logger.info("Retrieved JDBC connection from engine for foreign key operations")
+                        elif hasattr(self, 'connection_string'):
+                            # Reconnect using the connection_string if available
+                            from utils.jdbc_utils import connect_jdbc
+                            self.jdbc_conn = connect_jdbc(self.connection_string, self.username, self.password)
+                            logger.info("Established new JDBC connection for foreign key operations")
+                    
+                    if hasattr(self, 'jdbc_conn') and self.jdbc_conn:
+                        try:
+                            logger.info(f"Retrieving foreign keys for AS400 table {table_name} using JDBC metadata")
+                            
+                            # Get metadata from the JDBC connection
+                            conn = self.jdbc_conn
+                            metadata = conn.getMetaData()
+                            
+                            # Use metadata to get imported (foreign) keys
+                            schema_param = schema if schema else None
+                            rs = metadata.getImportedKeys(None, schema_param, table_name)
+                            
+                            # Process the result set
+                            fk_dict = {}
+                            while rs.next():
+                                fk_name = rs.getString("FK_NAME")
+                                fk_column = rs.getString("FKCOLUMN_NAME")
+                                pk_schema = rs.getString("PKTABLE_SCHEM")
+                                pk_table = rs.getString("PKTABLE_NAME")
+                                pk_column = rs.getString("PKCOLUMN_NAME")
+                                
+                                if fk_name not in fk_dict:
+                                    fk_dict[fk_name] = {
+                                        'constrained_columns': [],
+                                        'referred_schema': pk_schema,
+                                        'referred_table': pk_table,
+                                        'referred_columns': []
+                                    }
+                                
+                                if fk_column and fk_column not in fk_dict[fk_name]['constrained_columns']:
+                                    fk_dict[fk_name]['constrained_columns'].append(fk_column)
+                                
+                                if pk_column and pk_column not in fk_dict[fk_name]['referred_columns']:
+                                    fk_dict[fk_name]['referred_columns'].append(pk_column)
+                            
+                            # Close the result set
+                            rs.close()
+                            
+                            # Add foreign keys to our list
+                            for fk in fk_dict.values():
+                                if fk['constrained_columns'] and fk['referred_columns']:
+                                    foreign_keys.append(fk)
+                            
+                            if foreign_keys:
+                                logger.info(f"Found {len(foreign_keys)} foreign keys for AS400 table {table_name} using JDBC metadata")
+                            else:
+                                logger.warning(f"No foreign keys found for AS400 table {table_name} using JDBC metadata")
+                        except Exception as e:
+                            logger.warning(f"Error getting AS400 foreign keys via JDBC metadata: {str(e)}")
+                elif self.db_type != DatabaseType.SQLITE:
                     query = self.sql_statements.get_foreign_keys_statement(schema, table_name)
                     
                     # Handle different parameter styles based on database type
@@ -451,12 +623,91 @@ class DatabaseConnector:
             # Get indexes - primarily use SQLAlchemy here as index info is complex
             indexes = []
             try:
-                for idx in self.inspector.get_indexes(table_name):
-                    indexes.append({
-                        'name': idx.get('name', ''),
-                        'columns': idx.get('column_names', []),
-                        'unique': idx.get('unique', False)
-                    })
+                # Special handling for AS400 - inspector might be None or not support get_indexes
+                if self.db_type.name == 'AS400':
+                    # For AS400, use the JDBC connection's metadata object directly
+                    # This is more reliable than trying to query catalog tables which vary by system
+                    try:
+                        # Create empty indexes list for now
+                        indexes = []
+                        
+                        # For JDBC connections, try to use the connection's metadata methods
+                        if hasattr(self, 'jdbc_conn') and self.jdbc_conn:
+                            # Get metadata from the JDBC connection
+                            conn = self.jdbc_conn
+                            metadata = conn.getMetaData()
+                            
+                            # Use metadata to get primary keys (these are also indexes)
+                            schema_param = schema if schema else None
+                            rs = metadata.getPrimaryKeys(None, schema_param, table_name)
+                            
+                            # Process the result set into our index structure
+                            pk_index = {
+                                'name': 'PRIMARY',
+                                'columns': [],
+                                'unique': True  # Primary keys are always unique
+                            }
+                            
+                            while rs.next():
+                                column_name = rs.getString("COLUMN_NAME")
+                                if column_name and column_name not in pk_index['columns']:
+                                    pk_index['columns'].append(column_name)
+                            
+                            if pk_index['columns']:
+                                indexes.append(pk_index)
+                                logger.info(f"Found primary key for AS400 table {table_name} with columns: {pk_index['columns']}")
+                            
+                            # Close the result set
+                            rs.close()
+                            
+                            # Now try to get other indexes
+                            rs = metadata.getIndexInfo(None, schema_param, table_name, False, True)
+                            
+                            # Group by index name
+                            index_dict = {}
+                            while rs.next():
+                                index_name = rs.getString("INDEX_NAME")
+                                column_name = rs.getString("COLUMN_NAME")
+                                non_unique = rs.getBoolean("NON_UNIQUE")
+                                
+                                if index_name and index_name != 'PRIMARY':
+                                    if index_name not in index_dict:
+                                        index_dict[index_name] = {
+                                            'name': index_name,
+                                            'columns': [],
+                                            'unique': not non_unique
+                                        }
+                                    if column_name and column_name not in index_dict[index_name]['columns']:
+                                        index_dict[index_name]['columns'].append(column_name)
+                            
+                            # Close the result set
+                            rs.close()
+                            
+                            # Add other indexes to our list
+                            for idx in index_dict.values():
+                                if idx['columns']:
+                                    indexes.append(idx)
+                            
+                            if len(indexes) > 0:
+                                logger.info(f"Retrieved {len(indexes)} indexes for AS400 table {table_name} using JDBC metadata")
+                            else:
+                                logger.warning(f"No indexes found for AS400 table {table_name}")
+                        else:
+                            logger.warning("No JDBC connection available for metadata retrieval")
+                            
+                    except Exception as e:
+                        logger.warning(f"Error getting AS400 indexes via JDBC metadata: {str(e)}")
+                        # If this fails, we'll fall back to empty indexes
+                        indexes = []
+                elif self.inspector:  # Make sure inspector is not None
+                    for idx in self.inspector.get_indexes(table_name):
+                        indexes.append({
+                            'name': idx.get('name', ''),
+                            'columns': idx.get('column_names', []),
+                            'unique': idx.get('unique', False)
+                        })
+                else:
+                    logger.warning("SQLAlchemy inspector is None, cannot retrieve indexes")
             except Exception as e:
                 logger.warning(f"Error getting indexes: {str(e)}")
             
@@ -505,12 +756,17 @@ class DatabaseConnector:
             
             # Get indexes
             indexes = []
-            for idx in self.inspector.get_indexes(table_name):
-                indexes.append({
-                    'name': idx.get('name', ''),
-                    'columns': idx.get('column_names', []),
-                    'unique': idx.get('unique', False)
-                })
+            # Check if inspector exists and supports get_indexes
+            if self.inspector and hasattr(self.inspector, 'get_indexes'):
+                try:
+                    for idx in self.inspector.get_indexes(table_name):
+                        indexes.append({
+                            'name': idx.get('name', ''),
+                            'columns': idx.get('column_names', []),
+                            'unique': idx.get('unique', False)
+                        })
+                except Exception as e:
+                    logger.warning(f"Fallback method: Error getting indexes: {str(e)}")
             
             return {
                 'table_name': table_name,
@@ -523,8 +779,30 @@ class DatabaseConnector:
         """Execute a query with optional parameters and return the results."""
         if not self.engine:
             raise RuntimeError("Not connected to database")
-        
+            
+        # Special handling for JDBC wrapper for AS400
+        if hasattr(self.engine, 'execute_query') and self.db_type == DatabaseType.AS400:
+            try:
+                # For AS400 JDBC, we use the JDBC connection directly
+                logger.debug(f"Executing query via JDBC: {query}")
+                # Convert dict params to proper format for JDBC
+                jdbc_params = {}
+                if params and isinstance(params, dict):
+                    for k, v in params.items():
+                        # JDBC typically uses positional parameters or named with :
+                        if ':' + k in query:
+                            jdbc_params[':' + k] = v
+                        else:
+                            jdbc_params[k] = v
+                
+                # Execute using the JDBC executor
+                return self.jdbc_execute_query(self.connection, query, jdbc_params, max_rows)
+            except Exception as jdbc_err:
+                logger.error(f"JDBC query execution error: {jdbc_err}")
+                raise
+            
         try:
+            # Standard SQLAlchemy execution path
             # Check if query is a data modification query (not a SELECT)
             is_modification_query = False
             query_upper = query.strip().upper()

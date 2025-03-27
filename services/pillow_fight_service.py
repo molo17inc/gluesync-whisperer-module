@@ -56,7 +56,8 @@ class PillowFightService:
             password: str,
             operation_types: List[str] = None,
             operation_delay: float = 1.0,
-            batch_size: int = 1
+            batch_size: int = 1,
+            schema_name: str = None
         ):
         """Initialize the pillow fight service."""
         self.db_type = db_type
@@ -68,6 +69,7 @@ class PillowFightService:
         self.operation_types = operation_types or ["insert", "update", "delete"]
         self.operation_delay = operation_delay
         self.batch_size = batch_size
+        self.schema_name = schema_name
         self.connectors = {}
         self.stop_events = {}
         self.operation_stats = {}
@@ -135,9 +137,23 @@ class PillowFightService:
             logger.error(f"Error getting table schema: {str(e)}")
             return None
     
-    def start_pillow_fight(self, table_name: str, on_complete: Optional[Callable] = None) -> bool:
-        """Start a pillow fight (automated operations) on a table."""
-        fight_id = f"{self.database}_{table_name}"
+    def start_pillow_fight(self, table_name: str, schema_name: str = None, on_complete: Optional[Callable] = None, table_config=None) -> bool:
+        """Start a pillow fight (automated operations) on a table.
+        
+        Args:
+            table_name: Name of the table to operate on
+            schema_name: Schema name for databases that require it
+            on_complete: Optional callback when the operation completes
+            table_config: Optional pre-existing table configuration
+        """
+        # Use provided schema_name or the one set in the constructor
+        use_schema = schema_name or self.schema_name
+        
+        # For AS400, include schema name in the fight_id when available
+        if self.db_type == DatabaseType.AS400 and use_schema:
+            fight_id = f"{self.database}_{use_schema}_{table_name}"
+        else:
+            fight_id = f"{self.database}_{table_name}"
         
         # Check if this pillow fight is already running
         if fight_id in self.stop_events and not self.stop_events[fight_id].is_set():
@@ -162,7 +178,7 @@ class PillowFightService:
         # Start the pillow fight in a separate thread
         thread = threading.Thread(
             target=self._run_pillow_fight,
-            args=(table_name, fight_id, on_complete),
+            args=(table_name, fight_id, on_complete, schema_name, table_config),
             daemon=True
         )
         thread.start()
@@ -171,9 +187,16 @@ class PillowFightService:
         logger.info(f"Started pillow fight for table {table_name}")
         return True
     
-    async def stop_pillow_fight(self, table_name: str) -> bool:
+    async def stop_pillow_fight(self, table_name: str, schema_name: str = None) -> bool:
         """Stop a pillow fight on a table."""
-        fight_id = f"{self.database}_{table_name}"
+        # Use provided schema_name or the one set in the constructor
+        use_schema = schema_name or self.schema_name
+        
+        # For AS400, include schema name in the fight_id when available
+        if self.db_type == DatabaseType.AS400 and use_schema:
+            fight_id = f"{self.database}_{use_schema}_{table_name}"
+        else:
+            fight_id = f"{self.database}_{table_name}"
         
         if fight_id not in self.stop_events:
             logger.info(f"No pillow fight running for table {table_name}")
@@ -189,9 +212,16 @@ class PillowFightService:
         logger.info(f"Stopped pillow fight for table {table_name}")
         return True
     
-    def get_stats(self, table_name: str) -> Dict[str, Any]:
+    def get_stats(self, table_name: str, schema_name: str = None) -> Dict[str, Any]:
         """Get stats for a pillow fight."""
-        fight_id = f"{self.database}_{table_name}"
+        # Use provided schema_name or the one set in the constructor
+        use_schema = schema_name or self.schema_name
+        
+        # For AS400, include schema name in the fight_id when available
+        if self.db_type == DatabaseType.AS400 and use_schema:
+            fight_id = f"{self.database}_{use_schema}_{table_name}"
+        else:
+            fight_id = f"{self.database}_{table_name}"
         
         if fight_id not in self.operation_stats:
             return {
@@ -211,9 +241,20 @@ class PillowFightService:
             
         return stats
     
-    def _run_pillow_fight(self, table_name: str, fight_id: str, on_complete: Optional[Callable] = None):
-        """Run the pillow fight operations."""
+    def _run_pillow_fight(self, table_name: str, fight_id: str, on_complete: Optional[Callable] = None, schema_name: str = None, table_config=None):
+        """Run the pillow fight operations.
+        
+        Args:
+            table_name: Name of the table to operate on
+            fight_id: Unique identifier for this pillow fight
+            on_complete: Optional callback when operation completes
+            schema_name: Schema name for databases that require it
+            table_config: Optional pre-existing table configuration with schema information
+        """
         try:
+            # Use provided schema_name or the one set in the constructor
+            use_schema = schema_name or self.schema_name
+            
             # Create a connector for this thread
             connector = DatabaseConnector(
                 db_type=self.db_type,
@@ -234,12 +275,52 @@ class PillowFightService:
             # Create table whisperer from run_auto_operations.py
             from run_auto_operations import TableWhisperer
             
-            whisperer = TableWhisperer(
-                connector=connector,
-                table_name=table_name,
-                delay=self.operation_delay,
-                operations=self.operation_types
-            )
+            # Prepare pre-existing schema from table_config if available
+            pre_existing_schema = None
+            if table_config and hasattr(table_config, 'column_definitions') and hasattr(table_config, 'primary_keys'):
+                # Make a copy of column definitions
+                columns_with_primary_keys = {}
+                primary_key_list = table_config.primary_keys if isinstance(table_config.primary_keys, list) else []
+                
+                # For each column, ensure it has a 'primary_key' field
+                for col_name, col_info in table_config.column_definitions.items():
+                    # Make a copy of the column info
+                    col_copy = dict(col_info)
+                    
+                    # Set primary_key field if not already present
+                    if 'primary_key' not in col_copy:
+                        col_copy['primary_key'] = col_name in primary_key_list
+                    
+                    # Add to our new columns dictionary
+                    columns_with_primary_keys[col_name] = col_copy
+                
+                pre_existing_schema = {
+                    'columns': columns_with_primary_keys,
+                    'primary_keys': primary_key_list,
+                    'foreign_keys': [],  # We don't need foreign keys for operations
+                    'indexes': []  # We don't need indexes for operations
+                }
+                logger.info(f"Using existing schema information from table configuration with {len(primary_key_list)} primary keys")
+            
+            # For AS400, pass the schema_name parameter
+            if self.db_type == DatabaseType.AS400 and use_schema:
+                logger.info(f"Creating TableWhisperer for AS400 table {use_schema}.{table_name}")
+                whisperer = TableWhisperer(
+                    connector=connector,
+                    table_name=table_name,
+                    schema_name=use_schema,
+                    delay=self.operation_delay,
+                    operations=self.operation_types,
+                    pre_existing_schema=pre_existing_schema
+                )
+            else:
+                whisperer = TableWhisperer(
+                    connector=connector,
+                    table_name=table_name,
+                    delay=self.operation_delay,
+                    operations=self.operation_types,
+                    pre_existing_schema=pre_existing_schema
+                )
             
             if not whisperer.initialize():
                 logger.error(f"Failed to initialize whisperer for table {table_name}")
