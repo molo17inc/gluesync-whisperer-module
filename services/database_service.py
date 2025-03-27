@@ -181,6 +181,21 @@ class DatabaseService:
                 with engine.connect() as conn:
                     result = conn.execute(sqlalchemy.text("SHOW DATABASES"))
                     return [row[0] for row in result]
+            elif db_connection.db_type == DatabaseType.MSSQL:
+                # For MS SQL Server, get actual schemas from sys.schemas
+                try:
+                    with engine.connect() as conn:
+                        # Use sys.schemas to get the actual schema names
+                        result = conn.execute(sqlalchemy.text("SELECT name FROM sys.schemas WHERE name NOT LIKE 'db\_%' AND name != 'sys' AND name != 'INFORMATION_SCHEMA'"))
+                        schemas = [row[0] for row in result]
+                        if schemas:
+                            return schemas
+                        else:
+                            # Fallback to default schema if no custom schemas found
+                            return ['dbo']
+                except Exception as e:
+                    logger.error(f"Error getting MS SQL Server schemas: {str(e)}")
+                    return ['dbo']  # Default SQL Server schema
             elif db_connection.db_type == DatabaseType.SQLITE:
                 # SQLite doesn't have traditional schemas
                 return ['main']

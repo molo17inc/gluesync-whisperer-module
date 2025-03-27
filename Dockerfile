@@ -70,6 +70,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     unixodbc-dev \
+    unixodbc \
     libpq-dev \
     curl \
     openssl \
@@ -82,6 +83,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/*
+
+# Install Microsoft ODBC Driver for SQL Server
+RUN curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add - \
+    && curl https://packages.microsoft.com/config/debian/11/prod.list > /etc/apt/sources.list.d/mssql-release.list \
+    && apt-get update \
+    && ACCEPT_EULA=Y apt-get install -y --no-install-recommends \
+       msodbcsql17 \
+       mssql-tools \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install Zulu JDK 21 for JDBC support
 RUN apt-get update && \
