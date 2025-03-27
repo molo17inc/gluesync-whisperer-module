@@ -60,13 +60,6 @@ deploy:
     # Set up Docker Buildx for multi-platform builds
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD"
     
-    # Install QEMU for multi-architecture builds
-    - docker run --privileged --rm tonistiigi/binfmt --install all
-    
-    # Create and use a new builder instance
-    - docker buildx create --name multiarch-builder --use
-    - docker buildx inspect --bootstrap
-    
     # Build and push multi-platform images
     - |
       docker buildx build --platform linux/amd64,linux/arm64 \
