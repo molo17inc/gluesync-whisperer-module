@@ -214,8 +214,19 @@ class DatabaseConnector:
     def disconnect(self):
         """Disconnect from the database."""
         if self.engine:
-            self.engine.dispose()
-            logger.info("Disconnected from database")
+            try:
+                # Check if it's a JDBC connection
+                if self.db_type == DatabaseType.AS400 or hasattr(self.engine, 'connection') and 'jdbc' in str(type(self.engine)).lower():
+                    # For JDBC connections, close the connection instead of disposing the engine
+                    if hasattr(self, 'connection') and self.connection is not None:
+                        self.connection.close()
+                        logger.info("Closed JDBC connection")
+                else:
+                    # For SQLAlchemy engines, use dispose
+                    self.engine.dispose()
+                logger.info("Disconnected from database")
+            except Exception as e:
+                logger.warning(f"Error during database disconnect: {str(e)}")
     
     def get_tables(self, schema=None):
         """Get a list of all tables in the database."""
