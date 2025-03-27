@@ -34,6 +34,9 @@ deploy:
     - name: docker:dind
       variables:
         DOCKER_TLS_CERTDIR: ""
+        DOCKER_DRIVER: overlay2
+  variables:
+    DOCKER_BUILDKIT: 1
   script:
     - echo "Building & deploying Gluesync Whisperer..."
     
@@ -59,6 +62,10 @@ deploy:
 
     # Set up Docker Buildx for multi-platform builds
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD"
+    
+    # Set up buildx with proper driver
+    - docker buildx create --use --name mybuilder
+    - docker buildx inspect --bootstrap
     
     # Build and push multi-platform images
     - |
