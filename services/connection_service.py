@@ -24,6 +24,7 @@
 import logging
 from typing import List, Optional
 from datetime import datetime
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from models import DatabaseConnection, ConnectionStatus
@@ -40,13 +41,15 @@ class ConnectionService:
     
     def get_connections(self) -> List[DatabaseConnection]:
         """Get all database connections."""
-        return self.db.query(DatabaseConnection).all()
+        stmt = select(DatabaseConnection)
+        return list(self.db.execute(stmt).scalars().all())
     
     def get_connection(self, connection_id: int) -> Optional[DatabaseConnection]:
         """Get a database connection by ID."""
-        return self.db.query(DatabaseConnection).filter(
+        stmt = select(DatabaseConnection).where(
             DatabaseConnection.id == connection_id
-        ).first()
+        )
+        return self.db.execute(stmt).scalar_one_or_none()
     
     def create_connection(self, connection_data: dict) -> DatabaseConnection:
         """Create a new database connection."""

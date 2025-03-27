@@ -23,6 +23,7 @@
 
 import logging
 from typing import List, Dict, Any, Optional
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from models import TableConfig, OperationType
@@ -65,32 +66,34 @@ class TableService:
 
     def get_tables(self, skip: int = 0, limit: int = 100) -> List[TableConfig]:
         """Get all table configurations."""
-        return self.db.query(TableConfig).offset(skip).limit(limit).all()
+        stmt = select(TableConfig).offset(skip).limit(limit)
+        return list(self.db.execute(stmt).scalars().all())
 
     def get_tables_by_connection(self, connection_id: int, skip: int = 0, limit: int = 100) -> List[TableConfig]:
         """Get all table configurations for a connection."""
-        return (
-            self.db.query(TableConfig)
-            .filter(TableConfig.connection_id == connection_id)
+        stmt = (
+            select(TableConfig)
+            .where(TableConfig.connection_id == connection_id)
             .offset(skip)
             .limit(limit)
-            .all()
         )
+        return list(self.db.execute(stmt).scalars().all())
 
     def get_table(self, table_id: int) -> Optional[TableConfig]:
         """Get a specific table configuration by ID."""
-        return self.db.query(TableConfig).filter(TableConfig.id == table_id).first()
+        stmt = select(TableConfig).where(TableConfig.id == table_id)
+        return self.db.execute(stmt).scalar_one_or_none()
 
     def get_table_by_name_and_connection(self, connection_id: int, table_name: str) -> Optional[TableConfig]:
         """Get a specific table configuration by connection ID and table name."""
-        return (
-            self.db.query(TableConfig)
-            .filter(
+        stmt = (
+            select(TableConfig)
+            .where(
                 TableConfig.connection_id == connection_id,
                 TableConfig.table_name == table_name
             )
-            .first()
         )
+        return self.db.execute(stmt).scalar_one_or_none()
 
     def update_table(self, table_id: int, table_update: TableConfigUpdate) -> TableConfig:
         """Update a table configuration."""

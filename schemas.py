@@ -65,7 +65,7 @@ class DatabaseConnectionResponse(DatabaseConnectionBase):
     last_operation_at: Optional[datetime] = None
 
     class Config:
-        orm_mode = True
+        from_attributes = True  # SQLAlchemy 2.0 / Pydantic V2 compatibility
 
 
 # Pydantic schemas for TableConfig
@@ -100,7 +100,7 @@ class TableConfigResponse(TableConfigBase):
     updated_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True  # SQLAlchemy 2.0 / Pydantic V2 compatibility
 
 
 # Pydantic schemas for OperationLog
@@ -122,7 +122,7 @@ class OperationLogResponse(OperationLogBase):
     created_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True  # SQLAlchemy 2.0 / Pydantic V2 compatibility
 
 
 # Additional schemas for specific operations

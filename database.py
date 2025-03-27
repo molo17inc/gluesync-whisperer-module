@@ -21,9 +21,9 @@
  * Copyright (C) 2025 MOLO17. All rights reserved.
 """
 
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine, select
+# SQLAlchemy 2.0 updates - replacing deprecated imports
+from sqlalchemy.orm import declarative_base, sessionmaker
 
 from config import settings
 

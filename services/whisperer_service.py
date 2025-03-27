@@ -214,19 +214,21 @@ class WhispererService:
             db = SessionLocal()
             
             # Get the connection
-            db_connection = db.query(DatabaseConnection).filter(
+            stmt = select(DatabaseConnection).where(
                 DatabaseConnection.id == connection_id
-            ).first()
+            )
+            db_connection = db.execute(stmt).scalar_one_or_none()
             
             if not db_connection:
                 logger.error(f"Connection with ID {connection_id} not found")
                 return
             
             # Get the tables for this connection
-            db_tables = db.query(TableConfig).filter(
+            stmt = select(TableConfig).where(
                 TableConfig.connection_id == connection_id,
                 TableConfig.enabled == True
-            ).all()
+            )
+            db_tables = list(db.execute(stmt).scalars().all())
             
             if not db_tables:
                 logger.error(f"No enabled tables found for connection {connection_id}")
@@ -283,9 +285,10 @@ class WhispererService:
             
             try:
                 # Update the connection status to error
-                db_connection = db.query(DatabaseConnection).filter(
+                stmt = select(DatabaseConnection).where(
                     DatabaseConnection.id == connection_id
-                ).first()
+                )
+                db_connection = db.execute(stmt).scalar_one_or_none()
                 
                 if db_connection:
                     db_connection.status = ConnectionStatus.ERROR

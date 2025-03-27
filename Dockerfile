@@ -97,7 +97,8 @@ COPY ./utils ./utils
 COPY ./api ./api
 COPY ./routers ./routers
 COPY ./services ./services
-# JDBC drivers removed to reduce image size
+# Copy JDBC drivers for AS400 support
+COPY ./jdbc_drivers ./jdbc_drivers
 COPY ./run_auto_operations.py .
 
 # Create logs directory
