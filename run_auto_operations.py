@@ -386,12 +386,30 @@ class TableWhisperer:
                 try:
                     # Check if primary key is auto-incremented or ID
                     if primary_key.upper() == "ID" or ("auto_increment" in str(self.schema.get("columns", {}).get(primary_key, {}).get("extra", "")).lower()):
-                        max_id_query = f"SELECT MAX({primary_key}) as max_id FROM {self.table_name}"
-                        max_id_result = self.connector.execute_query(max_id_query)
-                        if max_id_result and max_id_result[0]['max_id'] is not None:
-                            max_id = int(max_id_result[0]['max_id']) + 1
+                        # Use proper table qualification with schema for AS400
+                        if hasattr(self.connector, 'db_type') and self.connector.db_type == DatabaseType.AS400 and self.schema_name:
+                            # For AS400, use a more compatible syntax with explicit alias
+                            # AS400 sometimes requires more explicit column naming in result sets
+                            max_id_query = f"SELECT MAX({primary_key}) FROM {self.schema_name}.{self.table_name} WITH UR"
+                            max_id_result = self.connector.execute_query(max_id_query)
+                            # Handle AS400's result format which might return the column with a different name
+                            if max_id_result:
+                                # The column might be named by the expression itself like 'MAX(ID)'
+                                col_name = list(max_id_result[0].keys())[0]  # Get the first column name whatever it is
+                                if max_id_result[0][col_name] is not None:
+                                    max_id = int(max_id_result[0][col_name]) + 1
+                                else:
+                                    max_id = 1
+                            else:
+                                max_id = 1
                         else:
-                            max_id = 1
+                            # For other databases
+                            max_id_query = f"SELECT MAX({primary_key}) as max_id FROM {self.table_name}"
+                            max_id_result = self.connector.execute_query(max_id_query)
+                            if max_id_result and max_id_result[0]['max_id'] is not None:
+                                max_id = int(max_id_result[0]['max_id']) + 1
+                            else:
+                                max_id = 1
                 except Exception as e:
                     logger.warning(f"Failed to get max ID for {self.table_name}: {str(e)}")
                     max_id = random.randint(10000, 99999)  # Fallback to a random large number
@@ -565,15 +583,24 @@ class TableWhisperer:
             
             record_id = random.choice(results)[primary_key]
             
-            # Generic foreign key constraint check - a more dynamic approach
+            # Skip foreign key checks entirely for AS400 databases
+            if hasattr(self.connector, 'db_type') and self.connector.db_type == DatabaseType.AS400:
+                logger.info(f"AS400 database detected - skipping all foreign key checks for {self.table_name}")
+                return True  # Skip the rest of the delete check process
+            
+            # Generic foreign key constraint check - a more dynamic approach (only for non-AS400 databases)
             try:
                 # First, try to get all tables to check for potential relationships
-                all_tables_query = "SHOW TABLES"
+                # Use database-specific approach for getting tables
                 try:
+                    # For other databases, try the generic approach
+                    all_tables_query = "SHOW TABLES"
+                    
                     all_tables = self.connector.execute_query(all_tables_query)
                     potential_related_tables = [list(table.values())[0] for table in all_tables if list(table.values())[0] != self.table_name]
-                except Exception:
-                    # If SHOW TABLES doesn't work (depends on DB type), we'll just continue
+                except Exception as e:
+                    # If listing tables doesn't work, we'll just continue
+                    logger.warning(f"Failed to list tables: {str(e)}")
                     potential_related_tables = []
                 
                 # Generate potential foreign key column names based on typical naming patterns
@@ -582,6 +609,7 @@ class TableWhisperer:
                 
                 # Try to get foreign key information from information_schema if available
                 try:
+                    # For non-AS400 databases, use the standard approach with named parameters
                     fk_query = """
                     SELECT TABLE_NAME, COLUMN_NAME 
                     FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE 
@@ -629,7 +657,11 @@ class TableWhisperer:
                     # First check if table exists
                     try:
                         # Get the columns for this table to avoid "unknown column" errors
-                        schema_query = f"SELECT * FROM {related_table} LIMIT 0"
+                        # For AS400, always qualify with schema when available
+                        if hasattr(self.connector, 'db_type') and self.connector.db_type == DatabaseType.AS400 and self.schema_name:
+                            schema_query = f"SELECT * FROM {self.schema_name}.{related_table} LIMIT 0"
+                        else:
+                            schema_query = f"SELECT * FROM {related_table} LIMIT 0"
                         schema_result = quiet_connector.execute_query(schema_query)
                         
                         # Only proceed if the table exists
@@ -640,7 +672,11 @@ class TableWhisperer:
                             
                             # Only try columns that actually exist in the table
                             for fk_col in existing_fk_cols:
-                                check_query = f"SELECT COUNT(*) as count FROM {related_table} WHERE {fk_col} = {record_id}"
+                                # For AS400, always qualify with schema when available
+                                if hasattr(self.connector, 'db_type') and self.connector.db_type == DatabaseType.AS400 and self.schema_name:
+                                    check_query = f"SELECT COUNT(*) as count FROM {self.schema_name}.{related_table} WHERE {fk_col} = {record_id}"
+                                else:
+                                    check_query = f"SELECT COUNT(*) as count FROM {related_table} WHERE {fk_col} = {record_id}"
                                 check_result = quiet_connector.execute_query(check_query)
                                 
                                 if check_result and check_result[0]['count'] > 0:

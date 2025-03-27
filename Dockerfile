@@ -134,16 +134,8 @@ RUN if [ -d "/wheels" ] && [ "$(ls -A /wheels)" ]; then pip install /wheels/*; e
 # Install all Python dependencies including database drivers
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy AS400 requirements file
-COPY ./requirements-as400.txt .
-
-# Conditionally install IBM DB2/AS400 drivers only on x86_64 architecture
-RUN if [ "$(uname -m)" = "x86_64" ]; then \
-    echo "Installing IBM DB2/AS400 drivers on x86_64 architecture" && \
-    pip install --no-cache-dir -r requirements-as400.txt || echo "Failed to install IBM DB2 drivers, continuing without AS400 support"; \
-    else \
-    echo "Skipping IBM DB2/AS400 drivers on non-x86_64 architecture: $(uname -m)"; \
-    fi
+# We're not using IBM DB2 native drivers anymore, using JDBC for all architectures
+# JDBC drivers are already copied in the jdbc_drivers directory
 
 # Expose port
 EXPOSE 8000

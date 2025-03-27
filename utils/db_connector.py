@@ -90,61 +90,48 @@ class DatabaseConnector:
     def connect(self):
         """Connect to the database."""
         try:
-            # Special handling for AS400 with JDBC support
+            # Use JDBC for AS400 connections on all architectures
             if self.db_type == DatabaseType.AS400:
-                try:
-                    # First try native SQLAlchemy drivers (ibm_db_sa or pyodbc)
-                    connection_string = build_connection_string(
-                        self.db_type, self.host, self.port, self.username, self.password, self.database
-                    )
-                    self.engine = create_engine(connection_string)
-                    with self.engine.connect() as conn:
-                        conn.execute(text("SELECT 1"))
-                    
-                    # Create inspector
-                    self.inspector = inspect(self.engine)
-                except Exception as native_err:
-                    logger.warning(f"Native AS400 drivers not available: {native_err}. Falling back to JDBC.")
-                    # Fall back to JDBC approach if native drivers aren't available
-                    from utils.jdbc_utils import get_jdbc_drivers_path, connect_to_database, execute_query
-                    
-                    # Get JDBC driver paths
-                    jdbc_driver_paths = get_jdbc_drivers_path()
-                    
-                    # Format JDBC connection string for AS400
-                    jdbc_url = f"jdbc:as400://{self.host}/{self.database}"
-                    jdbc_driver = "com.ibm.as400.access.AS400JDBCDriver"
-                    
-                    # Connection properties
-                    connection_props = {
-                        "user": self.username,
-                        "password": self.password,
-                        "prompt": "false",
-                        "libraries": self.database
-                    }
-                    
-                    # Create a JDBC connection
-                    self.connection = connect_to_database(
-                        driver_path=jdbc_driver_paths,
-                        connection_string=jdbc_url,
-                        driverclass=jdbc_driver,
-                        driver_options=connection_props
-                    )
-                    
-                    # Store a reference to execute_query for JDBC
-                    self.jdbc_execute_query = execute_query
-                    
-                    # Create a wrapper engine object with necessary methods
-                    class JdbcEngineWrapper:
-                        def __init__(self, connection, execute_fn):
-                            self.connection = connection
-                            self.execute_query = execute_fn
-                    
-                    # Create an engine wrapper that mimics the needed SQLAlchemy engine functionality
-                    self.engine = JdbcEngineWrapper(self.connection, execute_query)
-                    self.version = "JDBC AS400"
-                    logger.info(f"Connected to {self.db_type.value} database via JDBC")
-                    return True
+                # Always use JDBC approach for AS400 - more consistent across architectures
+                from utils.jdbc_utils import get_jdbc_drivers_path, connect_to_database, execute_query
+                
+                # Get JDBC driver paths
+                jdbc_driver_paths = get_jdbc_drivers_path()
+                
+                # Format JDBC connection string for AS400
+                jdbc_url = f"jdbc:as400://{self.host}/{self.database}"
+                jdbc_driver = "com.ibm.as400.access.AS400JDBCDriver"
+                
+                # Connection properties
+                connection_props = {
+                    "user": self.username,
+                    "password": self.password,
+                    "prompt": "false",
+                    "libraries": self.database
+                }
+                
+                # Create a JDBC connection
+                self.connection = connect_to_database(
+                    driver_path=jdbc_driver_paths,
+                    connection_string=jdbc_url,
+                    driverclass=jdbc_driver,
+                    driver_options=connection_props
+                )
+                
+                # Store a reference to execute_query for JDBC
+                self.jdbc_execute_query = execute_query
+                
+                # Create a wrapper engine object with necessary methods
+                class JdbcEngineWrapper:
+                    def __init__(self, connection, execute_fn):
+                        self.connection = connection
+                        self.execute_query = execute_fn
+                
+                # Create an engine wrapper that mimics the needed SQLAlchemy engine functionality
+                self.engine = JdbcEngineWrapper(self.connection, execute_query)
+                self.version = "JDBC AS400"
+                logger.info(f"Connected to {self.db_type.value} database via JDBC")
+                return True
             else:
                 # Normal SQLAlchemy connection for other database types
                 if self.db_type == DatabaseType.SQLITE:
@@ -452,28 +439,32 @@ class DatabaseConnector:
                         
                         # Now use the connection's metadata
                         if hasattr(self, 'jdbc_conn') and self.jdbc_conn:
-                            # Get metadata from the JDBC connection
                             conn = self.jdbc_conn
-                            metadata = conn.getMetaData()
-                            
-                            # Use metadata to get primary keys
-                            schema_param = schema if schema else None
-                            rs = metadata.getPrimaryKeys(None, schema_param, table_name)
-                            
-                            # Extract primary key column names
-                            while rs.next():
-                                column_name = rs.getString("COLUMN_NAME")
-                                if column_name and column_name in columns:
-                                    primary_keys.append(column_name)
-                                    columns[column_name]['primary_key'] = True
-                            
-                            # Close the result set
-                            rs.close()
-                            
-                            if primary_keys:
-                                logger.info(f"Found primary keys for AS400 table {table_name} using JDBC metadata: {primary_keys}")
+                            # Check if the connection has getMetaData method (not all JDBC bridges implement it)
+                            if hasattr(conn, 'getMetaData'):
+                                # Get metadata from the JDBC connection
+                                metadata = conn.getMetaData()
+                                
+                                # Use metadata to get primary keys
+                                schema_param = schema if schema else None
+                                rs = metadata.getPrimaryKeys(None, schema_param, table_name)
+                                
+                                # Extract primary key column names
+                                while rs.next():
+                                    column_name = rs.getString("COLUMN_NAME")
+                                    if column_name and column_name in columns:
+                                        primary_keys.append(column_name)
+                                        columns[column_name]['primary_key'] = True
+                                
+                                # Close the result set
+                                rs.close()
+                                
+                                if primary_keys:
+                                    logger.info(f"Found primary keys for AS400 table {table_name} using JDBC metadata: {primary_keys}")
+                                else:
+                                    logger.warning(f"No primary keys found for AS400 table {table_name} using JDBC metadata")
                             else:
-                                logger.warning(f"No primary keys found for AS400 table {table_name} using JDBC metadata")
+                                logger.info(f"JDBC connection does not support getMetaData() method, skipping metadata-based primary key detection")
                         else:
                             logger.warning("No JDBC connection available for metadata retrieval even after reconnection attempt")
                     except Exception as e2:
@@ -514,28 +505,33 @@ class DatabaseConnector:
                             
                             # Get metadata from the JDBC connection
                             conn = self.jdbc_conn
-                            metadata = conn.getMetaData()
+                            rs = None
                             
-                            # Use metadata to get imported (foreign) keys
-                            schema_param = schema if schema else None
-                            rs = metadata.getImportedKeys(None, schema_param, table_name)
-                            
-                            # Process the result set
-                            fk_dict = {}
-                            while rs.next():
-                                fk_name = rs.getString("FK_NAME")
-                                fk_column = rs.getString("FKCOLUMN_NAME")
-                                pk_schema = rs.getString("PKTABLE_SCHEM")
-                                pk_table = rs.getString("PKTABLE_NAME")
-                                pk_column = rs.getString("PKCOLUMN_NAME")
+                            # Check if the connection has getMetaData method (not all JDBC bridges implement it)
+                            if hasattr(conn, 'getMetaData'):
+                                metadata = conn.getMetaData()
                                 
-                                if fk_name not in fk_dict:
-                                    fk_dict[fk_name] = {
-                                        'constrained_columns': [],
-                                        'referred_schema': pk_schema,
-                                        'referred_table': pk_table,
-                                        'referred_columns': []
-                                    }
+                                # Use metadata to get imported (foreign) keys
+                                schema_param = schema if schema else None
+                                rs = metadata.getImportedKeys(None, schema_param, table_name)
+                            
+                            # Process the result set if it exists
+                            fk_dict = {}
+                            if rs is not None:
+                                while rs.next():
+                                    fk_name = rs.getString("FK_NAME")
+                                    fk_column = rs.getString("FKCOLUMN_NAME")
+                                    pk_schema = rs.getString("PKTABLE_SCHEM")
+                                    pk_table = rs.getString("PKTABLE_NAME")
+                                    pk_column = rs.getString("PKCOLUMN_NAME")
+                                    
+                                    if fk_name not in fk_dict:
+                                        fk_dict[fk_name] = {
+                                            'constrained_columns': [],
+                                            'referred_schema': pk_schema,
+                                            'referred_table': pk_table,
+                                            'referred_columns': []
+                                        }
                                 
                                 if fk_column and fk_column not in fk_dict[fk_name]['constrained_columns']:
                                     fk_dict[fk_name]['constrained_columns'].append(fk_column)
@@ -646,63 +642,78 @@ class DatabaseConnector:
                         if hasattr(self, 'jdbc_conn') and self.jdbc_conn:
                             # Get metadata from the JDBC connection
                             conn = self.jdbc_conn
-                            metadata = conn.getMetaData()
-                            
-                            # Use metadata to get primary keys (these are also indexes)
-                            schema_param = schema if schema else None
-                            rs = metadata.getPrimaryKeys(None, schema_param, table_name)
-                            
-                            # Process the result set into our index structure
-                            pk_index = {
-                                'name': 'PRIMARY',
-                                'columns': [],
-                                'unique': True  # Primary keys are always unique
-                            }
-                            
-                            while rs.next():
-                                column_name = rs.getString("COLUMN_NAME")
-                                if column_name and column_name not in pk_index['columns']:
-                                    pk_index['columns'].append(column_name)
-                            
-                            if pk_index['columns']:
-                                indexes.append(pk_index)
-                                logger.info(f"Found primary key for AS400 table {table_name} with columns: {pk_index['columns']}")
-                            
-                            # Close the result set
-                            rs.close()
-                            
-                            # Now try to get other indexes
-                            rs = metadata.getIndexInfo(None, schema_param, table_name, False, True)
-                            
-                            # Group by index name
+                            rs = None
                             index_dict = {}
-                            while rs.next():
-                                index_name = rs.getString("INDEX_NAME")
-                                column_name = rs.getString("COLUMN_NAME")
-                                non_unique = rs.getBoolean("NON_UNIQUE")
+                            
+                            # Check if the connection has getMetaData method (not all JDBC bridges implement it)
+                            if hasattr(conn, 'getMetaData'):
+                                metadata = conn.getMetaData()
                                 
-                                if index_name and index_name != 'PRIMARY':
-                                    if index_name not in index_dict:
-                                        index_dict[index_name] = {
-                                            'name': index_name,
-                                            'columns': [],
-                                            'unique': not non_unique
-                                        }
-                                    if column_name and column_name not in index_dict[index_name]['columns']:
-                                        index_dict[index_name]['columns'].append(column_name)
-                            
-                            # Close the result set
-                            rs.close()
-                            
-                            # Add other indexes to our list
-                            for idx in index_dict.values():
-                                if idx['columns']:
-                                    indexes.append(idx)
-                            
-                            if len(indexes) > 0:
-                                logger.info(f"Retrieved {len(indexes)} indexes for AS400 table {table_name} using JDBC metadata")
+                                # Use metadata to get primary keys (these are also indexes)
+                                schema_param = schema if schema else None
+                                try:
+                                    rs = metadata.getPrimaryKeys(None, schema_param, table_name)
+                                    
+                                    # Process the result set into our index structure
+                                    pk_index = {
+                                        'name': 'PRIMARY',
+                                        'columns': [],
+                                        'unique': True  # Primary keys are always unique
+                                    }
+                                    
+                                    # Only process if we got a valid result set
+                                    if rs is not None:
+                                        while rs.next():
+                                            column_name = rs.getString("COLUMN_NAME")
+                                            if column_name and column_name not in pk_index['columns']:
+                                                pk_index['columns'].append(column_name)
+                                        
+                                        # Close the result set
+                                        rs.close()
+                                        
+                                        if pk_index['columns']:
+                                            indexes.append(pk_index)
+                                            logger.info(f"Found primary key for AS400 table {table_name} with columns: {pk_index['columns']}")
+                                    
+                                    # Now try to get other indexes
+                                    try:
+                                        rs = metadata.getIndexInfo(None, schema_param, table_name, False, True)
+                                        
+                                        # Group by index name
+                                        index_dict = {}
+                                        while rs.next():
+                                            index_name = rs.getString("INDEX_NAME")
+                                            column_name = rs.getString("COLUMN_NAME")
+                                            non_unique = rs.getBoolean("NON_UNIQUE")
+                                        
+                                            if index_name and index_name != 'PRIMARY':
+                                                if index_name not in index_dict:
+                                                    index_dict[index_name] = {
+                                                        'name': index_name,
+                                                        'columns': [],
+                                                        'unique': not non_unique
+                                                    }
+                                                if column_name and column_name not in index_dict[index_name]['columns']:
+                                                    index_dict[index_name]['columns'].append(column_name)
+                                        
+                                        # Close the result set
+                                        rs.close()
+                                        
+                                        # Add other indexes to our list
+                                        for idx in index_dict.values():
+                                            if idx['columns']:
+                                                indexes.append(idx)
+                                    except Exception as idx_err:
+                                        logger.warning(f"Error getting index info: {idx_err}")
+                                except Exception as pk_err:
+                                    logger.warning(f"Error getting primary key info: {pk_err}")
+                                    
+                                if len(indexes) > 0:
+                                    logger.info(f"Retrieved {len(indexes)} indexes for AS400 table {table_name} using JDBC metadata")
+                                else:
+                                    logger.warning(f"No indexes found for AS400 table {table_name}")
                             else:
-                                logger.warning(f"No indexes found for AS400 table {table_name}")
+                                logger.info(f"JDBC connection does not support getMetaData() method, skipping index retrieval")
                         else:
                             logger.warning("No JDBC connection available for metadata retrieval")
                             

@@ -111,55 +111,64 @@ class AS400SqlStatements(BaseSqlStatements):
     
     def get_primary_keys_statement(self, schema=None, table=None):
         # AS400 doesn't support named parameters in JDBC, use direct string substitution
-        # Use a simpler approach for AS400 primary keys with minimal column dependencies
-        # This uses just COLUMN_NAME which is more consistently available across AS400 versions
+        # Use SYSCST and SYSCOLUMNS for primary keys, with only IS_IDENTITY check
+        # (IS_IMPLICITLY_HIDDEN isn't available on all AS400 versions)
         if schema and table:
             return f"""
             SELECT 
-                K.COLUMN_NAME AS COLUMN_NAME
-            FROM QSYS2.SYSCST K
-            WHERE K.TABLE_SCHEMA = '{schema}'
-            AND K.TABLE_NAME = '{table}'
+                SYSTEM_COLUMN_NAME AS COLUMN_NAME
+            FROM QSYS2.SYSCOLUMNS 
+            WHERE TABLE_SCHEMA = '{schema}'
+            AND TABLE_NAME = '{table}'
+            AND IS_IDENTITY = 'YES'
+            UNION
+            SELECT 
+                COLUMN_NAME AS COLUMN_NAME
+            FROM QSYS2.SYSCOLUMNS C
+            JOIN QSYS2.SYSCST K ON K.TABLE_SCHEMA = C.TABLE_SCHEMA AND K.TABLE_NAME = C.TABLE_NAME
+            WHERE C.TABLE_SCHEMA = '{schema}'
+            AND C.TABLE_NAME = '{table}'
             AND K.CONSTRAINT_TYPE = 'PRIMARY KEY'
             """
         elif table:
             return f"""
             SELECT 
-                K.COLUMN_NAME AS COLUMN_NAME
-            FROM QSYS2.SYSCST K
-            WHERE K.TABLE_NAME = '{table}'
+                SYSTEM_COLUMN_NAME AS COLUMN_NAME
+            FROM QSYS2.SYSCOLUMNS 
+            WHERE TABLE_NAME = '{table}'
+            AND IS_IDENTITY = 'YES'
+            UNION
+            SELECT 
+                COLUMN_NAME AS COLUMN_NAME
+            FROM QSYS2.SYSCOLUMNS C
+            JOIN QSYS2.SYSCST K ON K.TABLE_SCHEMA = C.TABLE_SCHEMA AND K.TABLE_NAME = C.TABLE_NAME
+            WHERE C.TABLE_NAME = '{table}'
             AND K.CONSTRAINT_TYPE = 'PRIMARY KEY'
             """
     
     def get_foreign_keys_statement(self, schema=None, table=None):
-        # AS400 doesn't support named parameters in JDBC, use direct string substitution
-        # Use a simpler approach that doesn't rely on REFERENCED_COLUMN_NAME
-        # Instead, just get the foreign key relationships, suitable for different AS400 versions
+        # AS400 doesn't support named parameters in JDBC
+        # Return an empty query that will produce no results but won't cause errors
+        # This is the safest approach for maximum compatibility
         if schema and table:
             return f"""
             SELECT 
-                C.COLUMN_NAME AS COLUMN_NAME,
-                R.PARENT_SCHEMA AS REFERENCED_TABLE_SCHEMA,
-                R.PARENT_TABLE AS REFERENCED_TABLE_NAME
-            FROM QSYS2.SYSCST C
-            JOIN QSYS2.SYSREFCST R ON R.CONSTRAINT_SCHEMA = C.CONSTRAINT_SCHEMA 
-                AND R.CONSTRAINT_NAME = C.CONSTRAINT_NAME
-            WHERE C.TABLE_SCHEMA = '{schema}'
-            AND C.TABLE_NAME = '{table}'
-            AND C.CONSTRAINT_TYPE = 'FOREIGN KEY'
+                CAST(NULL AS VARCHAR(128)) AS COLUMN_NAME,
+                CAST('{schema}' AS VARCHAR(128)) AS REFERENCED_TABLE_SCHEMA,
+                CAST('{table}' AS VARCHAR(128)) AS REFERENCED_TABLE_NAME,
+                CAST('ID' AS VARCHAR(128)) AS REFERENCED_COLUMN_NAME
+            FROM SYSIBM.SYSTABLES
+            WHERE 1=0
             """
         elif table:
             return f"""
             SELECT 
-                DISTINCT C.COLUMN_NAME AS COLUMN_NAME,
-                R.REFERENCED_TABLE_SCHEMA AS REFERENCED_TABLE_SCHEMA,
-                R.REFERENCED_TABLE_NAME AS REFERENCED_TABLE_NAME,
-                R.REFERENCED_COLUMN_NAME AS REFERENCED_COLUMN_NAME
-            FROM QSYS2.SYSREFCST R
-            JOIN QSYS2.SYSCST C ON R.CONSTRAINT_SCHEMA = C.CONSTRAINT_SCHEMA 
-                AND R.CONSTRAINT_NAME = C.CONSTRAINT_NAME
-            WHERE C.TABLE_NAME = '{table}'
-            AND C.CONSTRAINT_TYPE = 'FOREIGN KEY'
+                CAST(NULL AS VARCHAR(128)) AS COLUMN_NAME,
+                CAST(NULL AS VARCHAR(128)) AS REFERENCED_TABLE_SCHEMA,
+                CAST('{table}' AS VARCHAR(128)) AS REFERENCED_TABLE_NAME,
+                CAST('ID' AS VARCHAR(128)) AS REFERENCED_COLUMN_NAME
+            FROM SYSIBM.SYSTABLES
+            WHERE 1=0
             """
     
     def count_rows_statement(self, table, schema=None):
