@@ -77,8 +77,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     unzip \
     libaio1 \
+    apt-transport-https \
+    gnupg \
+    ca-certificates \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/*
+
+# Install Zulu JDK 21 for JDBC support
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends wget apt-transport-https gnupg ca-certificates && \
+    # Add Azul's public key
+    wget -qO - https://repos.azul.com/azul-repo.key | gpg --dearmor -o /usr/share/keyrings/azul.gpg && \
+    # Add Azul's apt repository
+    echo "deb [signed-by=/usr/share/keyrings/azul.gpg] https://repos.azul.com/zulu/deb stable main" > /etc/apt/sources.list.d/zulu.list && \
+    apt-get update && \
+    apt-get install -y zulu21-jdk && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Ensure JAVA_HOME is correctly set
+ENV JAVA_HOME=/usr/lib/jvm/zulu21-ca-amd64
 
 # Copy wheels from builder stage
 COPY --from=builder /wheels /wheels

@@ -83,18 +83,44 @@ def initialize_jvm(driver_path: List[str]) -> None:
             if not jpype.isJVMStarted():
                 logger.debug("Starting JVM with JPype...")
                 classpath = os.pathsep.join([os.path.abspath(p) for p in driver_path])
-                java_home = os.getenv('JAVA_HOME', '/usr/lib/jvm/default-java')
+                
+                # Determine appropriate JVM path based on architecture
+                processor = platform.processor().lower()
+                if processor in ['arm', 'aarch64', 'arm64']:
+                    # ARM architecture
+                    java_home = os.getenv('JAVA_HOME', '/usr/lib/jvm/zulu21-ca-arm64')
+                    if not os.path.exists(java_home):
+                        # Try with symlink
+                        java_home = '/usr/lib/jvm/zulu21'
+                else:
+                    # x86_64/amd64 architecture
+                    java_home = os.getenv('JAVA_HOME', '/usr/lib/jvm/zulu21-ca-amd64')
+                    if not os.path.exists(java_home):
+                        # Try with symlink
+                        java_home = '/usr/lib/jvm/zulu21'
+                
+                logger.debug(f"Architecture detected: {processor}")
+                logger.debug(f"Using Java home: {java_home}")
                 
                 # Determine JVM path based on platform
                 if platform.system() == 'Darwin':  # macOS
-                    if platform.processor() == 'arm':  # Apple Silicon
-                        jvm_path = os.path.join(java_home, 'lib', 'server', 'libjvm.dylib')
-                    else:  # Intel Mac
-                        jvm_path = os.path.join(java_home, 'lib', 'server', 'libjvm.dylib')
+                    jvm_path = os.path.join(java_home, 'lib', 'server', 'libjvm.dylib')
                 elif platform.system() == 'Windows':
                     jvm_path = os.path.join(java_home, 'bin', 'server', 'jvm.dll')
                 else:  # Linux and others
                     jvm_path = os.path.join(java_home, 'lib', 'server', 'libjvm.so')
+                    
+                # Verify the JVM file exists
+                if not os.path.exists(jvm_path):
+                    logger.warning(f"JVM not found at {jvm_path}, checking alternatives...")
+                    # Try to find the JVM library
+                    for root_dir in ['/usr/lib/jvm']:
+                        for jvm_dir in os.listdir(root_dir) if os.path.exists(root_dir) else []:
+                            alt_path = os.path.join(root_dir, jvm_dir, 'lib', 'server', 'libjvm.so')
+                            if os.path.exists(alt_path):
+                                jvm_path = alt_path
+                                logger.info(f"Found alternative JVM at {jvm_path}")
+                                break
 
                 logger.debug(f"JAVA_HOME: {java_home}")
                 logger.debug(f"JVM Path: {jvm_path}")
@@ -277,35 +303,52 @@ def get_schemas(connection):
     schemas = []
     cursor = None
     try:
+        # Get connection metadata for database introspection
+        # JayDeBeApi stores connection info differently than standard JDBC
         cursor = connection.cursor()
-        metadata = cursor.connection.getMetaData()
         
-        # For AS400/DB2, use a different approach to get schemas
-        if "as400" in cursor.connection.getMetaData().getURL().lower():
-            # For AS400, libraries are considered schemas
-            rs = metadata.getSchemas()
-            while rs.next():
-                schema_name = rs.getString("TABLE_SCHEM")
-                schemas.append(schema_name)
-            rs.close()
+        connection_url = None
+        try:
+            # Try to get URL from connection metadata (may vary based on JDBC driver)
+            java_conn = connection.__connection__
+            if hasattr(java_conn, 'getMetaData'):
+                metadata = java_conn.getMetaData()
+                connection_url = metadata.getURL()
+        except Exception as md_err:
+            logger.debug(f"Could not get metadata from connection: {md_err}")
+        
+        is_as400 = connection_url and "as400" in connection_url.lower()
+        
+        if is_as400:
+            # For AS400/DB2, use a different approach to get schemas
+            logger.debug("Using AS400-specific schema query")
+            try:
+                # Try the primary approach for AS400
+                cursor.execute("SELECT DISTINCT TABLE_SCHEMA FROM QSYS2.SYSTABLES WHERE TABLE_SCHEMA NOT LIKE 'Q%' OR TABLE_SCHEMA = 'QGPL'")
+                rows = cursor.fetchall()
+                schemas = [row[0] for row in rows]
+            except Exception as as400_err:
+                logger.warning(f"Primary AS400 schema query failed: {as400_err}")
+                # Fallback to a simpler query that might work
+                cursor.execute("SELECT DISTINCT SYSTEM_SCHEMA FROM QSYS2.SYSTABLES")
+                rows = cursor.fetchall()
+                schemas = [row[0] for row in rows]
         else:
             # Generic approach for other databases
-            cursor.execute("SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA")
-            rows = cursor.fetchall()
-            schemas = [row[0] for row in rows]
+            try:
+                cursor.execute("SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA")
+                rows = cursor.fetchall()
+                schemas = [row[0] for row in rows]
+            except Exception as generic_err:
+                logger.warning(f"Generic schema query failed: {generic_err}")
+                # Try a different approach that might work for more databases
+                cursor.execute("SELECT DISTINCT table_schema FROM information_schema.tables")
+                rows = cursor.fetchall()
+                schemas = [row[0] for row in rows]
         
         return schemas
     except Exception as e:
         logger.error(f"Error getting schemas via JDBC: {str(e)}")
-        # Fallback approach for AS400
-        try:
-            if cursor:
-                cursor.execute("SELECT DISTINCT TABLE_SCHEMA FROM QSYS2.SYSTABLES WHERE TABLE_SCHEMA NOT LIKE 'Q%' OR TABLE_SCHEMA = 'QGPL'")
-                rows = cursor.fetchall()
-                schemas = [row[0] for row in rows]
-                return schemas
-        except Exception as inner_e:
-            logger.error(f"Fallback schema query failed: {str(inner_e)}")
         raise
     finally:
         if cursor:
@@ -326,21 +369,58 @@ def get_tables(connection, schema=None):
     cursor = None
     try:
         cursor = connection.cursor()
-        metadata = cursor.connection.getMetaData()
         
-        if schema:
-            rs = metadata.getTables(None, schema, "%", ["TABLE"])
-            while rs.next():
-                table_name = rs.getString("TABLE_NAME")
-                tables.append(table_name)
-            rs.close()
+        connection_url = None
+        try:
+            # Try to get URL from connection metadata (may vary based on JDBC driver)
+            java_conn = connection.__connection__
+            if hasattr(java_conn, 'getMetaData'):
+                metadata = java_conn.getMetaData()
+                connection_url = metadata.getURL()
+        except Exception as md_err:
+            logger.debug(f"Could not get metadata from connection: {md_err}")
+        
+        is_as400 = connection_url and "as400" in connection_url.lower()
+        
+        if is_as400:
+            # For AS400, use SQL query approach
+            if schema:
+                try:
+                    query = f"SELECT TABLE_NAME FROM QSYS2.SYSTABLES WHERE TABLE_SCHEMA = '{schema}' AND TABLE_TYPE = 'T'"
+                    logger.debug(f"Executing AS400 table query: {query}")
+                    cursor.execute(query)
+                    rows = cursor.fetchall()
+                    tables = [row[0] for row in rows]
+                except Exception as as400_err:
+                    logger.warning(f"AS400 table query failed: {as400_err}")
+                    # Try a simpler approach
+                    query = f"SELECT TABLE_NAME FROM QSYS2.SYSTABLES WHERE TABLE_SCHEMA = '{schema}'"
+                    cursor.execute(query)
+                    rows = cursor.fetchall()
+                    tables = [row[0] for row in rows]
+            else:
+                # Get tables from all schemas
+                cursor.execute("SELECT TABLE_SCHEMA, TABLE_NAME FROM QSYS2.SYSTABLES WHERE TABLE_TYPE = 'T'")
+                rows = cursor.fetchall()
+                tables = [(row[0], row[1]) for row in rows]
         else:
-            rs = metadata.getTables(None, "%", "%", ["TABLE"])
-            while rs.next():
-                schema_name = rs.getString("TABLE_SCHEM")
-                table_name = rs.getString("TABLE_NAME")
-                tables.append((schema_name, table_name))
-            rs.close()
+            # Generic approach for other databases
+            if schema:
+                try:
+                    cursor.execute(f"SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{schema}'")
+                    rows = cursor.fetchall()
+                    tables = [row[0] for row in rows]
+                except Exception as generic_err:
+                    logger.warning(f"Generic table query failed: {generic_err}")
+                    # Try a different approach that might work for more databases
+                    cursor.execute(f"SELECT table_name FROM information_schema.tables WHERE table_schema = '{schema}'")
+                    rows = cursor.fetchall()
+                    tables = [row[0] for row in rows]
+            else:
+                # Get tables from all schemas
+                cursor.execute("SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE'")
+                rows = cursor.fetchall()
+                tables = [(row[0], row[1]) for row in rows]
         
         return tables
     except Exception as e:
