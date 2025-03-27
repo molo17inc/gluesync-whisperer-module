@@ -512,32 +512,23 @@ class DatabaseService:
             return f"oracle+cx_oracle://{connection.username}:{connection.password}@{connection.host}:{connection.port}/{connection.database_name}"
         
         elif connection.db_type == DatabaseType.AS400:
-            # First try to use the native ibm_db_sa driver
+            # Always use JDBC for AS400 connections for cross-platform compatibility
             try:
-                import ibm_db_sa
-                # AS400: ibm_db_sa://username:password@host/database_name
-                # Note: port is typically ignored for AS400, using the default port
+                # Check if JDBC utils are available
+                from utils import jdbc_utils
+                # We'll handle this connection directly through JDBC in the _get_engine method
+                # Return a special connection string format to indicate JDBC usage
                 if connection.database_name:
-                    return f"ibm_db_sa://{connection.username}:{connection.password}@{connection.host}/{connection.database_name}"
+                    return f"jdbc:as400://{connection.host}/{connection.database_name}"
                 else:
-                    # If no database name is provided, connect without specifying one
-                    return f"ibm_db_sa://{connection.username}:{connection.password}@{connection.host}"
+                    return f"jdbc:as400://{connection.host}"
             except ImportError:
-                # Native drivers not available - try JDBC approach
-                logger.warning("Native IBM DB2/AS400 drivers not available. Falling back to JDBC.")
-                try:
-                    # Check if JDBC utils are available
-                    from utils import jdbc_utils
-                    # We'll handle this connection directly through JDBC in create_engine_instance method
-                    # Return a special connection string format to indicate JDBC usage
-                    if connection.database_name:
-                        return f"jdbc:as400://{connection.host}/{connection.database_name}"
-                    else:
-                        return f"jdbc:as400://{connection.host}"
-                except ImportError:
-                    # JDBC not available either
-                    logger.error("Neither native IBM DB2 drivers nor JDBC utilities are available.")
-                    raise ValueError("AS400 database support requires either ibm_db_sa or JDBC utilities.")
+                # JDBC not available
+                logger.error("JDBC utilities not available for AS400 connection.")
+                raise ValueError("AS400 database support requires JDBC utilities.")
+                
+            # Native ibm_db_sa driver is no longer used for AS400 connections
+            # to ensure cross-platform compatibility
         
         else:
             raise ValueError(f"Unsupported database type: {connection.db_type}")
