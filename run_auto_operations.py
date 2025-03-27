@@ -583,10 +583,28 @@ class TableWhisperer:
             
             record_id = random.choice(results)[primary_key]
             
-            # Skip foreign key checks entirely for AS400 databases
+            # Skip foreign key checks for AS400 databases but continue with the delete operation
             if hasattr(self.connector, 'db_type') and self.connector.db_type == DatabaseType.AS400:
-                logger.info(f"AS400 database detected - skipping all foreign key checks for {self.table_name}")
-                return True  # Skip the rest of the delete check process
+                logger.info(f"AS400 database detected - skipping foreign key checks for {self.table_name}")
+                # Skip the foreign key checks but proceed directly to the delete query below
+                # by jumping over the entire foreign key check section
+                # Prepare query
+                query = f"DELETE FROM {self.qualified_table_name} WHERE {primary_key} = {record_id}"
+                
+                try:
+                    # Execute query
+                    result = self.connector.execute_query(query)
+                    self.operation_count["delete"] += 1
+                    logger.info(f"DELETE operation successful: {query}")
+                    
+                    # Check if we need to insert more records (to avoid depleting the table)
+                    if len(results) < 5:
+                        self.perform_insert()
+                    
+                    return True
+                except Exception as e:
+                    logger.error(f"Error performing DELETE on AS400: {str(e)}")
+                    return False
             
             # Generic foreign key constraint check - a more dynamic approach (only for non-AS400 databases)
             try:

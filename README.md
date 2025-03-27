@@ -12,6 +12,18 @@ A specialized module for orchestrating database operations. This application ena
 - REST API for configuration and control
 - Robust parameter handling for all database types
 - Automatic transaction management for data modification operations
+- Cross-platform support for AS400/DB2 databases on both x86_64 and ARM architectures
+
+## AS400 Specific Improvements
+
+### Latest Enhancements
+
+- **Cross-platform Support**: Replaced architecture-specific `ibm_db` libraries with a universal JDBC-based implementation using `jaydebeapi`
+- **Better Schema Support**: Improved schema detection and qualified table name handling for AS400 databases
+- **Optimized Metadata Retrieval**: Streamlined metadata detection with AS400-specific catalog queries
+- **Foreign Key Handling**: Intelligently skips foreign key checks on AS400 to reduce unnecessary operations and warnings
+- **MAX ID Query Optimization**: Enhanced MAX ID queries with AS400-compatible syntax and dynamic column name detection
+- **DELETE Operations**: Fixed deletion support with proper error handling for AS400 databases
 
 ## Installation
 
@@ -26,9 +38,9 @@ Gluesync Whisperer supports multiple database types, each requiring specific Pyt
 | SQLite | Built-in SQLAlchemy support | No additional packages needed |
 | MSSQL | `pyodbc` | Requires ODBC drivers to be installed on the system |
 | Oracle | `cx_Oracle` | May require Oracle client libraries |
-| AS400/DB2 | `ibm_db`, `ibm_db_sa` | **x86_64 platform only** - Not compatible with ARM-based platforms (M1/M2 Macs) |
+| AS400/DB2 | `jaydebeapi` and JDBC driver | **Cross-platform compatible** - Works on both x86_64 and ARM-based platforms (M1/M2 Macs) |
 
-All required drivers are included in the Dockerfile for containerized deployment on compatible platforms. For ARM-based systems (like M1/M2 Macs), AS400/DB2 support is disabled automatically during the build process.
+All required drivers are included in the Dockerfile for containerized deployment. AS400/DB2 support is now implemented using JDBC drivers via `jaydebeapi`, making it fully compatible with both x86_64 and ARM-based platforms (including M1/M2 Macs).
 
 ### Local Installation
 
@@ -86,7 +98,7 @@ Gluesync Whisperer (Gluesync Whisperer) is dual-licensed under the following lic
 
 1. **GNU General Public License (GPL) Version 3**  
    You may use, modify, and distribute this software under the terms of the GPL v3.  
-   See the [LICENSE-GPL](LICENSE-GPL) file or <http://www.gnu.org/licenses/gpl-3.0.html> for details.  
+   See the [LICENSE-GPL](LICENSE-GPL) file or [GPL v3 license](http://www.gnu.org/licenses/gpl-3.0.html) for details.  
    This option is available at no cost, but any derivative works must also be licensed under GPL v3.
 
 2. **MOLO17 Commercial License**  
