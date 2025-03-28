@@ -358,8 +358,8 @@ Gluesync Whisperer supports multi-architecture Docker builds for both ARM64 (App
 
 #### Platform-Specific Support Notes
 
-- **x86_64/AMD64**: Full support for all database types, including AS400/DB2
-- **ARM64/Apple Silicon**: Support for MySQL, PostgreSQL, SQLite, MSSQL, and Oracle; AS400/DB2 support is disabled due to driver incompatibility
+- **x86_64/AMD64**: Full support for all database types, including AS400/DB2 and MS SQL Server
+- **ARM64/Apple Silicon**: Full support for all database types, including AS400/DB2 and MS SQL Server (uses JDBC drivers for cross-platform compatibility)
 
 #### Using the Multi-Architecture Build Script
 
