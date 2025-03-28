@@ -21,6 +21,10 @@
  * Copyright (C) 2025 MOLO17. All rights reserved.
 """
 
+# Import the SQLAlchemy patch before any other SQLAlchemy-related imports
+# This prevents pyodbc import errors
+from utils.sqlalchemy_patch import patched as sqlalchemy_patched
+
 from sqlalchemy import create_engine, select
 # SQLAlchemy 2.0 updates - replacing deprecated imports
 from sqlalchemy.orm import declarative_base, sessionmaker

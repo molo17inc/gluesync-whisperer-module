@@ -26,6 +26,10 @@ import logging
 import os
 import sys
 import json
+
+# Import the SQLAlchemy patch before any SQLAlchemy imports
+from utils.sqlalchemy_patch import patched as sqlalchemy_patched
+
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import SQLAlchemyError
 

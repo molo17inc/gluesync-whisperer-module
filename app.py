@@ -21,6 +21,10 @@
  * Copyright (C) 2025 MOLO17. All rights reserved.
 """
 
+# Import the SQLAlchemy patch before any other SQLAlchemy-related imports
+# This prevents pyodbc import errors
+from utils.sqlalchemy_patch import patched as sqlalchemy_patched
+
 import asyncio
 import logging
 import os

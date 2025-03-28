@@ -103,7 +103,7 @@ Gluesync Whisperer (Gluesync Whisperer) is dual-licensed under the following lic
 
 2. **MOLO17 Commercial License**  
    Alternatively, you may use this software under the MOLO17 Commercial License,  
-   which includes a warranty and permits proprietary use. Contact MOLO17 at info@molo17.com  
+   which includes a warranty and permits proprietary use. Contact MOLO17 at [info@molo17.com](mailto:info@molo17.com)  
    for licensing terms and conditions.
 
 You must choose one of these licenses to use this software. Using this software implies

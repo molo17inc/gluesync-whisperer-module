@@ -22,6 +22,10 @@
 """
 
 import logging
+
+# Import the SQLAlchemy patch before any SQLAlchemy imports
+from utils.sqlalchemy_patch import patched as sqlalchemy_patched
+
 import sqlalchemy
 from sqlalchemy import create_engine, MetaData, Table, inspect, select
 from sqlalchemy.orm import Session

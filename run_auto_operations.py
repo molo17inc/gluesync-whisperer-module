@@ -29,6 +29,9 @@ import time
 import string
 import traceback
 from datetime import datetime
+
+# Import the SQLAlchemy patch before any SQLAlchemy imports
+from utils.sqlalchemy_patch import patched as sqlalchemy_patched
 from utils.db_connector import DatabaseConnector
 from models import DatabaseType
 
