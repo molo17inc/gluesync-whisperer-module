@@ -63,16 +63,21 @@ deploy:
     # Set up Docker Buildx for multi-platform builds
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD"
     
-    # Set up buildx with proper driver
-    - docker buildx create --use --name mybuilder
-    - docker buildx inspect --bootstrap
+    # # Set up buildx with proper driver
+    # - docker buildx create --use --name mybuilder
+    # - docker buildx inspect --bootstrap
     
-    # Build and push multi-platform images
+    # # Build and push multi-platform images
+    # - |
+    #   docker buildx build --platform linux/amd64,linux/arm64 \
+    #     --tag "$DEFAULT_TAG" \
+    #     --tag "$LATEST_TAG" \
+    #     --build-arg VERSION=$VERSION \
+    #     --push .
+
     - |
-      docker buildx build --platform linux/amd64,linux/arm64 \
-        --tag "$DEFAULT_TAG" \
-        --tag "$LATEST_TAG" \
-        --build-arg VERSION=$VERSION \
-        --push .
+      docker build -t "$DEFAULT_TAG" -t "$LATEST_TAG" .
+      docker push "$DEFAULT_TAG"
+      docker push "$LATEST_TAG"
   rules:
     - if: $CI_COMMIT_TAG
