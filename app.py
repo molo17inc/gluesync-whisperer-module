@@ -21,9 +21,8 @@
  * Copyright (C) 2025 MOLO17. All rights reserved.
 """
 
-# Import the SQLAlchemy patch before any other SQLAlchemy-related imports
-# This prevents pyodbc import errors
-from utils.sqlalchemy_patch import patched as sqlalchemy_patched
+# JDBC drivers are used for all database connections
+# No need for pyodbc or patching
 
 import asyncio
 import logging

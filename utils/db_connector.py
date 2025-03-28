@@ -28,7 +28,7 @@ import sys
 import json
 
 # Import the SQLAlchemy patch before any SQLAlchemy imports
-from utils.sqlalchemy_patch import patched as sqlalchemy_patched
+# JDBC drivers are used for all database connections - no need for patching
 
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import SQLAlchemyError

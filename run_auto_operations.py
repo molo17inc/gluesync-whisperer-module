@@ -31,7 +31,7 @@ import traceback
 from datetime import datetime
 
 # Import the SQLAlchemy patch before any SQLAlchemy imports
-from utils.sqlalchemy_patch import patched as sqlalchemy_patched
+# JDBC drivers are used for all database connections - no need for patching
 from utils.db_connector import DatabaseConnector
 from models import DatabaseType
 

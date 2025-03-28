@@ -24,7 +24,7 @@
 import logging
 
 # Import the SQLAlchemy patch before any SQLAlchemy imports
-from utils.sqlalchemy_patch import patched as sqlalchemy_patched
+# JDBC drivers are used for all database connections - no need for patching
 
 import sqlalchemy
 from sqlalchemy import create_engine, MetaData, Table, inspect, select
