@@ -41,18 +41,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def build_connection_string(db_type, host, port, username, password, database_name):
-    """Build a connection string based on database type and parameters."""
+    """Build a connection string based on database type and parameters using JDBC drivers."""
     if db_type == DatabaseType.MYSQL:
-        return f"mysql+pymysql://{username}:{password}@{host}:{port}/{database_name}"
+        return f"mysql+jdbc://{username}:{password}@{host}:{port}/{database_name}?driver=com.mysql.cj.jdbc.Driver"
     elif db_type == DatabaseType.POSTGRESQL:
-        return f"postgresql://{username}:{password}@{host}:{port}/{database_name}"
+        return f"postgresql+jdbc://{username}:{password}@{host}:{port}/{database_name}?driver=org.postgresql.Driver"
     elif db_type == DatabaseType.SQLITE:
         return f"sqlite:///{database_name}"
     elif db_type == DatabaseType.MSSQL:
-        # Always use JDBC for MS SQL Server
-        return f"jdbc:sqlserver://{host}:{port};databaseName={database_name};trustServerCertificate=true;encrypt=true"
+        return f"mssql+jdbc://{username}:{password}@{host}:{port}/{database_name}?driver=com.microsoft.sqlserver.jdbc.SQLServerDriver&trustServerCertificate=true&encrypt=true"
     elif db_type == DatabaseType.ORACLE:
-        return f"oracle+cx_oracle://{username}:{password}@{host}:{port}/{database_name}"
+        return f"oracle+jdbc://{username}:{password}@{host}:{port}/{database_name}?driver=oracle.jdbc.OracleDriver"
     else:
         raise ValueError(f"Unsupported database type: {db_type}")
 
