@@ -22,7 +22,8 @@
 """
 
 # JDBC drivers are used for all database connections
-# No need for pyodbc or patching
+# Register JDBC dialects with SQLAlchemy
+from utils.sqlalchemy_jdbc import registered as jdbc_dialects_registered
 
 import asyncio
 import logging
