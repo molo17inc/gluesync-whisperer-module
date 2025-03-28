@@ -51,32 +51,20 @@ def build_connection_string(db_type, host, port, username, password, database_na
     elif db_type == DatabaseType.SQLITE:
         return f"sqlite:///{database_name}"
     elif db_type == DatabaseType.MSSQL:
-        # Use JDBC for MS SQL Server for cross-platform compatibility
-        try:
-            # Check if JDBC utils are available
-            from utils import jdbc_utils
-            # Use JDBC connection string with SSL certificate validation disabled
-            return f"jdbc:sqlserver://{host}:{port};databaseName={database_name};trustServerCertificate=true;encrypt=true"
-        except ImportError:
-            # Fallback to ODBC (though this will likely fail on ARM64 or other platforms)
-            logger.warning("JDBC utilities not available, falling back to ODBC (may not work on all platforms)")
-            return f"mssql+pyodbc://{username}:{password}@{host}:{port}/{database_name}?driver=ODBC+Driver+17+for+SQL+Server"
+        # Always use JDBC for MS SQL Server for guaranteed cross-platform compatibility
+        # No fallbacks to ODBC to ensure consistent behavior across architectures
+        logger.info("Using JDBC for MS SQL Server connection")
+        return f"jdbc:sqlserver://{host}:{port};databaseName={database_name};trustServerCertificate=true;encrypt=true"
     elif db_type == DatabaseType.ORACLE:
         return f"oracle+cx_oracle://{username}:{password}@{host}:{port}/{database_name}"
     elif db_type == DatabaseType.AS400:
-        # IBM i Series uses 'ibm_db_sa' dialect, or 'pyodbc' with the proper driver
-        # This requires installing either:
-        #   - ibm_db and ibm_db_sa packages (pip install ibm_db ibm_db_sa)
-        #   - pyodbc with IBM i Access ODBC Driver installed on the system
-        # 
-        # Default port for IBM i is 446 but can be overridden
-        # Format: ibm_db_sa://username:password@host:port/database
-        # Alternatively with pyodbc: pyodbc://username:password@dsn_name
-        if host and port:
-            return f"ibm_db_sa://{username}:{password}@{host}:{port}/{database_name}"
+        # Always use JDBC for AS400 - no fallbacks to ensure cross-platform compatibility
+        # JDBC provides better cross-platform support than ibm_db_sa or pyodbc
+        logger.info("Using JDBC for AS400 connection")
+        if database:
+            return f"jdbc:as400://{host}/{database}"
         else:
-            # If no host/port, assume DSN configuration with pyodbc
-            return f"pyodbc://{username}:{password}@{database_name}?driver=IBM+i+Access+ODBC+Driver"
+            return f"jdbc:as400://{host}"
     else:
         raise ValueError(f"Unsupported database type: {db_type}")
 
