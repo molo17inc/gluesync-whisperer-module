@@ -8,7 +8,7 @@ python-dotenv>=1.0.0
 # Database drivers - JDBC only
 JPype1==1.5.0  # Java bridge for JDBC
 JayDeBeApi==1.2.3  # JDBC-Python interface
-sqlalchemy-jdbcapi==1.3.0  # SQLAlchemy JDBC dialect
+sqlalchemy-jdbcapi==1.2.2  # SQLAlchemy JDBC dialect
 
 # Testing and utilities
 pytest>=7.3.1
