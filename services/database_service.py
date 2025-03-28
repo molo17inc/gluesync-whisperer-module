@@ -221,8 +221,8 @@ class DatabaseService:
         # Get the database engine
         engine = self._get_engine(db_connection)
         
-        # Handle JDBC connections separately
-        if db_connection.db_type == DatabaseType.AS400 and hasattr(engine, 'get_tables'):
+        # Handle JDBC connections separately for both AS400 and MS SQL Server
+        if (db_connection.db_type in [DatabaseType.AS400, DatabaseType.MSSQL]) and hasattr(engine, 'get_tables'):
             try:
                 # Direct call for JDBC wrapper
                 return engine.get_tables(schema)
@@ -261,8 +261,8 @@ class DatabaseService:
         # Get the database engine
         engine = self._get_engine(db_connection)
         
-        # Handle JDBC connections separately for AS400
-        if db_connection.db_type == DatabaseType.AS400 and hasattr(engine, 'connection'):
+        # Handle JDBC connections separately for AS400 and MS SQL Server
+        if db_connection.db_type in [DatabaseType.AS400, DatabaseType.MSSQL] and hasattr(engine, 'connection'):
             try:
                 # For JDBC, we need to use a direct approach with SQL queries
                 columns = {}
@@ -275,37 +275,66 @@ class DatabaseService:
                 try:
                     # Determine schema to use
                     schema = schema_name or (db_connection.database_name if db_connection.database_name else None)
-                    if not schema:
-                        logger.warning("No schema provided for AS400 table, using default schema")
-                        # Try to use the connection user's schema as default
-                        schema = db_connection.username
                     
-                    # Try to use the AS400SqlStatements class that works in production,
-                    # but handle compatibility issues with different AS400 systems
-                    from utils.sql.as400 import AS400SqlStatements
-                    as400_sql = AS400SqlStatements()
+                    if db_connection.db_type == DatabaseType.AS400:
+                        if not schema:
+                            logger.warning("No schema provided for AS400 table, using default schema")
+                            # Try to use the connection user's schema as default
+                            schema = db_connection.username
+                        
+                        # Try to use the AS400SqlStatements class that works in production,
+                        # but handle compatibility issues with different AS400 systems
+                        from utils.sql.as400 import AS400SqlStatements
+                        as400_sql = AS400SqlStatements()
+                    elif db_connection.db_type == DatabaseType.MSSQL:
+                        if not schema:
+                            logger.warning("No schema provided for MS SQL Server table, using default 'dbo' schema")
+                            schema = 'dbo'  # Default SQL Server schema
+                        
+                        # Use MS SQL Server-specific SQL statements
+                        from utils.sql.mssql import MSSQLSqlStatements
+                        mssql_sql = MSSQLSqlStatements()
                     
                     # Get columns for the table
                     logger.debug(f"Getting columns for table {schema}.{table_name}")
                     
-                    # First try a simple direct query for better compatibility
-                    columns_query = f"""
-                    SELECT 
-                        COLUMN_NAME, 
-                        ORDINAL_POSITION,
-                        DATA_TYPE, 
-                        LENGTH,
-                        NUMERIC_SCALE,
-                        COLUMN_TEXT,
-                        IS_NULLABLE, 
-                        COLUMN_DEFAULT
-                    FROM QSYS2.SYSCOLUMNS 
-                    WHERE TABLE_SCHEMA = '{schema}' AND TABLE_NAME = '{table_name}'
-                    ORDER BY ORDINAL_POSITION
-                    """
+                    # Use database-specific queries for columns
+                    if db_connection.db_type == DatabaseType.AS400:
+                        # AS400-specific column query
+                        columns_query = f"""
+                        SELECT 
+                            COLUMN_NAME, 
+                            ORDINAL_POSITION,
+                            DATA_TYPE, 
+                            LENGTH,
+                            NUMERIC_SCALE,
+                            COLUMN_TEXT,
+                            IS_NULLABLE, 
+                            COLUMN_DEFAULT
+                        FROM QSYS2.SYSCOLUMNS 
+                        WHERE TABLE_SCHEMA = '{schema}' AND TABLE_NAME = '{table_name}'
+                        ORDER BY ORDINAL_POSITION
+                        """
+                    elif db_connection.db_type == DatabaseType.MSSQL:
+                        # Use the MS SQL Server SQL statements class for compatibility with JDBC
+                        from utils.sql.mssql import MSSQLSqlStatements
+                        mssql_sql = MSSQLSqlStatements()
+                        
+                        # Get the table schema query with question mark parameters
+                        columns_query = mssql_sql.get_table_schema_statement(schema)
+                        
+                        # Replace parameters with actual values for direct cursor execution
+                        # MS SQL Server with JDBC requires parameters to be passed correctly
+                        # We'll use positional parameters instead of named parameters
                     
                     try:
-                        cursor.execute(columns_query)
+                        # Execute the query with appropriate parameters based on database type
+                        if db_connection.db_type == DatabaseType.MSSQL:
+                            # For MS SQL Server JDBC, execute with positional parameters
+                            cursor.execute(columns_query, [schema, table_name])
+                        else:
+                            # For other databases, execute directly
+                            cursor.execute(columns_query)
                         column_rows = cursor.fetchall()
                         
                         for row in column_rows:
@@ -354,19 +383,31 @@ class DatabaseService:
                     # For primary keys, we need to use a simplified approach that works across
                     # different AS400 database versions
                     
-                    # APPROACH 1: Use SYSIBM.SQLPRIMARYKEYS if available (JDBC standard catalog)
+                    # APPROACH 1: Use database-specific primary key queries
                     if not primary_keys:
                         try:
-                            logger.debug(f"Getting primary keys using SYSIBM.SQLPRIMARYKEYS for {schema}.{table_name}")
-                            pk_query = f"""
-                            SELECT COLUMN_NAME 
-                            FROM SYSIBM.SQLPRIMARYKEYS 
-                            WHERE TABLE_SCHEM = '{schema}' 
-                              AND TABLE_NAME = '{table_name}' 
-                            ORDER BY KEY_SEQ
-                            """
+                            if db_connection.db_type == DatabaseType.AS400:
+                                logger.debug(f"Getting primary keys using SYSIBM.SQLPRIMARYKEYS for {schema}.{table_name}")
+                                pk_query = f"""
+                                SELECT COLUMN_NAME 
+                                FROM SYSIBM.SQLPRIMARYKEYS 
+                                WHERE TABLE_SCHEM = '{schema}' 
+                                  AND TABLE_NAME = '{table_name}' 
+                                ORDER BY KEY_SEQ
+                                """
+                            elif db_connection.db_type == DatabaseType.MSSQL:
+                                logger.debug(f"Getting primary keys for SQL Server table {schema}.{table_name}")
+                                # Use the MS SQL Server SQL statements class for consistent parameter handling
+                                pk_query = mssql_sql.get_primary_keys_statement(schema, table_name)
                             
-                            cursor.execute(pk_query)
+                            # Execute with appropriate parameters
+                            if db_connection.db_type == DatabaseType.MSSQL:
+                                # MS SQL Server JDBC needs positional parameters
+                                cursor.execute(pk_query, [schema, table_name])
+                            else:
+                                # Other databases use direct execution
+                                cursor.execute(pk_query)
+                                
                             pk_rows = cursor.fetchall()
                             
                             for row in pk_rows:
@@ -380,19 +421,33 @@ class DatabaseService:
                         except Exception as pk_err:
                             logger.debug(f"SQLPRIMARYKEYS approach failed: {pk_err}")
                     
-                    # APPROACH 2: Try to find primary key info based on indexes
+                    # APPROACH 2: Try to find primary key info based on indexes (database-specific)
                     if not primary_keys:
                         try:
-                            logger.debug(f"Checking indexes for primary key on {schema}.{table_name}")
-                            idx_query = f"""
-                            SELECT COLUMN_NAME 
-                            FROM QSYS2.SYSINDEXES I
-                            JOIN QSYS2.SYSKEYS K ON I.INDEX_NAME = K.INDEX_NAME AND I.TABLE_SCHEMA = K.TABLE_SCHEMA AND I.TABLE_NAME = K.TABLE_NAME
-                            WHERE I.TABLE_SCHEMA = '{schema}'
-                              AND I.TABLE_NAME = '{table_name}'
-                              AND I.IS_UNIQUE = 'YES'
-                            ORDER BY K.ORDINAL_POSITION
-                            """
+                            if db_connection.db_type == DatabaseType.AS400:
+                                logger.debug(f"Checking AS400 indexes for primary key on {schema}.{table_name}")
+                                idx_query = f"""
+                                SELECT COLUMN_NAME 
+                                FROM QSYS2.SYSINDEXES I
+                                JOIN QSYS2.SYSKEYS K ON I.INDEX_NAME = K.INDEX_NAME AND I.TABLE_SCHEMA = K.TABLE_SCHEMA AND I.TABLE_NAME = K.TABLE_NAME
+                                WHERE I.TABLE_SCHEMA = '{schema}'
+                                  AND I.TABLE_NAME = '{table_name}'
+                                  AND I.IS_UNIQUE = 'YES'
+                                ORDER BY K.ORDINAL_POSITION
+                                """
+                            elif db_connection.db_type == DatabaseType.MSSQL:
+                                logger.debug(f"Checking SQL Server indexes for primary key on {schema}.{table_name}")
+                                idx_query = f"""
+                                SELECT COL_NAME(ic.object_id, ic.column_id) AS COLUMN_NAME
+                                FROM sys.indexes i 
+                                JOIN sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
+                                JOIN sys.tables t ON i.object_id = t.object_id
+                                JOIN sys.schemas s ON t.schema_id = s.schema_id
+                                WHERE s.name = '{schema}'
+                                  AND t.name = '{table_name}'
+                                  AND i.is_unique = 1
+                                ORDER BY ic.key_ordinal
+                                """
                             
                             cursor.execute(idx_query)
                             pk_rows = cursor.fetchall()
@@ -410,27 +465,55 @@ class DatabaseService:
                     
                     # If we still couldn't find primary keys, try a few fallback approaches
                     if not primary_keys:
-                        # Try a simpler query that might work on older AS400 systems
-                        fallback_queries = [
-                            # Using SQLPRIMARYKEYS (ODBC/JDBC standard catalog function)
-                            f"""
-                            SELECT COLUMN_NAME 
-                            FROM SYSIBM.SQLPRIMARYKEYS 
-                            WHERE TABLE_SCHEM = '{schema}' 
-                              AND TABLE_NAME = '{table_name}' 
-                            ORDER BY KEY_SEQ
-                            """,
-                            # Simple NON-NULL unique index check
-                            f"""
-                            SELECT COLUMN_NAME 
-                            FROM QSYS2.SYSCOLUMNS 
-                            WHERE TABLE_SCHEMA = '{schema}' 
-                              AND TABLE_NAME = '{table_name}' 
-                              AND IS_NULLABLE = 'N'
-                            ORDER BY ORDINAL_POSITION
-                            FETCH FIRST 1 ROWS ONLY
-                            """
-                        ]
+                        fallback_queries = []
+                        
+                        if db_connection.db_type == DatabaseType.AS400:
+                            # Try fallback queries that might work on older AS400 systems
+                            fallback_queries = [
+                                # Using SQLPRIMARYKEYS (ODBC/JDBC standard catalog function)
+                                f"""
+                                SELECT COLUMN_NAME 
+                                FROM SYSIBM.SQLPRIMARYKEYS 
+                                WHERE TABLE_SCHEM = '{schema}' 
+                                  AND TABLE_NAME = '{table_name}' 
+                                ORDER BY KEY_SEQ
+                                """,
+                                # Simple NON-NULL unique index check
+                                f"""
+                                SELECT COLUMN_NAME 
+                                FROM QSYS2.SYSCOLUMNS 
+                                WHERE TABLE_SCHEMA = '{schema}' 
+                                  AND TABLE_NAME = '{table_name}' 
+                                  AND IS_NULLABLE = 'N'
+                                ORDER BY ORDINAL_POSITION
+                                FETCH FIRST 1 ROWS ONLY
+                                """
+                            ]
+                        elif db_connection.db_type == DatabaseType.MSSQL:
+                            # SQL Server fallback queries
+                            fallback_queries = [
+                                # Try INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+                                f"""
+                                SELECT kcu.COLUMN_NAME
+                                FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+                                JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc 
+                                ON kcu.CONSTRAINT_NAME = tc.CONSTRAINT_NAME
+                                AND kcu.TABLE_SCHEMA = tc.TABLE_SCHEMA
+                                AND kcu.TABLE_NAME = tc.TABLE_NAME
+                                WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
+                                AND kcu.TABLE_SCHEMA = '{schema}'
+                                AND kcu.TABLE_NAME = '{table_name}'
+                                """,
+                                # Try non-nullable columns as a last resort
+                                f"""
+                                SELECT COLUMN_NAME
+                                FROM INFORMATION_SCHEMA.COLUMNS
+                                WHERE TABLE_SCHEMA = '{schema}'
+                                AND TABLE_NAME = '{table_name}'
+                                AND IS_NULLABLE = 'NO'
+                                ORDER BY ORDINAL_POSITION
+                                """
+                            ]
                         
                         for query in fallback_queries:
                             try:
@@ -518,9 +601,18 @@ class DatabaseService:
             return f"sqlite:///{connection.database_name}"
         
         elif connection.db_type == DatabaseType.MSSQL:
-            # MSSQL: mssql+pyodbc://username:password@host:port/database?driver=ODBC+Driver+17+for+SQL+Server
-            driver = "ODBC+Driver+17+for+SQL+Server"
-            return f"mssql+pyodbc://{connection.username}:{connection.password}@{connection.host}:{connection.port}/{connection.database_name}?driver={driver}"
+            # Always use JDBC for MS SQL Server connections for cross-platform compatibility
+            try:
+                # Check if JDBC utils are available
+                from utils import jdbc_utils
+                # We'll handle this connection directly through JDBC in the _get_engine method
+                # Return a special connection string format to indicate JDBC usage
+                # Add trustServerCertificate=true to disable SSL certificate validation
+                return f"jdbc:sqlserver://{connection.host}:{connection.port};databaseName={connection.database_name};trustServerCertificate=true;encrypt=true"                
+            except ImportError:
+                # JDBC not available
+                logger.error("JDBC utilities not available for MS SQL Server connection.")
+                raise ValueError("MS SQL Server support requires JDBC utilities.")
         
         elif connection.db_type == DatabaseType.ORACLE:
             # Oracle: oracle+cx_oracle://username:password@host:port/service_name
@@ -560,36 +652,50 @@ class DatabaseService:
         if connection_id in self.engines:
             return self.engines[connection_id]
         
-        # Check if this is a JDBC connection string (for AS400 fallback)
-        if connection.connection_string.startswith("jdbc:as400://"):
+        # Check if this is a JDBC connection string (for AS400 or MSSQL)
+        if connection.connection_string.startswith("jdbc:as400://") or connection.connection_string.startswith("jdbc:sqlserver://"):
             try:
                 from utils import jdbc_utils
-                
-                # Extract host and optional database from the JDBC URL
-                url_parts = connection.connection_string.replace("jdbc:as400://", "").split("/")
-                host = url_parts[0]
-                database = url_parts[1] if len(url_parts) > 1 else None
                 
                 # Get JDBC driver paths
                 driver_paths = jdbc_utils.get_jdbc_drivers_path()
                 if not driver_paths:
                     raise ValueError("No JDBC driver JAR files found in the jdbc_drivers directory")
                 
-                # Determine the appropriate JDBC URL
-                if database:
-                    jdbc_url = f"jdbc:as400://{host}/{database}"
-                else:
-                    jdbc_url = f"jdbc:as400://{host}"
-                
-                logger.info(f"Using JDBC for AS400 connection to {host}")
-                
-                # Create connection options
+                # Determine database type and set appropriate JDBC URL and driver class
+                jdbc_url = connection.connection_string
+                driver_class = None
                 driver_options = {
                     'user': connection.username,
                     'password': connection.password,
-                    'prompt': 'false',
-                    'naming': 'system',
                 }
+                
+                if connection.db_type == DatabaseType.AS400:
+                    # Extract host and optional database from the JDBC URL for AS400
+                    url_parts = connection.connection_string.replace("jdbc:as400://", "").split("/")
+                    host = url_parts[0]
+                    database = url_parts[1] if len(url_parts) > 1 else None
+                    
+                    # Rebuild the AS400 JDBC URL
+                    if database:
+                        jdbc_url = f"jdbc:as400://{host}/{database}"
+                    else:
+                        jdbc_url = f"jdbc:as400://{host}"
+                    
+                    logger.info(f"Using JDBC for AS400 connection to {host}")
+                    
+                    # AS400-specific connection options
+                    driver_options.update({
+                        'prompt': 'false',
+                        'naming': 'system',
+                    })
+                    
+                    driver_class = "com.ibm.as400.access.AS400JDBCDriver"
+                    
+                elif connection.db_type == DatabaseType.MSSQL:
+                    # The JDBC URL for SQL Server is already in the correct format
+                    logger.info(f"Using JDBC for MS SQL Server connection to {jdbc_url}")
+                    driver_class = "com.microsoft.sqlserver.jdbc.SQLServerDriver"
                 
                 # We can't use SQLAlchemy directly with JDBC in this case,
                 # so we'll create a wrapper object that provides the minimum functionality needed
@@ -661,12 +767,12 @@ class DatabaseService:
                         
                         return Dialect()
                 
-                # Create the wrapper with the AS400 JDBC driver
+                # Create the wrapper with the appropriate JDBC driver
                 engine = JdbcEngineWrapper(
                     jdbc_utils.connect_to_database,
                     driver_paths,
                     jdbc_url,
-                    "com.ibm.as400.access.AS400JDBCDriver",
+                    driver_class,
                     driver_options
                 )
                 

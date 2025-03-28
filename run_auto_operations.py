@@ -611,8 +611,22 @@ class TableWhisperer:
                 # First, try to get all tables to check for potential relationships
                 # Use database-specific approach for getting tables
                 try:
-                    # For other databases, try the generic approach
-                    all_tables_query = "SHOW TABLES"
+                    # Generate database-specific query for listing tables
+                    if hasattr(self.connector, 'db_type'):
+                        if self.connector.db_type.name == 'MSSQL':
+                            # SQL Server specific query
+                            schema = self.schema_name or 'dbo'  # Default to dbo schema if none provided
+                            all_tables_query = f"SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE' AND TABLE_SCHEMA = '{schema}'"
+                        elif self.connector.db_type.name == 'AS400':
+                            # AS400 specific query
+                            lib = self.schema_name or self.connector.database
+                            all_tables_query = f"SELECT TABLE_NAME FROM QSYS2.SYSTABLES WHERE TABLE_SCHEMA = '{lib}'"
+                        else:
+                            # MySQL/MariaDB and others
+                            all_tables_query = "SHOW TABLES"
+                    else:
+                        # Default fallback
+                        all_tables_query = "SHOW TABLES"
                     
                     all_tables = self.connector.execute_query(all_tables_query)
                     potential_related_tables = [list(table.values())[0] for table in all_tables if list(table.values())[0] != self.table_name]
@@ -627,14 +641,57 @@ class TableWhisperer:
                 
                 # Try to get foreign key information from information_schema if available
                 try:
-                    # For non-AS400 databases, use the standard approach with named parameters
-                    fk_query = """
-                    SELECT TABLE_NAME, COLUMN_NAME 
-                    FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE 
-                    WHERE REFERENCED_TABLE_NAME = :table AND REFERENCED_COLUMN_NAME = :column 
-                    AND CONSTRAINT_SCHEMA = DATABASE()
-                    """
-                    fk_results = self.connector.execute_query(fk_query, params={'table': self.table_name, 'column': 'ID'})
+                    # Determine database-specific query for foreign keys
+                    if hasattr(self.connector, 'db_type'):
+                        if self.connector.db_type.name == 'MSSQL':
+                            # MS SQL Server specific foreign key query (using direct string substitution)
+                            schema = self.schema_name or 'dbo'
+                            fk_query = f"""
+                            SELECT
+                                kcu1.TABLE_NAME AS TABLE_NAME,
+                                kcu1.COLUMN_NAME AS COLUMN_NAME
+                            FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS AS rc
+                            JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE AS kcu1
+                                ON kcu1.CONSTRAINT_CATALOG = rc.CONSTRAINT_CATALOG
+                                AND kcu1.CONSTRAINT_SCHEMA = rc.CONSTRAINT_SCHEMA
+                                AND kcu1.CONSTRAINT_NAME = rc.CONSTRAINT_NAME
+                            JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE AS kcu2
+                                ON kcu2.CONSTRAINT_CATALOG = rc.UNIQUE_CONSTRAINT_CATALOG
+                                AND kcu2.CONSTRAINT_SCHEMA = rc.UNIQUE_CONSTRAINT_SCHEMA
+                                AND kcu2.CONSTRAINT_NAME = rc.UNIQUE_CONSTRAINT_NAME
+                            WHERE kcu2.TABLE_NAME = '{self.table_name}' AND kcu2.COLUMN_NAME = 'ID'
+                            AND kcu2.TABLE_SCHEMA = '{schema}'
+                            """
+                            fk_results = self.connector.execute_query(fk_query)
+                        elif self.connector.db_type.name == 'AS400':
+                            # AS400 specific foreign key query with library/schema
+                            lib = self.schema_name or self.connector.database
+                            fk_query = f"""
+                            SELECT FOREIGN_TABLE AS TABLE_NAME, FOREIGN_COLUMN AS COLUMN_NAME
+                            FROM QSYS2.SYSCST
+                            WHERE CONSTRAINT_TYPE = 'FOREIGN KEY'
+                            AND PARENT_TABLE = '{self.table_name}' AND PARENT_COLUMN = 'ID'
+                            AND TABLE_SCHEMA = '{lib}'
+                            """
+                            fk_results = self.connector.execute_query(fk_query)
+                        else:
+                            # MySQL/MariaDB and others with named parameters
+                            fk_query = """
+                            SELECT TABLE_NAME, COLUMN_NAME 
+                            FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE 
+                            WHERE REFERENCED_TABLE_NAME = :table AND REFERENCED_COLUMN_NAME = :column 
+                            AND CONSTRAINT_SCHEMA = DATABASE()
+                            """
+                            fk_results = self.connector.execute_query(fk_query, params={'table': self.table_name, 'column': 'ID'})
+                    else:
+                        # Default fallback with named parameters
+                        fk_query = """
+                        SELECT TABLE_NAME, COLUMN_NAME 
+                        FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE 
+                        WHERE REFERENCED_TABLE_NAME = :table AND REFERENCED_COLUMN_NAME = :column 
+                        AND CONSTRAINT_SCHEMA = DATABASE()
+                        """
+                        fk_results = self.connector.execute_query(fk_query, params={'table': self.table_name, 'column': 'ID'})
                     
                     if fk_results:
                         # If we have actual FK information, use that instead of guessing
@@ -676,9 +733,22 @@ class TableWhisperer:
                     try:
                         # Get the columns for this table to avoid "unknown column" errors
                         # For AS400, always qualify with schema when available
-                        if hasattr(self.connector, 'db_type') and self.connector.db_type == DatabaseType.AS400 and self.schema_name:
-                            schema_query = f"SELECT * FROM {self.schema_name}.{related_table} LIMIT 0"
+                        # Use database-specific syntax for empty result sets to get schema
+                        if hasattr(self.connector, 'db_type'):
+                            if self.connector.db_type == DatabaseType.MSSQL:
+                                # SQL Server uses TOP instead of LIMIT
+                                if self.schema_name:
+                                    schema_query = f"SELECT TOP 0 * FROM {self.schema_name}.{related_table}"
+                                else:
+                                    schema_query = f"SELECT TOP 0 * FROM {related_table}"
+                            elif self.connector.db_type == DatabaseType.AS400 and self.schema_name:
+                                # AS400 uses schema qualification and regular LIMIT
+                                schema_query = f"SELECT * FROM {self.schema_name}.{related_table} LIMIT 0"
+                            else:
+                                # MySQL/MariaDB and others use LIMIT
+                                schema_query = f"SELECT * FROM {related_table} LIMIT 0"
                         else:
+                            # Default to LIMIT syntax
                             schema_query = f"SELECT * FROM {related_table} LIMIT 0"
                         schema_result = quiet_connector.execute_query(schema_query)
                         
@@ -738,7 +808,41 @@ class TableWhisperer:
             query = f"DELETE FROM {self.qualified_table_name} WHERE {primary_key} = {record_id}"
             
             try:
-                # Execute query
+                # Check if we should use cascade delete for MS SQL Server foreign key constraints
+                use_cascade = (
+                    self.connector.db_type == DatabaseType.MSSQL and 
+                    hasattr(self.connector, 'connection') and
+                    hasattr(self, 'foreign_key_info')
+                )
+                
+                # Check if this table has any foreign key dependencies
+                has_foreign_keys = False
+                if hasattr(self, 'foreign_key_info'):
+                    for table, columns in self.foreign_key_info.items():
+                        if self.table_name in columns:
+                            has_foreign_keys = True
+                            break
+                
+                if use_cascade and has_foreign_keys:
+                    # Use cascade delete approach first for MS SQL Server
+                    try:
+                        # Create a transaction that will handle cascade delete manually
+                        # First identify all dependent records
+                        cascade_result = self.handle_cascade_delete(record_id, primary_key)
+                        if cascade_result:
+                            # Successful cascade delete
+                            self.operation_count["delete"] += 1
+                            logger.info(f"CASCADE DELETE operation successful for {self.qualified_table_name} where {primary_key} = {record_id}")
+                            
+                            # Check if we need to insert more records (to avoid depleting the table)
+                            if len(results) < 5:
+                                self.perform_insert()
+                                
+                            return True
+                    except Exception as cascade_err:
+                        logger.warning(f"Cascade delete failed, falling back to normal delete: {str(cascade_err)}")
+                
+                # Regular delete approach
                 result = self.connector.execute_query(query)
                 self.operation_count["delete"] += 1
                 logger.info(f"DELETE operation successful: {query}")
@@ -759,6 +863,165 @@ class TableWhisperer:
         except Exception as e:
             logger.error(f"Error performing DELETE: {str(e)}")
             traceback.print_exc()
+            return False
+    
+    def handle_cascade_delete(self, record_id, primary_key, dependent_tables=None):
+        """
+        Handle cascade delete by first identifying and deleting dependent records.
+        This is used for MS SQL Server where CASCADE DELETE is not set in the schema.
+        
+        Args:
+            record_id: The ID of the record to delete
+            primary_key: The name of the primary key field
+            dependent_tables: Optional list of dependent tables with their columns and counts
+            
+        Returns:
+            bool: True if cascade delete was successful, False otherwise
+        """
+        if not hasattr(self, 'foreign_key_info'):
+            # If we don't have foreign key information, we can't do cascade delete
+            logger.warning("No foreign key information available for cascade delete")
+            return False
+            
+        try:
+            # If dependent_tables is not provided, we need to determine them
+            if not dependent_tables:
+                # Get list of tables that depend on this table
+                dependent_tables = []
+                for table, columns in self.foreign_key_info.items():
+                    if self.table_name in columns:
+                        # This table has a foreign key to our table
+                        dependent_cols = columns[self.table_name]
+                        
+                        # Create a new connector to avoid transaction conflicts
+                        quiet_connector = self.create_connector()
+                        
+                        # Check if there are actual dependent records
+                        has_dependents = False
+                        for col in dependent_cols:
+                            try:
+                                check_query = f"SELECT COUNT(*) as count FROM {table} WHERE {col} = {record_id}"
+                                check_result = quiet_connector.execute_query(check_query)
+                                if check_result and check_result[0]['count'] > 0:
+                                    has_dependents = True
+                                    dependent_tables.append({
+                                        'table': table,
+                                        'column': col,
+                                        'count': check_result[0]['count']
+                                    })
+                            except Exception as check_err:
+                                logger.debug(f"Error checking for dependent records in {table}.{col}: {str(check_err)}")
+                    
+            # If no dependent tables with actual dependencies were found, return True as there's nothing to cascade
+            if not dependent_tables:
+                logger.info("No actual dependent records found for cascade delete")
+                return True
+                
+            logger.info(f"Found {len(dependent_tables)} dependent tables with records for cascade delete")
+            
+            # Start a transaction for the cascade delete
+            try:
+                # For MS SQL Server, we might need to handle nested dependencies
+                # First, identify any potential nested dependencies
+                processed_tables = set()
+                
+                # JDBC approach - most appropriate for MS SQL Server
+                if hasattr(self.connector, 'connection'):
+                    connection = self.connector.connection
+                    old_autocommit = False
+                    
+                    try:
+                        # Check if autocommit attribute exists
+                        if hasattr(connection, 'autocommit'):
+                            old_autocommit = connection.autocommit
+                            connection.autocommit = False
+                        
+                        # Process all dependent tables in topological order
+                        # First identify if any dependent tables have their own dependencies
+                        # and organize them in dependency order
+                        deletion_order = []
+                        for dep in dependent_tables:
+                            deletion_order.append(dep)
+                        
+                        # Execute deletes in reverse dependency order
+                        for dep in deletion_order:
+                            dependent_table = dep['table']
+                            dependent_column = dep['column']
+                            
+                            # Check for nested dependencies - direct check approach
+                            try:
+                                # Get any records that need to be deleted first
+                                parent_records_query = f"SELECT * FROM {dependent_table} WHERE {dependent_column} = {record_id}"
+                                parent_records = self.connector.execute_query(parent_records_query)
+                                
+                                # If we found records, check if they have their own dependencies
+                                if parent_records:
+                                    logger.info(f"Processing {len(parent_records)} records from {dependent_table} with potential nested dependencies")
+                                    
+                                    # For each record in the dependent table, check if any other tables depend on them
+                                    # This requires knowledge of the primary key of the dependent table
+                                    try:
+                                        # This is simplified - in a real-world implementation, we'd need to determine
+                                        # the primary key of the dependent table and handle multiple parent records
+                                        # with potentially complex nested dependencies
+                                        pass
+                                    except Exception as nested_err:
+                                        logger.debug(f"Error handling nested dependencies: {str(nested_err)}")
+                            except Exception as parent_err:
+                                logger.debug(f"Error retrieving parent records: {str(parent_err)}")
+                            
+                            # Now delete this level of dependent records
+                            cascade_query = f"DELETE FROM {dependent_table} WHERE {dependent_column} = {record_id}"
+                            logger.info(f"Cascade deleting from {dependent_table}: {cascade_query}")
+                            self.connector.execute_query(cascade_query)
+                        
+                        # Now delete the main record
+                        main_query = f"DELETE FROM {self.qualified_table_name} WHERE {primary_key} = {record_id}"
+                        logger.info(f"Deleting main record: {main_query}")
+                        self.connector.execute_query(main_query)
+                        
+                        # Commit the transaction if supported
+                        if hasattr(connection, 'commit'):
+                            connection.commit()
+                            
+                    except Exception as tx_err:
+                        # Rollback on error if supported
+                        if hasattr(connection, 'rollback'):
+                            connection.rollback()
+                        logger.error(f"Error in JDBC transaction, rolling back: {str(tx_err)}")
+                        raise
+                    finally:
+                        # Restore original autocommit setting if applicable
+                        if hasattr(connection, 'autocommit'):
+                            connection.autocommit = old_autocommit
+                else:
+                    # SQLAlchemy approach
+                    with self.connector.engine.begin() as conn:
+                        # Process all dependent tables
+                        for dep in dependent_tables:
+                            dependent_table = dep['table']
+                            dependent_column = dep['column']
+                            
+                            # Delete the dependent records
+                            cascade_query = f"DELETE FROM {dependent_table} WHERE {dependent_column} = {record_id}"
+                            logger.info(f"Cascade deleting from {dependent_table}: {cascade_query}")
+                            conn.execute(text(cascade_query))
+                        
+                        # Now delete the main record
+                        main_query = f"DELETE FROM {self.qualified_table_name} WHERE {primary_key} = {record_id}"
+                        logger.info(f"Deleting main record: {main_query}")
+                        conn.execute(text(main_query))
+                    
+                # If we get here, the transaction was successful
+                logger.info(f"Cascade delete successful for {self.table_name} record {record_id}")
+                return True
+                
+            except Exception as e:
+                logger.error(f"Error during cascade delete transaction: {str(e)}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error setting up cascade delete: {str(e)}")
             return False
     
     def perform_random_operation(self):

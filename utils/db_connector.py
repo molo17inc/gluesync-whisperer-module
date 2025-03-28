@@ -51,7 +51,16 @@ def build_connection_string(db_type, host, port, username, password, database_na
     elif db_type == DatabaseType.SQLITE:
         return f"sqlite:///{database_name}"
     elif db_type == DatabaseType.MSSQL:
-        return f"mssql+pyodbc://{username}:{password}@{host}:{port}/{database_name}?driver=ODBC+Driver+17+for+SQL+Server"
+        # Use JDBC for MS SQL Server for cross-platform compatibility
+        try:
+            # Check if JDBC utils are available
+            from utils import jdbc_utils
+            # Use JDBC connection string with SSL certificate validation disabled
+            return f"jdbc:sqlserver://{host}:{port};databaseName={database_name};trustServerCertificate=true;encrypt=true"
+        except ImportError:
+            # Fallback to ODBC (though this will likely fail on ARM64 or other platforms)
+            logger.warning("JDBC utilities not available, falling back to ODBC (may not work on all platforms)")
+            return f"mssql+pyodbc://{username}:{password}@{host}:{port}/{database_name}?driver=ODBC+Driver+17+for+SQL+Server"
     elif db_type == DatabaseType.ORACLE:
         return f"oracle+cx_oracle://{username}:{password}@{host}:{port}/{database_name}"
     elif db_type == DatabaseType.AS400:
@@ -90,25 +99,36 @@ class DatabaseConnector:
     def connect(self):
         """Connect to the database."""
         try:
-            # Use JDBC for AS400 connections on all architectures
-            if self.db_type == DatabaseType.AS400:
-                # Always use JDBC approach for AS400 - more consistent across architectures
+            # Use JDBC for AS400 and MS SQL Server connections on all architectures
+            if self.db_type in [DatabaseType.AS400, DatabaseType.MSSQL]:
+                # Always use JDBC approach for AS400 and MS SQL Server - more consistent across architectures
                 from utils.jdbc_utils import get_jdbc_drivers_path, connect_to_database, execute_query
                 
                 # Get JDBC driver paths
                 jdbc_driver_paths = get_jdbc_drivers_path()
                 
-                # Format JDBC connection string for AS400
-                jdbc_url = f"jdbc:as400://{self.host}/{self.database}"
-                jdbc_driver = "com.ibm.as400.access.AS400JDBCDriver"
-                
-                # Connection properties
-                connection_props = {
-                    "user": self.username,
-                    "password": self.password,
-                    "prompt": "false",
-                    "libraries": self.database
-                }
+                # Format JDBC connection string based on database type
+                if self.db_type == DatabaseType.AS400:
+                    jdbc_url = f"jdbc:as400://{self.host}/{self.database}"
+                    jdbc_driver = "com.ibm.as400.access.AS400JDBCDriver"
+                    
+                    # Connection properties for AS400
+                    connection_props = {
+                        "user": self.username,
+                        "password": self.password,
+                        "prompt": "false",
+                        "libraries": self.database
+                    }
+                elif self.db_type == DatabaseType.MSSQL:
+                    # MS SQL Server JDBC connection
+                    jdbc_url = f"jdbc:sqlserver://{self.host}:{self.port};databaseName={self.database};trustServerCertificate=true;encrypt=true"
+                    jdbc_driver = "com.microsoft.sqlserver.jdbc.SQLServerDriver"
+                    
+                    # Connection properties for MS SQL Server
+                    connection_props = {
+                        "user": self.username,
+                        "password": self.password
+                    }
                 
                 # Create a JDBC connection
                 self.connection = connect_to_database(
@@ -126,10 +146,39 @@ class DatabaseConnector:
                     def __init__(self, connection, execute_fn):
                         self.connection = connection
                         self.execute_query = execute_fn
+                        
+                    def connect(self):
+                        """Return a connection context manager for compatibility with SQLAlchemy."""
+                        # Return self as a context manager that mimics SQLAlchemy Connection
+                        return self
+                        
+                    def begin(self):
+                        """Return a transaction context manager for compatibility with SQLAlchemy."""
+                        # Return self as a context manager that mimics SQLAlchemy Transaction
+                        return self
+                        
+                    def __enter__(self):
+                        # Context manager entry point
+                        return self
+                        
+                    def __exit__(self, exc_type, exc_val, exc_tb):
+                        # Context manager exit point
+                        # We're not actually managing transactions here since JDBC handles that
+                        pass
+                        
+                    def execute(self, query, params=None):
+                        """Execute a SQL query with parameters, for SQLAlchemy compatibility."""
+                        # Call the execute_query function with this connection
+                        return self.execute_query(self.connection, query, params)
                 
                 # Create an engine wrapper that mimics the needed SQLAlchemy engine functionality
                 self.engine = JdbcEngineWrapper(self.connection, execute_query)
-                self.version = "JDBC AS400"
+                
+                # Set appropriate version information based on database type
+                if self.db_type == DatabaseType.AS400:
+                    self.version = "JDBC AS400"
+                elif self.db_type == DatabaseType.MSSQL:
+                    self.version = "JDBC MS SQL Server"
                 logger.info(f"Connected to {self.db_type.value} database via JDBC")
                 return True
             else:
@@ -578,20 +627,36 @@ class DatabaseConnector:
                         fk_results = self.execute_query(formatted_query)
                     elif '?' in query:
                         # For parameterized queries with ? placeholders
-                        # Convert to named parameters for all database types
-                        named_params = {}
-                        if schema:
-                            named_params['schema'] = schema
-                        if table_name:
-                            named_params['table'] = table_name
-                        # Replace all ? with named parameters
-                        modified_query = query
-                        param_count = 1
-                        while '?' in modified_query:
-                            param_name = f':p{param_count}'
-                            modified_query = modified_query.replace('?', param_name, 1)
-                            param_count += 1
-                        fk_results = self.execute_query(modified_query, params=named_params)
+                        # Special handling for JDBC MS SQL Server which requires ? placeholders
+                        is_jdbc_mssql = (self.db_type == DatabaseType.MSSQL and hasattr(self, 'connection'))
+                        
+                        if is_jdbc_mssql:
+                            # For JDBC MS SQL Server, keep ? placeholders and use positional parameters
+                            positional_params = []
+                            if schema:
+                                positional_params.append(schema)
+                            if table_name:
+                                positional_params.append(table_name)
+                            
+                            logger.debug(f"Using MS SQL Server JDBC with positional parameters: {positional_params}")
+                            fk_results = self.execute_query(query, params=positional_params)
+                        else:
+                            # For other databases, convert to named parameters
+                            named_params = {}
+                            if schema:
+                                named_params['schema'] = schema
+                            if table_name:
+                                named_params['table'] = table_name
+                                
+                            # Replace all ? with named parameters
+                            modified_query = query
+                            param_count = 1
+                            while '?' in modified_query:
+                                param_name = f':p{param_count}'
+                                modified_query = modified_query.replace('?', param_name, 1)
+                                param_count += 1
+                                
+                            fk_results = self.execute_query(modified_query, params=named_params)
                     else:
                         # For other parameter styles (named parameters)
                         params = {}
@@ -802,23 +867,49 @@ class DatabaseConnector:
         if not self.engine:
             raise RuntimeError("Not connected to database")
             
-        # Special handling for JDBC wrapper for AS400
-        if hasattr(self.engine, 'execute_query') and self.db_type == DatabaseType.AS400:
+        # Special handling for JDBC wrapper for AS400 and MS SQL Server
+        if hasattr(self.engine, 'execute_query') and self.db_type in [DatabaseType.AS400, DatabaseType.MSSQL]:
             try:
-                # For AS400 JDBC, we use the JDBC connection directly
-                logger.debug(f"Executing query via JDBC: {query}")
-                # Convert dict params to proper format for JDBC
-                jdbc_params = {}
+                # For AS400 and MS SQL Server JDBC, we use the JDBC connection directly
+                logger.debug(f"Executing query via JDBC for {self.db_type.value}: {query}")
+                # Convert parameters to the format needed by JDBC
                 if params and isinstance(params, dict):
-                    for k, v in params.items():
-                        # JDBC typically uses positional parameters or named with :
-                        if ':' + k in query:
-                            jdbc_params[':' + k] = v
+                    # For MS SQL Server with questions marks, convert dict to ordered list
+                    if self.db_type == DatabaseType.MSSQL and '?' in query:
+                        # For table schema queries with schema and table_name parameters
+                        jdbc_params = []
+                        
+                        # Extract the expected parameters (schema, table_name) in correct order
+                        # For schema queries in MS SQL Server with ? placeholders
+                        if all(k in params for k in ['schema', 'table_name']):
+                            # Common parameter combination for table schema queries
+                            jdbc_params = [params.get('schema'), params.get('table_name')]
+                            logger.debug(f"Using positional parameters for MS SQL Server JDBC: {jdbc_params}")
                         else:
-                            jdbc_params[k] = v
-                
-                # Execute using the JDBC executor
-                return self.jdbc_execute_query(self.connection, query, jdbc_params, max_rows)
+                            # Generic positional parameter conversion (may not be in the right order)
+                            # Try to infer the parameter order from the query if possible
+                            logger.debug(f"Converting dictionary parameters to list for MS SQL Server JDBC")
+                            jdbc_params = list(params.values())
+                    else:
+                        # Standard dictionary parameter handling for other databases or formats
+                        jdbc_params = {}
+                        for k, v in params.items():
+                            # JDBC typically uses positional parameters or named with :
+                            if ':' + k in query:
+                                jdbc_params[':' + k] = v
+                            else:
+                                jdbc_params[k] = v
+                else:
+                    # Use parameters as-is if not a dictionary
+                    jdbc_params = params
+                    
+                # For debugging
+                if self.db_type == DatabaseType.MSSQL:
+                    logger.debug(f"JDBC params for query: {jdbc_params}")
+                    
+                # Execute using the JDBC utilities
+                from utils.jdbc_utils import execute_query
+                return execute_query(self.connection, query, jdbc_params, max_rows)
             except Exception as jdbc_err:
                 logger.error(f"JDBC query execution error: {jdbc_err}")
                 raise

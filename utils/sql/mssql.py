@@ -39,7 +39,7 @@ class MsSqlSqlStatements(BaseSqlStatements):
             return """
             SELECT table_name
             FROM information_schema.tables
-            WHERE table_schema = :schema
+            WHERE table_schema = ?
             AND table_type = 'BASE TABLE'
             ORDER BY table_name
             """
@@ -82,8 +82,8 @@ class MsSqlSqlStatements(BaseSqlStatements):
             ) pk ON c.table_schema = pk.table_schema
                 AND c.table_name = pk.table_name
                 AND c.column_name = pk.column_name
-            WHERE c.table_schema = :schema
-                AND c.table_name = :table
+            WHERE c.table_schema = ?
+                AND c.table_name = ?
             ORDER BY c.ordinal_position
             """
         else:
@@ -116,7 +116,84 @@ class MsSqlSqlStatements(BaseSqlStatements):
             ) pk ON c.table_schema = pk.table_schema
                 AND c.table_name = pk.table_name
                 AND c.column_name = pk.column_name
-            WHERE c.table_name = :table
+            WHERE c.table_name = ?
+            ORDER BY c.ordinal_position
+            """
+    
+    def get_table_schema_statement(self, schema=None):
+        """Get the SQL statement for retrieving a table's schema.
+        
+        Args:
+            schema: Optional schema name
+            
+        Returns:
+            SQL statement for retrieving table schema
+        """
+        if schema:
+            return """
+            SELECT 
+                c.column_name,
+                c.ordinal_position,
+                c.data_type,
+                c.character_maximum_length,
+                c.numeric_precision,
+                c.numeric_scale,
+                c.datetime_precision,
+                c.is_nullable,
+                COLUMNPROPERTY(OBJECT_ID(c.table_schema + '.' + c.table_name), c.column_name, 'IsIdentity') AS is_identity,
+                c.column_default,
+                CASE WHEN pk.column_name IS NOT NULL THEN 1 ELSE 0 END AS is_primary_key
+            FROM information_schema.columns c
+            LEFT JOIN (
+                SELECT 
+                    ku.table_schema,
+                    ku.table_name,
+                    ku.column_name
+                FROM
+                    information_schema.table_constraints AS tc
+                    JOIN information_schema.key_column_usage AS ku
+                        ON tc.constraint_name = ku.constraint_name
+                        AND tc.table_schema = ku.table_schema
+                        AND tc.table_name = ku.table_name
+                WHERE tc.constraint_type = 'PRIMARY KEY'
+            ) pk ON c.table_schema = pk.table_schema
+                AND c.table_name = pk.table_name
+                AND c.column_name = pk.column_name
+            WHERE c.table_schema = ?
+                AND c.table_name = ?
+            ORDER BY c.ordinal_position
+            """
+        else:
+            return """
+            SELECT 
+                c.column_name,
+                c.ordinal_position,
+                c.data_type,
+                c.character_maximum_length,
+                c.numeric_precision,
+                c.numeric_scale,
+                c.datetime_precision,
+                c.is_nullable,
+                COLUMNPROPERTY(OBJECT_ID(c.table_schema + '.' + c.table_name), c.column_name, 'IsIdentity') AS is_identity,
+                c.column_default,
+                CASE WHEN pk.column_name IS NOT NULL THEN 1 ELSE 0 END AS is_primary_key
+            FROM information_schema.columns c
+            LEFT JOIN (
+                SELECT 
+                    ku.table_schema,
+                    ku.table_name,
+                    ku.column_name
+                FROM
+                    information_schema.table_constraints AS tc
+                    JOIN information_schema.key_column_usage AS ku
+                        ON tc.constraint_name = ku.constraint_name
+                        AND tc.table_schema = ku.table_schema
+                        AND tc.table_name = ku.table_name
+                WHERE tc.constraint_type = 'PRIMARY KEY'
+            ) pk ON c.table_schema = pk.table_schema
+                AND c.table_name = pk.table_name
+                AND c.column_name = pk.column_name
+            WHERE c.table_name = ?
             ORDER BY c.ordinal_position
             """
     
@@ -132,8 +209,8 @@ class MsSqlSqlStatements(BaseSqlStatements):
                     AND tc.table_schema = ku.table_schema
                     AND tc.table_name = ku.table_name
             WHERE tc.constraint_type = 'PRIMARY KEY'
-                AND tc.table_schema = :schema
-                AND tc.table_name = :table
+                AND tc.table_schema = ?
+                AND tc.table_name = ?
             ORDER BY ku.ordinal_position
             """
         else:
@@ -168,8 +245,8 @@ class MsSqlSqlStatements(BaseSqlStatements):
                 AND kcu2.constraint_schema = rc.unique_constraint_schema
                 AND kcu2.constraint_name = rc.unique_constraint_name
                 AND kcu2.ordinal_position = kcu1.ordinal_position
-            WHERE kcu1.table_schema = :schema
-                AND kcu1.table_name = :table
+            WHERE kcu1.table_schema = ?
+                AND kcu1.table_name = ?
             """
         else:
             return """
@@ -188,7 +265,7 @@ class MsSqlSqlStatements(BaseSqlStatements):
                 AND kcu2.constraint_schema = rc.unique_constraint_schema
                 AND kcu2.constraint_name = rc.unique_constraint_name
                 AND kcu2.ordinal_position = kcu1.ordinal_position
-            WHERE kcu1.table_name = :table
+            WHERE kcu1.table_name = ?
             """
     
     def count_rows_statement(self, table):
@@ -196,3 +273,22 @@ class MsSqlSqlStatements(BaseSqlStatements):
     
     def get_version_statement(self):
         return "SELECT @@VERSION AS version"
+        
+    def get_primary_keys_statement(self, schema, table_name):
+        """Return a SQL statement to get primary keys for a table."""
+        return f"""
+        SELECT c.name as COLUMN_NAME
+        FROM sys.indexes i
+        JOIN sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
+        JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+        JOIN sys.tables t ON i.object_id = t.object_id
+        JOIN sys.schemas s ON t.schema_id = s.schema_id
+        WHERE i.is_primary_key = 1
+        AND t.name = '{table_name}'
+        AND s.name = '{schema}'
+        ORDER BY ic.key_ordinal
+        """
+
+
+# Create alias for compatibility with both naming conventions
+MSSQLSqlStatements = MsSqlSqlStatements

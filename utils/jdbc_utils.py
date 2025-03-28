@@ -263,86 +263,133 @@ def execute_query(connection: jaydebeapi.Connection, query: str, params=None, ma
     try:
         cursor = connection.cursor()
         
-        # Handle parameter substitution if params provided
+        # Check if the connection URL is for MS SQL Server to determine parameter handling approach
+        connection_url = None
+        is_sqlserver = False
+        try:
+            java_conn = connection.__connection__
+            if hasattr(java_conn, 'getMetaData'):
+                metadata = java_conn.getMetaData()
+                connection_url = metadata.getURL()
+                is_sqlserver = connection_url and "sqlserver" in connection_url.lower()
+        except Exception as e:
+            logger.debug(f"Could not determine JDBC connection type: {e}")
+        
+        # Handle parameters based on database type and parameter format
         if params:
-            # AS400 does not support named parameters in dynamic SQL
-            # We must use direct string substitution for all parameters
-            query_with_params = query
-            
-            if isinstance(params, dict):
-                # Replace each named parameter with its properly formatted value
-                for param_name, param_value in params.items():
-                    # Look for different parameter patterns
-                    patterns = [f':{param_name}', f'%({param_name})s', f'?{param_name}', f'${param_name}']
-                    
-                    for pattern in patterns:
-                        if pattern in query_with_params:
-                            # Format values based on type
-                            if param_value is None:
-                                formatted_value = 'NULL'
-                            elif isinstance(param_value, str):
-                                # Escape single quotes for SQL safety
-                                escaped_value = param_value.replace("'", "''")
-                                formatted_value = f"'{escaped_value}'"
-                            elif isinstance(param_value, bool):
-                                formatted_value = '1' if param_value else '0'
-                            else:
-                                formatted_value = str(param_value)
-                                
-                            # Replace parameter with formatted value
-                            query_with_params = query_with_params.replace(pattern, formatted_value)
+            # For MS SQL Server JDBC, we need to pass parameters directly to the cursor.execute call
+            if is_sqlserver and '?' in query:
+                logger.debug(f"Using MS SQL Server JDBC parameter binding for query: {query}")
                 
-                logger.debug(f"Executing query with substituted parameters: {query_with_params}")
-                cursor.execute(query_with_params)
-            elif isinstance(params, (list, tuple)):
-                # For positional parameters, we need to manually substitute ? placeholders
-                parts = query_with_params.split('?')
-                if len(parts) > 1:
-                    final_query = parts[0]
-                    for i, part in enumerate(parts[1:]):
-                        if i < len(params):
-                            param_value = params[i]
-                            if param_value is None:
-                                formatted_value = 'NULL'
-                            elif isinstance(param_value, str):
-                                # Escape single quotes for SQL safety
-                                escaped_value = param_value.replace("'", "''")
-                                formatted_value = f"'{escaped_value}'"
-                            elif isinstance(param_value, bool):
-                                formatted_value = '1' if param_value else '0'
-                            else:
-                                formatted_value = str(param_value)
-                        else:
-                            formatted_value = '?'
-                        final_query += formatted_value + part
+                if isinstance(params, dict):
+                    # Extract parameter values in the order of ? placeholders
+                    # For named parameters, we need to identify parameter order in the query
+                    import re
+                    # Find all named parameters in the query
+                    param_pattern = r':([a-zA-Z0-9_]+)'
+                    param_names = re.findall(param_pattern, query)
                     
-                    logger.debug(f"Executing query with substituted positional parameters: {final_query}")
-                    cursor.execute(final_query)
-                else:
-                    # No ? placeholders found, execute with parameters directly
-                    logger.debug(f"Executing query with parameters but no placeholders found: {query_with_params}")
-                    cursor.execute(query_with_params)
-            else:
-                # Single parameter (not a dict or list)
-                if '?' in query_with_params:
-                    # Format the single parameter appropriately
-                    if params is None:
-                        formatted_value = 'NULL'
-                    elif isinstance(params, str):
-                        escaped_value = params.replace("'", "''")
-                        formatted_value = f"'{escaped_value}'"
-                    elif isinstance(params, bool):
-                        formatted_value = '1' if params else '0'
-                    else:
-                        formatted_value = str(params)
+                    if param_names:
+                        # Convert the query to use ? placeholders instead of named parameters
+                        modified_query = query
+                        for name in param_names:
+                            modified_query = modified_query.replace(f":{name}", "?")
                         
-                    # Replace ? with the formatted value
-                    query_with_params = query_with_params.replace('?', formatted_value)
-                    logger.debug(f"Executing query with substituted single parameter: {query_with_params}")
-                    cursor.execute(query_with_params)
+                        # Create a list of parameter values in the correct order
+                        param_values = [params.get(name) for name in param_names]
+                        
+                        logger.debug(f"Modified query with ? placeholders: {modified_query}")
+                        logger.debug(f"Parameter values: {param_values}")
+                        cursor.execute(modified_query, param_values)
+                    else:
+                        # No named parameters found, just execute directly
+                        cursor.execute(query)
+                elif isinstance(params, (list, tuple)):
+                    # For positional parameters, pass them directly
+                    logger.debug(f"Using positional parameters: {list(params)}")
+                    cursor.execute(query, list(params))
                 else:
-                    logger.debug(f"Executing query with single parameter but no placeholders found: {query_with_params}")
+                    # Single parameter - wrap in a list
+                    logger.debug(f"Using single parameter as list: [{params}]")
+                    cursor.execute(query, [params])
+            else:
+                # For other databases or queries without ? placeholders, use string substitution
+                query_with_params = query
+                
+                if isinstance(params, dict):
+                    # Replace each named parameter with its properly formatted value
+                    for param_name, param_value in params.items():
+                        # Look for different parameter patterns
+                        patterns = [f':{param_name}', f'%({param_name})s', f'?{param_name}', f'${param_name}']
+                        
+                        for pattern in patterns:
+                            if pattern in query_with_params:
+                                # Format values based on type
+                                if param_value is None:
+                                    formatted_value = 'NULL'
+                                elif isinstance(param_value, str):
+                                    # Escape single quotes for SQL safety
+                                    escaped_value = param_value.replace("'", "''")
+                                    formatted_value = f"'{escaped_value}'"
+                                elif isinstance(param_value, bool):
+                                    formatted_value = '1' if param_value else '0'
+                                else:
+                                    formatted_value = str(param_value)
+                                    
+                                # Replace parameter with formatted value
+                                query_with_params = query_with_params.replace(pattern, formatted_value)
+                    
+                    logger.debug(f"Executing query with substituted parameters: {query_with_params}")
                     cursor.execute(query_with_params)
+                elif isinstance(params, (list, tuple)):
+                    # For positional parameters, manually substitute ? placeholders
+                    parts = query_with_params.split('?')
+                    if len(parts) > 1:
+                        final_query = parts[0]
+                        for i, part in enumerate(parts[1:]):
+                            if i < len(params):
+                                param_value = params[i]
+                                if param_value is None:
+                                    formatted_value = 'NULL'
+                                elif isinstance(param_value, str):
+                                    # Escape single quotes for SQL safety
+                                    escaped_value = param_value.replace("'", "''")
+                                    formatted_value = f"'{escaped_value}'"
+                                elif isinstance(param_value, bool):
+                                    formatted_value = '1' if param_value else '0'
+                                else:
+                                    formatted_value = str(param_value)
+                            else:
+                                formatted_value = '?'
+                            final_query += formatted_value + part
+                        
+                        logger.debug(f"Executing query with substituted positional parameters: {final_query}")
+                        cursor.execute(final_query)
+                    else:
+                        # No ? placeholders found, execute with parameters directly
+                        logger.debug(f"Executing query with parameters but no placeholders found: {query_with_params}")
+                        cursor.execute(query_with_params)
+                else:
+                    # Single parameter (not a dict or list)
+                    if '?' in query_with_params:
+                        # Format the single parameter appropriately
+                        if params is None:
+                            formatted_value = 'NULL'
+                        elif isinstance(params, str):
+                            escaped_value = params.replace("'", "''")
+                            formatted_value = f"'{escaped_value}'"
+                        elif isinstance(params, bool):
+                            formatted_value = '1' if params else '0'
+                        else:
+                            formatted_value = str(params)
+                            
+                        # Replace ? with the formatted value
+                        query_with_params = query_with_params.replace('?', formatted_value)
+                        logger.debug(f"Executing query with substituted single parameter: {query_with_params}")
+                        cursor.execute(query_with_params)
+                    else:
+                        logger.debug(f"Executing query with single parameter but no placeholders found: {query_with_params}")
+                        cursor.execute(query_with_params)
         else:
             # No parameters
             logger.debug(f"Executing query without parameters: {query}")
@@ -437,6 +484,7 @@ def get_schemas(connection):
             logger.debug(f"Could not get metadata from connection: {md_err}")
         
         is_as400 = connection_url and "as400" in connection_url.lower()
+        is_sqlserver = connection_url and "sqlserver" in connection_url.lower()
         
         if is_as400:
             # For AS400/DB2, use a different approach to get schemas
@@ -452,6 +500,22 @@ def get_schemas(connection):
                 cursor.execute("SELECT DISTINCT SYSTEM_SCHEMA FROM QSYS2.SYSTABLES")
                 rows = cursor.fetchall()
                 schemas = [row[0] for row in rows]
+        elif is_sqlserver:
+            # For MS SQL Server, use specific approach to get actual schemas (not databases)
+            logger.debug("Using SQL Server-specific schema query")
+            try:
+                # Use sys.schemas to get actual schema names
+                cursor.execute("SELECT name FROM sys.schemas WHERE name NOT LIKE 'db\_%' AND name != 'sys' AND name != 'INFORMATION_SCHEMA'")
+                rows = cursor.fetchall()
+                schemas = [row[0] for row in rows]
+                
+                # If no schemas found, return at least the default 'dbo' schema
+                if not schemas:
+                    schemas = ['dbo']
+            except Exception as sqlserver_err:
+                logger.warning(f"SQL Server schema query failed: {sqlserver_err}")
+                # Fallback to default schema
+                schemas = ['dbo']
         else:
             # Generic approach for other databases
             try:
@@ -500,6 +564,7 @@ def get_tables(connection, schema=None):
             logger.debug(f"Could not get metadata from connection: {md_err}")
         
         is_as400 = connection_url and "as400" in connection_url.lower()
+        is_sqlserver = connection_url and "sqlserver" in connection_url.lower()
         
         if is_as400:
             # For AS400, use SQL query approach
@@ -522,6 +587,32 @@ def get_tables(connection, schema=None):
                 cursor.execute("SELECT TABLE_SCHEMA, TABLE_NAME FROM QSYS2.SYSTABLES WHERE TABLE_TYPE = 'T'")
                 rows = cursor.fetchall()
                 tables = [(row[0], row[1]) for row in rows]
+        elif is_sqlserver:
+            # For MS SQL Server, use specific queries
+            if schema:
+                try:
+                    # SQL Server specific query for tables
+                    cursor.execute(f"SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{schema}' AND TABLE_TYPE = 'BASE TABLE'")
+                    rows = cursor.fetchall()
+                    tables = [row[0] for row in rows]
+                except Exception as sqlserver_err:
+                    logger.warning(f"SQL Server table query failed: {sqlserver_err}")
+                    # Fallback to using sys.tables
+                    cursor.execute(f"SELECT t.name FROM sys.tables t JOIN sys.schemas s ON t.schema_id = s.schema_id WHERE s.name = '{schema}'")
+                    rows = cursor.fetchall()
+                    tables = [row[0] for row in rows]
+            else:
+                # Get tables from all schemas
+                try:
+                    cursor.execute("SELECT s.name AS schema_name, t.name AS table_name FROM sys.tables t JOIN sys.schemas s ON t.schema_id = s.schema_id")
+                    rows = cursor.fetchall()
+                    tables = [(row[0], row[1]) for row in rows]
+                except Exception as sqlserver_err:
+                    logger.warning(f"SQL Server all-tables query failed: {sqlserver_err}")
+                    # Fallback to INFORMATION_SCHEMA
+                    cursor.execute("SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE'")
+                    rows = cursor.fetchall()
+                    tables = [(row[0], row[1]) for row in rows]
         else:
             # Generic approach for other databases
             if schema:
