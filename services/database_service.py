@@ -591,58 +591,46 @@ class DatabaseService:
     def _build_connection_string(self, connection) -> str:
         """
         Build a connection string based on the database type and connection parameters.
+        Always using JDBC drivers for all database types (except SQLite).
         """
-        if connection.db_type == DatabaseType.MYSQL:
-            # MySQL: mysql+pymysql://username:password@host:port/database
-            return f"mysql+pymysql://{connection.username}:{connection.password}@{connection.host}:{connection.port}/{connection.database_name}"
-        
-        elif connection.db_type == DatabaseType.POSTGRESQL:
-            # PostgreSQL: postgresql://username:password@host:port/database
-            return f"postgresql://{connection.username}:{connection.password}@{connection.host}:{connection.port}/{connection.database_name}"
-        
-        elif connection.db_type == DatabaseType.SQLITE:
-            # SQLite: sqlite:///path/to/database.db
-            return f"sqlite:///{connection.database_name}"
-        
-        elif connection.db_type == DatabaseType.MSSQL:
-            # Always use JDBC for MS SQL Server connections for cross-platform compatibility
-            try:
-                # Check if JDBC utils are available
-                from utils import jdbc_utils
-                # We'll handle this connection directly through JDBC in the _get_engine method
-                # Return a special connection string format to indicate JDBC usage
-                # Add trustServerCertificate=true to disable SSL certificate validation
-                return f"jdbc:sqlserver://{connection.host}:{connection.port};databaseName={connection.database_name};trustServerCertificate=true;encrypt=true"                
-            except ImportError:
-                # JDBC not available
-                logger.error("JDBC utilities not available for MS SQL Server connection.")
-                raise ValueError("MS SQL Server support requires JDBC utilities.")
-        
-        elif connection.db_type == DatabaseType.ORACLE:
-            # Oracle: oracle+cx_oracle://username:password@host:port/service_name
-            return f"oracle+cx_oracle://{connection.username}:{connection.password}@{connection.host}:{connection.port}/{connection.database_name}"
-        
-        elif connection.db_type == DatabaseType.AS400:
-            # Always use JDBC for AS400 connections for cross-platform compatibility
-            try:
-                # Check if JDBC utils are available
-                from utils import jdbc_utils
-                # We'll handle this connection directly through JDBC in the _get_engine method
-                # Return a special connection string format to indicate JDBC usage
+        try:
+            # Check if JDBC utils are available
+            from utils import jdbc_utils
+            
+            if connection.db_type == DatabaseType.MYSQL:
+                # MySQL with JDBC
+                return f"mysql+jdbc://{connection.username}:{connection.password}@{connection.host}:{connection.port}/{connection.database_name}?driver=com.mysql.cj.jdbc.Driver"
+            
+            elif connection.db_type == DatabaseType.POSTGRESQL:
+                # PostgreSQL with JDBC
+                return f"postgresql+jdbc://{connection.username}:{connection.password}@{connection.host}:{connection.port}/{connection.database_name}?driver=org.postgresql.Driver"
+            
+            elif connection.db_type == DatabaseType.SQLITE:
+                # SQLite: still use sqlite:// protocol as it's not JDBC-based
+                return f"sqlite:///{connection.database_name}"
+            
+            elif connection.db_type == DatabaseType.MSSQL:
+                # MS SQL Server with JDBC
+                return f"mssql+jdbc://{connection.username}:{connection.password}@{connection.host}:{connection.port}/{connection.database_name}?driver=com.microsoft.sqlserver.jdbc.SQLServerDriver&trustServerCertificate=true&encrypt=true"
+            
+            elif connection.db_type == DatabaseType.ORACLE:
+                # Oracle with JDBC
+                return f"oracle+jdbc://{connection.username}:{connection.password}@{connection.host}:{connection.port}/{connection.database_name}?driver=oracle.jdbc.OracleDriver"
+            
+            elif connection.db_type == DatabaseType.AS400:
+                # AS400 with JDBC
                 if connection.database_name:
-                    return f"jdbc:as400://{connection.host}/{connection.database_name}"
+                    return f"as400+jdbc://{connection.username}:{connection.password}@{connection.host}/{connection.database_name}?driver=com.ibm.as400.access.AS400JDBCDriver"
                 else:
-                    return f"jdbc:as400://{connection.host}"
-            except ImportError:
-                # JDBC not available
-                logger.error("JDBC utilities not available for AS400 connection.")
-                raise ValueError("AS400 database support requires JDBC utilities.")
+                    return f"as400+jdbc://{connection.username}:{connection.password}@{connection.host}?driver=com.ibm.as400.access.AS400JDBCDriver"
+                    
+            else:
+                raise ValueError(f"Unsupported database type: {connection.db_type}")
                 
-            # Native ibm_db_sa driver is no longer used for AS400 connections
-            # to ensure cross-platform compatibility
-        
-        else:
-            raise ValueError(f"Unsupported database type: {connection.db_type}")
+        except ImportError:
+            # JDBC not available
+            logger.error("JDBC utilities not available. All database connections require JDBC support.")
+            raise ValueError("Database connections require JDBC utilities.")
 
     def _get_engine(self, connection: DatabaseConnection):
         """
@@ -656,8 +644,8 @@ class DatabaseService:
         if connection_id in self.engines:
             return self.engines[connection_id]
         
-        # Check if this is a JDBC connection string (for AS400 or MSSQL)
-        if connection.connection_string.startswith("jdbc:as400://") or connection.connection_string.startswith("jdbc:sqlserver://"):
+        # Check if this is a JDBC connection string (for any supported database)
+        if ('+jdbc' in connection.connection_string or connection.connection_string.startswith("jdbc:")):
             try:
                 from utils import jdbc_utils
                 
