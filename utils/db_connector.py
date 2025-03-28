@@ -26,12 +26,11 @@ import logging
 import os
 import sys
 import json
-
-# Import the SQLAlchemy patch before any SQLAlchemy imports
-# JDBC drivers are used for all database connections - no need for patching
-
-from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.exc import SQLAlchemyError
+import importlib.util
+import jaydebeapi
+import jpype
+from datetime import datetime
+from typing import List, Dict, Any, Optional, Tuple
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -46,34 +45,89 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def build_connection_string(db_type, host, port, username, password, database_name):
-    """Build a connection string based on database type and parameters."""
+def build_jdbc_connection_info(db_type, host, port, username, password, database):
+    """Build JDBC connection information based on database type.
+    
+    Returns a tuple of (jdbc_url, driver_class, properties)
+    """
+    properties = {"user": username, "password": password} if username and password else {}
+    
     if db_type == DatabaseType.MYSQL:
-        return f"mysql+pymysql://{username}:{password}@{host}:{port}/{database_name}"
+        jdbc_url = f"jdbc:mysql://{host}:{port}/{database}"
+        driver_class = "com.mysql.cj.jdbc.Driver"
+        
     elif db_type == DatabaseType.POSTGRESQL:
-        return f"postgresql://{username}:{password}@{host}:{port}/{database_name}"
+        jdbc_url = f"jdbc:postgresql://{host}:{port}/{database}"
+        driver_class = "org.postgresql.Driver"
+        
     elif db_type == DatabaseType.SQLITE:
-        return f"sqlite:///{database_name}"
+        jdbc_url = f"jdbc:sqlite:{database}"
+        driver_class = "org.sqlite.JDBC"
+        properties = {}  # No authentication for SQLite
+        
     elif db_type == DatabaseType.MSSQL:
-        # Always use JDBC for MS SQL Server for guaranteed cross-platform compatibility
-        # No fallbacks to ODBC to ensure consistent behavior across architectures
+        jdbc_url = f"jdbc:sqlserver://{host}:{port};databaseName={database};trustServerCertificate=true;encrypt=true"
+        driver_class = "com.microsoft.sqlserver.jdbc.SQLServerDriver"
         logger.info("Using JDBC for MS SQL Server connection")
-        return f"jdbc:sqlserver://{host}:{port};databaseName={database_name};trustServerCertificate=true;encrypt=true"
+        
     elif db_type == DatabaseType.ORACLE:
-        return f"oracle+cx_oracle://{username}:{password}@{host}:{port}/{database_name}"
+        jdbc_url = f"jdbc:oracle:thin:@{host}:{port}/{database}"
+        driver_class = "oracle.jdbc.OracleDriver"
+        
     elif db_type == DatabaseType.AS400:
         # Always use JDBC for AS400 - no fallbacks to ensure cross-platform compatibility
-        # JDBC provides better cross-platform support than ibm_db_sa or pyodbc
         logger.info("Using JDBC for AS400 connection")
         if database:
-            return f"jdbc:as400://{host}/{database}"
+            jdbc_url = f"jdbc:as400://{host}/{database}"
         else:
-            return f"jdbc:as400://{host}"
+            jdbc_url = f"jdbc:as400://{host}"
+        driver_class = "com.ibm.as400.access.AS400JDBCDriver"
+        # AS400-specific connection options
+        properties.update({
+            "prompt": "false",
+            "naming": "system"
+        })
+            
     else:
         raise ValueError(f"Unsupported database type: {db_type}")
+        
+    return jdbc_url, driver_class, properties
+
+def get_jdbc_drivers_path():
+    """Get the path to the JDBC driver JAR files.
+    
+    By default, these are expected to be in a 'jdbc_drivers' subdirectory of the current directory.
+    """
+    # Try to find in various locations
+    possible_driver_paths = [
+        # Relative to current directory
+        os.path.join(os.getcwd(), 'jdbc_drivers'),
+        # Relative to script directory
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'jdbc_drivers'),
+        # In the application directory
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'app', 'jdbc_drivers'),
+        # In the user's home directory
+        os.path.join(os.path.expanduser('~'), '.jdbc_drivers'),
+        # System locations
+        '/opt/gluesync/jdbc_drivers',
+        '/usr/local/share/jdbc_drivers',
+    ]
+    
+    # Find the first path that exists and contains JAR files
+    for path in possible_driver_paths:
+        if os.path.exists(path) and any(f.endswith('.jar') for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))):
+            # Get all JAR files in the directory
+            jars = [os.path.join(path, f) for f in os.listdir(path) if f.endswith('.jar') and os.path.isfile(os.path.join(path, f))]
+            logger.info(f"Found {len(jars)} JDBC driver JAR files in {path}")
+            return jars
+    
+    # If no valid path is found
+    logger.warning("No JDBC driver JAR files found in any of the expected locations")
+    return []
+
 
 class DatabaseConnector:
-    """Class to handle database connections using SQLAlchemy."""
+    """Class to handle database connections using direct JDBC."""
     
     def __init__(self, db_type, host=None, port=None, database=None, username=None, password=None):
         """Initialize database connection parameters."""
@@ -83,124 +137,90 @@ class DatabaseConnector:
         self.database = database
         self.username = username
         self.password = password
-        self.engine = None
-        self.inspector = None
+        self.connection = None
         # Initialize database-specific SQL statements based on type
         self.sql_statements = get_sql_statements(db_type)
     
     def connect(self):
-        """Connect to the database."""
+        """Connect to the database using direct JDBC."""
         try:
-            # Use JDBC for AS400 and MS SQL Server connections on all architectures
-            if self.db_type in [DatabaseType.AS400, DatabaseType.MSSQL]:
-                # Always use JDBC approach for AS400 and MS SQL Server - more consistent across architectures
-                from utils.jdbc_utils import get_jdbc_drivers_path, connect_to_database, execute_query
+            logger.info(f"Connecting to {self.db_type.value} database")
+            
+            # Get JDBC connection info
+            jdbc_url, driver_class, properties = build_jdbc_connection_info(
+                self.db_type, self.host, self.port, self.username, self.password, self.database
+            )
+            
+            # Get JDBC driver JAR files
+            jdbc_jars = get_jdbc_drivers_path()
+            
+            if not jdbc_jars:
+                raise ValueError(f"No JDBC driver JAR files found for {self.db_type}")
+            
+            # Initialize JVM if not already started
+            if not jpype.isJVMStarted():
+                jpype.startJVM(jpype.getDefaultJVMPath(), '-Djava.class.path=' + os.pathsep.join(jdbc_jars))
+                logger.info("JVM started for JDBC connections")
+            
+            # Create JDBC connection
+            logger.info(f"Connecting to {jdbc_url} using {driver_class}")
+            self.connection = jaydebeapi.connect(driver_class, jdbc_url, properties, jars=jdbc_jars)
+            
+            # For SQLite, set specific connection properties
+            if self.db_type == DatabaseType.SQLITE:
+                self.connection.jconn.setAutoCommit(False)  # Explicit transaction control
+            
+            # Define a connection wrapper class that provides necessary functionality
+            class JdbcConnectionWrapper:
+                def __init__(self, connection):
+                    self.connection = connection
+                    self.cursor = None
                 
-                # Get JDBC driver paths
-                jdbc_driver_paths = get_jdbc_drivers_path()
+                def connect(self):
+                    """Return a connection context manager."""
+                    return self
                 
-                # Format JDBC connection string based on database type
-                if self.db_type == DatabaseType.AS400:
-                    jdbc_url = f"jdbc:as400://{self.host}/{self.database}"
-                    jdbc_driver = "com.ibm.as400.access.AS400JDBCDriver"
-                    
-                    # Connection properties for AS400
-                    connection_props = {
-                        "user": self.username,
-                        "password": self.password,
-                        "prompt": "false",
-                        "libraries": self.database
-                    }
-                elif self.db_type == DatabaseType.MSSQL:
-                    # MS SQL Server JDBC connection
-                    jdbc_url = f"jdbc:sqlserver://{self.host}:{self.port};databaseName={self.database};trustServerCertificate=true;encrypt=true"
-                    jdbc_driver = "com.microsoft.sqlserver.jdbc.SQLServerDriver"
-                    
-                    # Connection properties for MS SQL Server
-                    connection_props = {
-                        "user": self.username,
-                        "password": self.password
-                    }
+                def begin(self):
+                    """Return a transaction context manager."""
+                    return self
                 
-                # Create a JDBC connection
-                self.connection = connect_to_database(
-                    driver_path=jdbc_driver_paths,
-                    connection_string=jdbc_url,
-                    driverclass=jdbc_driver,
-                    driver_options=connection_props
-                )
+                def __enter__(self):
+                    # Create cursor when entering context
+                    self.cursor = self.connection.cursor()
+                    return self
                 
-                # Store a reference to execute_query for JDBC
-                self.jdbc_execute_query = execute_query
+                def __exit__(self, exc_type, exc_val, exc_tb):
+                    # Close cursor when exiting context
+                    if self.cursor:
+                        if exc_type is None:
+                            # No exception - commit
+                            self.connection.commit()
+                        else:
+                            # Exception occurred - rollback
+                            self.connection.rollback()
+                        self.cursor.close()
+                        self.cursor = None
                 
-                # Create a wrapper engine object with necessary methods
-                class JdbcEngineWrapper:
-                    def __init__(self, connection, execute_fn):
-                        self.connection = connection
-                        self.execute_query = execute_fn
-                        
-                    def connect(self):
-                        """Return a connection context manager for compatibility with SQLAlchemy."""
-                        # Return self as a context manager that mimics SQLAlchemy Connection
-                        return self
-                        
-                    def begin(self):
-                        """Return a transaction context manager for compatibility with SQLAlchemy."""
-                        # Return self as a context manager that mimics SQLAlchemy Transaction
-                        return self
-                        
-                    def __enter__(self):
-                        # Context manager entry point
-                        return self
-                        
-                    def __exit__(self, exc_type, exc_val, exc_tb):
-                        # Context manager exit point
-                        # We're not actually managing transactions here since JDBC handles that
-                        pass
-                        
-                    def execute(self, query, params=None):
-                        """Execute a SQL query with parameters, for SQLAlchemy compatibility."""
-                        # Call the execute_query function with this connection
-                        return self.execute_query(self.connection, query, params)
-                
-                # Create an engine wrapper that mimics the needed SQLAlchemy engine functionality
-                self.engine = JdbcEngineWrapper(self.connection, execute_query)
-                
-                # Set appropriate version information based on database type
-                if self.db_type == DatabaseType.AS400:
-                    self.version = "JDBC AS400"
-                elif self.db_type == DatabaseType.MSSQL:
-                    self.version = "JDBC MS SQL Server"
-                logger.info(f"Connected to {self.db_type.value} database via JDBC")
-                return True
-            else:
-                # Normal SQLAlchemy connection for other database types
-                if self.db_type == DatabaseType.SQLITE:
-                    connection_string = build_connection_string(
-                        self.db_type, None, None, None, None, self.database
-                    )
-                else:
-                    connection_string = build_connection_string(
-                        self.db_type, self.host, self.port, self.username, self.password, self.database
-                    )
-                
-                # Create engine and test connection
-                self.engine = create_engine(connection_string)
-                with self.engine.connect() as conn:
-                    conn.execute(text("SELECT 1"))
-                
-                # Create inspector
-                self.inspector = inspect(self.engine)
+                def execute(self, query, params=None):
+                    """Execute a SQL query with parameters."""
+                    if params is None:
+                        params = []
+                    # Create cursor if needed
+                    if self.cursor is None:
+                        self.cursor = self.connection.cursor()
+                    # Execute query
+                    self.cursor.execute(query, params)
+                    return self.cursor
+            
+            # Create a wrapper for the JDBC connection
+            self.engine = JdbcConnectionWrapper(self.connection)
             
             # Get database version
             self.version = self.get_database_version()
             
             logger.info(f"Connected to {self.db_type.value} database version {self.version}")
             return True
-        
-        except SQLAlchemyError as e:
-            logger.error(f"Error connecting to database: {str(e)}")
-            return False
+            
         except Exception as e:
             logger.error(f"Error connecting to database: {str(e)}")
             return False
@@ -208,32 +228,40 @@ class DatabaseConnector:
     def get_database_version(self):
         """Get the database version using database-specific SQL statements."""
         try:
-            if not self.engine:
+            if not self.connection:
                 return "unknown"
                 
             # Get version SQL statement from our specialized SQL statements
             version_query = self.sql_statements.get_version_statement()
             
-            # Execute the version query
-            result = self.execute_query(version_query)
+            # Execute the version query with JDBC
+            cursor = self.connection.cursor()
+            cursor.execute(version_query)
+            result = cursor.fetchall()
             
             if result and len(result) > 0:
-                # Extract version info from result
-                row = result[0]
+                # Get column names
+                column_names = [desc[0] for desc in cursor.description]
+                # Convert to dict for consistent processing
+                row_dict = dict(zip(column_names, result[0]))
                 
                 # Different databases return version in different column names
-                if 'VERSION()' in row:
-                    return row['VERSION()']
-                elif 'version' in row:
-                    return row['version']
-                elif 'VERSION' in row:
-                    return row['VERSION']
-                elif 'BANNER' in row: # Oracle specific
-                    return row['BANNER']
+                if 'VERSION()' in row_dict:
+                    version = row_dict['VERSION()']
+                elif 'version' in row_dict:
+                    version = row_dict['version']
+                elif 'VERSION' in row_dict:
+                    version = row_dict['VERSION']
+                elif 'BANNER' in row_dict: # Oracle specific
+                    version = row_dict['BANNER']
                 else:
                     # Return first column's value if we can't identify a specific version column
-                    return list(row.values())[0]
+                    version = result[0][0]
+                
+                cursor.close()
+                return version
             
+            cursor.close()
             return "unknown"
         except Exception as e:
             logger.warning(f"Error getting database version: {str(e)}")
@@ -241,24 +269,18 @@ class DatabaseConnector:
     
     def disconnect(self):
         """Disconnect from the database."""
-        if self.engine:
-            try:
-                # Check if it's a JDBC connection
-                if self.db_type == DatabaseType.AS400 or hasattr(self.engine, 'connection') and 'jdbc' in str(type(self.engine)).lower():
-                    # For JDBC connections, close the connection instead of disposing the engine
-                    if hasattr(self, 'connection') and self.connection is not None:
-                        self.connection.close()
-                        logger.info("Closed JDBC connection")
-                else:
-                    # For SQLAlchemy engines, use dispose
-                    self.engine.dispose()
+        try:
+            if self.connection:
+                self.connection.close()
+                self.connection = None
+                self.engine = None
                 logger.info("Disconnected from database")
-            except Exception as e:
-                logger.warning(f"Error during database disconnect: {str(e)}")
+        except Exception as e:
+            logger.warning(f"Error during database disconnect: {str(e)}")
     
     def get_tables(self, schema=None):
-        """Get a list of all tables in the database."""
-        if not self.engine:
+        """Get a list of all tables in the database using JDBC."""
+        if not self.connection:
             raise RuntimeError("Not connected to database")
         
         try:
@@ -270,26 +292,46 @@ class DatabaseConnector:
             if self.db_type == DatabaseType.SQLITE:
                 # For SQLite, which doesn't have schemas in the traditional sense
                 query = self.sql_statements.get_tables_statement()
-                result = self.execute_query(query)
+                params = []
             else:
                 # For databases with schemas
                 query = self.sql_statements.get_tables_statement(schema)
-                if '?' in query:
-                        # The SQL statements now use named parameters directly, no need to replace ?
-                    result = self.execute_query(query, params={'schema': schema})
+                # Convert named parameters to positional if needed
+                if ':schema' in query:
+                    query = query.replace(':schema', '?')
+                    params = [schema]
+                elif '?' in query:
+                    params = [schema]
                 else:
-                    result = self.execute_query(query, params={'schema': schema})
+                    params = []
             
+            # Execute query using JDBC
+            cursor = self.connection.cursor()
+            cursor.execute(query, params)
+            result = cursor.fetchall()
+            
+            # Get column names
+            column_names = [desc[0].upper() for desc in cursor.description] 
+            
+            # Process results
             tables = []
             if result:
-                # Extract table names, handling different result structures
-                if isinstance(result, list) and len(result) > 0:
-                    if 'TABLE_NAME' in result[0]:
-                        tables = [row['TABLE_NAME'] for row in result]
-                    elif 'table_name' in result[0]:
-                        tables = [row['table_name'] for row in result]
-                    elif len(result[0]) == 1:  # One-column result
-                        tables = [list(row.values())[0] for row in result]
+                # Map results to dictionaries
+                dict_results = [dict(zip(column_names, row)) for row in result]
+                
+                # Extract table names based on available columns
+                if dict_results and len(dict_results) > 0:
+                    if 'TABLE_NAME' in dict_results[0]:
+                        tables = [row['TABLE_NAME'] for row in dict_results]
+                    elif 'TABLENAME' in dict_results[0]:
+                        tables = [row['TABLENAME'] for row in dict_results]
+                    elif len(dict_results[0]) == 1:  # One-column result
+                        tables = [list(row.values())[0] for row in dict_results]
+                    else:
+                        # As a fallback, use the first column
+                        tables = [row[list(row.keys())[0]] for row in dict_results]
+            
+            cursor.close()
             
             logger.info(f"Found {len(tables)} tables in schema {schema}")
             for table in tables:
@@ -855,51 +897,82 @@ class DatabaseConnector:
                 'indexes': indexes
             }
     def execute_query(self, query, params=None, max_rows=100):
-        """Execute a query with optional parameters and return the results."""
-        if not self.engine:
+        """Execute a query with optional parameters and return the results using JDBC."""
+        if not self.connection:
             raise RuntimeError("Not connected to database")
             
-        # Special handling for JDBC wrapper for AS400 and MS SQL Server
-        if hasattr(self.engine, 'execute_query') and self.db_type in [DatabaseType.AS400, DatabaseType.MSSQL]:
-            try:
-                # For AS400 and MS SQL Server JDBC, we use the JDBC connection directly
-                logger.debug(f"Executing query via JDBC for {self.db_type.value}: {query}")
+        try:
+            logger.debug(f"Executing query via JDBC for {self.db_type.value}: {query}")
+            
+            # Process parameters
+            jdbc_params = []
+            
+            if params:
                 # Convert parameters to the format needed by JDBC
-                if params and isinstance(params, dict):
-                    # For MS SQL Server with questions marks, convert dict to ordered list
-                    if self.db_type == DatabaseType.MSSQL and '?' in query:
-                        # For table schema queries with schema and table_name parameters
-                        jdbc_params = []
-                        
-                        # Extract the expected parameters (schema, table_name) in correct order
-                        # For schema queries in MS SQL Server with ? placeholders
-                        if all(k in params for k in ['schema', 'table_name']):
-                            # Common parameter combination for table schema queries
-                            jdbc_params = [params.get('schema'), params.get('table_name')]
-                            logger.debug(f"Using positional parameters for MS SQL Server JDBC: {jdbc_params}")
-                        else:
-                            # Generic positional parameter conversion (may not be in the right order)
-                            # Try to infer the parameter order from the query if possible
-                            logger.debug(f"Converting dictionary parameters to list for MS SQL Server JDBC")
-                            jdbc_params = list(params.values())
-                    else:
-                        # Standard dictionary parameter handling for other databases or formats
-                        jdbc_params = {}
+                if isinstance(params, dict):
+                    # Handle named parameters
+                    if ':' in query or '{' in query:
+                        # Replace named parameters with ? for JDBC prepared statements
+                        modified_query = query
                         for k, v in params.items():
-                            # JDBC typically uses positional parameters or named with :
-                            if ':' + k in query:
-                                jdbc_params[':' + k] = v
+                            param_placeholder = f":{k}"
+                            if param_placeholder in modified_query:
+                                modified_query = modified_query.replace(param_placeholder, '?')
+                                jdbc_params.append(v)
+                            elif f"{{{k}}}" in modified_query:
+                                modified_query = modified_query.replace(f"{{{k}}}", '?')
+                                jdbc_params.append(v)
+                        
+                        # Update query to use positional parameters
+                        query = modified_query
+                    else:
+                        # For SQL Server, convert named parameters to positional
+                        if '?' in query and self.db_type == DatabaseType.MSSQL:
+                            # For schema and table_name parameters (common case)
+                            if 'schema' in params and 'table_name' in params:
+                                jdbc_params = [params.get('schema'), params.get('table_name')]
                             else:
-                                jdbc_params[k] = v
+                                # Best-effort conversion (may not be in correct order)
+                                jdbc_params = list(params.values())
+                        else:
+                            # Fallback: convert all values to a list
+                            jdbc_params = list(params.values())
                 else:
-                    # Use parameters as-is if not a dictionary
+                    # Already a list or tuple, use as-is
                     jdbc_params = params
                     
-                # For debugging
-                if self.db_type == DatabaseType.MSSQL:
-                    logger.debug(f"JDBC params for query: {jdbc_params}")
-                    
-                # Execute using the JDBC utilities
+            # Create cursor and execute
+            cursor = self.connection.cursor()
+            
+            # For debugging in MS SQL Server
+            if self.db_type == DatabaseType.MSSQL:
+                logger.debug(f"JDBC params for query: {jdbc_params}")
+            
+            try:
+                # Execute the query with parameters
+                cursor.execute(query, jdbc_params)
+                
+                # Fetch results (limited by max_rows)
+                result_set = cursor.fetchmany(max_rows) if max_rows else cursor.fetchall()
+                
+                # Get column names from cursor description
+                column_names = [desc[0] for desc in cursor.description] if cursor.description else []
+                
+                # Convert results to dictionaries
+                results = []
+                for row in result_set:
+                    row_dict = {}
+                    for i, col_name in enumerate(column_names):
+                        row_dict[col_name] = row[i]
+                    results.append(row_dict)
+                
+                cursor.close()
+                return results
+            except Exception as e:
+                logger.error(f"Error executing query: {str(e)}")
+                if cursor:
+                    cursor.close()
+                raise
                 from utils.jdbc_utils import execute_query
                 return execute_query(self.connection, query, jdbc_params, max_rows)
             except Exception as jdbc_err:

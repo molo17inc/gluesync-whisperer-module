@@ -22,13 +22,9 @@
 """
 
 import enum
+import json
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Float, DateTime, Enum, Text, Boolean, ForeignKey, JSON
-from sqlalchemy.orm import relationship
-from sqlalchemy.sql.expression import text
-from sqlalchemy.sql.sqltypes import TIMESTAMP
-
-from database import Base
+from typing import List, Dict, Any, Optional
 
 
 class OperationType(enum.Enum):
@@ -56,71 +52,168 @@ class DatabaseType(enum.Enum):
     AS400 = "as400"
 
 
-class DatabaseConnection(Base):
-    __tablename__ = "database_connections"
-
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False, unique=True)
-    description = Column(String, nullable=True)
-    db_type = Column(Enum(DatabaseType), nullable=False)
-    host = Column(String, nullable=True)  # Null for SQLite
-    port = Column(Integer, nullable=True)  # Null for SQLite
-    username = Column(String, nullable=True)  # Null for SQLite
-    password = Column(String, nullable=True)  # Null for SQLite
-    database_name = Column(String, nullable=False)
-    connection_string = Column(String, nullable=False)
-    status = Column(Enum(ConnectionStatus), default=ConnectionStatus.IDLE)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
-    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"), onupdate=text("CURRENT_TIMESTAMP"))
-    last_operation_at = Column(DateTime, nullable=True)
+class DatabaseConnection:
+    """Database connection information."""
     
-    # Relationship with TableConfig
-    tables = relationship("TableConfig", back_populates="connection", cascade="all, delete-orphan")
-
-
-class TableConfig(Base):
-    __tablename__ = "table_configs"
-
-    id = Column(Integer, primary_key=True, index=True)
-    connection_id = Column(Integer, ForeignKey("database_connections.id", ondelete="CASCADE"), nullable=False)
-    table_name = Column(String, nullable=False)
-    schema_name = Column(String, nullable=True)  # For databases that support schemas
-    operation_type = Column(Enum(OperationType), nullable=False, default=OperationType.ALL)
-    operation_delay = Column(Float, nullable=False, default=1.0)  # Delay in seconds between operations
-    batch_size = Column(Integer, nullable=False, default=1)  # How many operations to perform in a batch
-    enabled = Column(Boolean, default=True)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
-    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"), onupdate=text("CURRENT_TIMESTAMP"))
+    def __init__(self, id=None, name=None, description=None, db_type=None, host=None, port=None,
+                 username=None, password=None, database_name=None, connection_string=None, 
+                 status=ConnectionStatus.IDLE, created_at=None, updated_at=None, last_operation_at=None):
+        self.id = id
+        self.name = name 
+        self.description = description
+        self.db_type = db_type
+        self.host = host
+        self.port = port
+        self.username = username
+        self.password = password
+        self.database_name = database_name
+        self.connection_string = connection_string
+        self.status = status
+        self.created_at = created_at or datetime.now()
+        self.updated_at = updated_at or datetime.now()
+        self.last_operation_at = last_operation_at
+        self.tables = []
     
-    # Store the table schema information
-    column_definitions = Column(JSON, nullable=True)
-    primary_keys = Column(JSON, nullable=True)
+    @classmethod
+    def from_row(cls, row):
+        """Create a DatabaseConnection instance from a database row."""
+        conn = cls(
+            id=row['id'],
+            name=row['name'],
+            description=row['description'],
+            db_type=DatabaseType(row['db_type']),
+            host=row['host'],
+            port=row['port'],
+            username=row['username'],
+            password=row['password'],
+            database_name=row['database_name'],
+            connection_string=row['connection_string'],
+            status=ConnectionStatus(row['status']),
+            created_at=row['created_at'],
+            updated_at=row['updated_at'],
+            last_operation_at=row['last_operation_at']
+        )
+        return conn
     
-    # Relationship with DatabaseConnection
-    connection = relationship("DatabaseConnection", back_populates="tables")
-    
-    # Relationship with OperationLog
-    operations = relationship("OperationLog", back_populates="table_config", cascade="all, delete-orphan")
-    
-    # Define a unique constraint on connection_id and table_name
-    __table_args__ = (
-        # SQLAlchemy doesn't support direct unique constraints in the Column definition
-        # So we define it here
-        {'sqlite_autoincrement': True},
-    )
+    def to_dict(self):
+        """Convert to dictionary for database storage."""
+        return {
+            'id': self.id,
+            'name': self.name,
+            'description': self.description,
+            'db_type': self.db_type.value if self.db_type else None,
+            'host': self.host,
+            'port': self.port,
+            'username': self.username,
+            'password': self.password,
+            'database_name': self.database_name,
+            'connection_string': self.connection_string,
+            'status': self.status.value if self.status else 'idle',
+            'last_operation_at': self.last_operation_at
+        }
 
 
-class OperationLog(Base):
-    __tablename__ = "operation_logs"
-
-    id = Column(Integer, primary_key=True, index=True)
-    table_config_id = Column(Integer, ForeignKey("table_configs.id", ondelete="CASCADE"), nullable=False)
-    operation_type = Column(Enum(OperationType), nullable=False)
-    record_id = Column(String, nullable=True)  # ID of the record affected, if available
-    operation_data = Column(JSON, nullable=True)  # The data used in the operation
-    status = Column(String, nullable=False)  # SUCCESS, FAILED
-    error_message = Column(Text, nullable=True)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+class TableConfig:
+    """Table configuration for database operations."""
     
-    # Relationship with TableConfig
-    table_config = relationship("TableConfig", back_populates="operations")
+    def __init__(self, id=None, connection_id=None, table_name=None, schema_name=None,
+                 operation_type=OperationType.ALL, operation_delay=1.0, batch_size=1, enabled=True,
+                 created_at=None, updated_at=None, column_definitions=None, primary_keys=None):
+        self.id = id
+        self.connection_id = connection_id
+        self.table_name = table_name
+        self.schema_name = schema_name
+        self.operation_type = operation_type
+        self.operation_delay = operation_delay
+        self.batch_size = batch_size
+        self.enabled = enabled
+        self.created_at = created_at or datetime.now()
+        self.updated_at = updated_at or datetime.now()
+        self.column_definitions = column_definitions or {}
+        self.primary_keys = primary_keys or []
+        self.operations = []
+        self.connection = None  # Will be populated by service layer
+    
+    @classmethod
+    def from_row(cls, row):
+        """Create a TableConfig instance from a database row."""
+        # Parse JSON strings from SQLite
+        column_defs = json.loads(row['column_definitions']) if row['column_definitions'] else {}
+        primary_keys = json.loads(row['primary_keys']) if row['primary_keys'] else []
+        
+        config = cls(
+            id=row['id'],
+            connection_id=row['connection_id'],
+            table_name=row['table_name'],
+            schema_name=row['schema_name'],
+            operation_type=OperationType(row['operation_type']),
+            operation_delay=row['operation_delay'],
+            batch_size=row['batch_size'],
+            enabled=bool(row['enabled']),
+            created_at=row['created_at'],
+            updated_at=row['updated_at'],
+            column_definitions=column_defs,
+            primary_keys=primary_keys
+        )
+        return config
+    
+    def to_dict(self):
+        """Convert to dictionary for database storage."""
+        return {
+            'id': self.id,
+            'connection_id': self.connection_id,
+            'table_name': self.table_name,
+            'schema_name': self.schema_name,
+            'operation_type': self.operation_type.value if self.operation_type else OperationType.ALL.value,
+            'operation_delay': self.operation_delay,
+            'batch_size': self.batch_size,
+            'enabled': self.enabled,
+            'column_definitions': json.dumps(self.column_definitions) if self.column_definitions else None,
+            'primary_keys': json.dumps(self.primary_keys) if self.primary_keys else None
+        }
+
+
+class OperationLog:
+    """Log of operations performed on a table."""
+    
+    def __init__(self, id=None, table_config_id=None, operation_type=None, record_id=None,
+                 operation_data=None, status=None, error_message=None, created_at=None):
+        self.id = id
+        self.table_config_id = table_config_id
+        self.operation_type = operation_type
+        self.record_id = record_id
+        self.operation_data = operation_data or {}
+        self.status = status  # SUCCESS, FAILED
+        self.error_message = error_message
+        self.created_at = created_at or datetime.now()
+        self.table_config = None  # Will be populated by service layer
+    
+    @classmethod
+    def from_row(cls, row):
+        """Create an OperationLog instance from a database row."""
+        # Parse JSON strings from SQLite
+        operation_data = json.loads(row['operation_data']) if row['operation_data'] else {}
+        
+        log = cls(
+            id=row['id'],
+            table_config_id=row['table_config_id'],
+            operation_type=OperationType(row['operation_type']),
+            record_id=row['record_id'],
+            operation_data=operation_data,
+            status=row['status'],
+            error_message=row['error_message'],
+            created_at=row['created_at']
+        )
+        return log
+    
+    def to_dict(self):
+        """Convert to dictionary for database storage."""
+        return {
+            'id': self.id,
+            'table_config_id': self.table_config_id,
+            'operation_type': self.operation_type.value if self.operation_type else None,
+            'record_id': self.record_id,
+            'operation_data': json.dumps(self.operation_data) if self.operation_data else None,
+            'status': self.status,
+            'error_message': self.error_message
+        }

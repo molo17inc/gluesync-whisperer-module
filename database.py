@@ -21,25 +21,121 @@
  * Copyright (C) 2025 MOLO17. All rights reserved.
 """
 
-# Import the SQLAlchemy patch before any other SQLAlchemy-related imports
-# This prevents pyodbc import errors
-# JDBC drivers are used for all database connections - no need for patching
-
-from sqlalchemy import create_engine, select
-# SQLAlchemy 2.0 updates - replacing deprecated imports
-from sqlalchemy.orm import declarative_base, sessionmaker
+import os
+import sqlite3
+import logging
+from functools import wraps
+from contextlib import contextmanager
+from typing import Dict, List, Any, Generator
 
 from config import settings
 
-# Create the SQLAlchemy engine for our internal database management
-engine = create_engine(settings.DB_URL, connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+# Configure logging
+logger = logging.getLogger(__name__)
 
-# Method to obtain a database session
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+class Database:
+    """SQLite database connection manager for internal application storage."""
+    
+    def __init__(self, db_url=None):
+        """Initialize the database connection."""
+        self.db_url = db_url or settings.DB_URL
+        # Remove sqlite:/// prefix if present
+        if self.db_url.startswith('sqlite:///'):
+            self.db_path = self.db_url.replace('sqlite:///', '')
+        else:
+            self.db_path = self.db_url
+        
+        # Ensure the directory exists
+        os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
+        
+        # Create tables if they don't exist
+        self._init_db()
+    
+    def _init_db(self):
+        """Initialize the database with required tables."""
+        # Create tables if they don't exist
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Database connections table
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS database_connections (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT,
+                db_type TEXT NOT NULL,
+                host TEXT,
+                port INTEGER,
+                username TEXT,
+                password TEXT,
+                database_name TEXT NOT NULL,
+                connection_string TEXT NOT NULL,
+                status TEXT DEFAULT 'idle',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_operation_at TIMESTAMP
+            )
+            """)
+            
+            # Table configs table
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS table_configs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                connection_id INTEGER NOT NULL,
+                table_name TEXT NOT NULL,
+                schema_name TEXT,
+                operation_type TEXT NOT NULL DEFAULT 'all',
+                operation_delay REAL NOT NULL DEFAULT 1.0,
+                batch_size INTEGER NOT NULL DEFAULT 1,
+                enabled BOOLEAN DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                column_definitions TEXT,
+                primary_keys TEXT,
+                FOREIGN KEY (connection_id) REFERENCES database_connections (id) ON DELETE CASCADE
+            )
+            """)
+            
+            # Operation logs table
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS operation_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                table_config_id INTEGER NOT NULL,
+                operation_type TEXT NOT NULL,
+                record_id TEXT,
+                operation_data TEXT,
+                status TEXT NOT NULL,
+                error_message TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (table_config_id) REFERENCES table_configs (id) ON DELETE CASCADE
+            )
+            """)
+            
+            conn.commit()
+    
+    @contextmanager
+    def get_connection(self):
+        """Get a database connection as a context manager."""
+        conn = sqlite3.connect(self.db_path)
+        # Enable foreign keys
+        conn.execute("PRAGMA foreign_keys = ON")
+        # Set row_factory to return dictionaries
+        conn.row_factory = sqlite3.Row
+        
+        try:
+            yield conn
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Database error: {str(e)}")
+            raise
+        finally:
+            conn.close()
+
+# Singleton database instance
+_db = Database(settings.DB_URL)
+
+# Method to obtain a database connection
+def get_db() -> Database:
+    return _db
+

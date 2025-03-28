@@ -1,6 +1,5 @@
 fastapi>=0.95.0
 uvicorn>=0.21.1
-sqlalchemy==2.0.39
 pydantic>=1.10.7
 pydantic-settings>=2.0.0
 python-dotenv>=1.0.0
@@ -8,7 +7,6 @@ python-dotenv>=1.0.0
 # Database drivers - JDBC only
 JPype1==1.5.0  # Java bridge for JDBC
 JayDeBeApi==1.2.3  # JDBC-Python interface
-sqlalchemy-jdbcapi==1.2.2  # SQLAlchemy JDBC dialect
 
 # Testing and utilities
 pytest>=7.3.1
@@ -17,7 +15,3 @@ python-multipart>=0.0.6
 aiofiles>=23.1.0
 requests>=2.30.0
 Faker>=18.4.0
-
-# JDBC support
-JPype1==1.5.0
-JayDeBeApi==1.2.3
