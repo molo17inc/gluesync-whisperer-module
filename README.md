@@ -36,11 +36,11 @@ Gluesync Whisperer supports multiple database types, each requiring specific Pyt
 | MySQL | `pymysql` | Included in requirements.txt |
 | PostgreSQL | `psycopg2-binary` | Included in requirements.txt |
 | SQLite | Built-in SQLAlchemy support | No additional packages needed |
-| MSSQL | `pyodbc` | Requires ODBC drivers to be installed on the system |
+| MSSQL | `jaydebeapi` with MS SQL JDBC driver | **Cross-platform compatible** - Works on both x86_64 and ARM-based platforms (M1/M2 Macs) |
 | Oracle | `cx_Oracle` | May require Oracle client libraries |
-| AS400/DB2 | `jaydebeapi` and JDBC driver | **Cross-platform compatible** - Works on both x86_64 and ARM-based platforms (M1/M2 Macs) |
+| AS400/DB2 | `jaydebeapi` with JT400 JDBC driver | **Cross-platform compatible** - Works on both x86_64 and ARM-based platforms (M1/M2 Macs) |
 
-All required drivers are included in the Dockerfile for containerized deployment. AS400/DB2 support is now implemented using JDBC drivers via `jaydebeapi`, making it fully compatible with both x86_64 and ARM-based platforms (including M1/M2 Macs).
+All required drivers are included in the Dockerfile for containerized deployment. Both AS400/DB2 and MS SQL Server connections now use JDBC drivers via `jaydebeapi`, making them fully compatible with both x86_64 and ARM-based platforms (including M1/M2 Macs). The ODBC dependency has been completely removed for better cross-platform compatibility.
 
 ### Local Installation
 

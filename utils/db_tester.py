@@ -49,8 +49,8 @@ def build_connection_string(db_type, host, port, username, password, database_na
     elif db_type == DatabaseType.SQLITE:
         return f"sqlite:///{database_name}"
     elif db_type == DatabaseType.MSSQL:
-        driver = "ODBC+Driver+17+for+SQL+Server"
-        return f"mssql+pyodbc://{username}:{password}@{host}:{port}/{database_name}?driver={driver}"
+        # Always use JDBC for MS SQL Server
+        return f"jdbc:sqlserver://{host}:{port};databaseName={database_name};trustServerCertificate=true;encrypt=true"
     elif db_type == DatabaseType.ORACLE:
         return f"oracle+cx_oracle://{username}:{password}@{host}:{port}/{database_name}"
     else:
