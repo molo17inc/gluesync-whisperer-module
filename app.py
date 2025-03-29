@@ -21,9 +21,7 @@
  * Copyright (C) 2025 MOLO17. All rights reserved.
 """
 
-# JDBC drivers are used for all database connections
-# Register JDBC dialects with SQLAlchemy
-from utils.sqlalchemy_jdbc import registered as jdbc_dialects_registered
+# JDBC drivers are used for all database connections directly
 
 import asyncio
 import logging
