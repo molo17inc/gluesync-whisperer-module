@@ -22,6 +22,7 @@
 """
 
 import logging
+import time
 from typing import Dict, List, Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -317,6 +318,9 @@ def get_pillow_fight_status(db = Depends(get_db)):
 def pillow_fight_complete(fight_id: str, connection_id: int):
     """Callback when a pillow fight is complete."""
     try:
+        # Add a delay to allow the pillow fight to start properly
+        time.sleep(5)
+        
         # Check if pillow fight is still running
         if fight_id not in active_pillow_fights:
             return
@@ -329,7 +333,8 @@ def pillow_fight_complete(fight_id: str, connection_id: int):
         connection_service = ConnectionService(db)
         connection = connection_service.get_connection(connection_id)
         
-        if not connection or connection.status != ConnectionStatus.RUNNING:
+        # Only stop the pillow fight if the connection is explicitly stopped or deleted
+        if not connection or connection.status == ConnectionStatus.STOPPED:
             # Stop the pillow fight
             parts = fight_id.split('_')
             if len(parts) >= 2:
@@ -339,5 +344,11 @@ def pillow_fight_complete(fight_id: str, connection_id: int):
             # Remove from active pillow fights
             del active_pillow_fights[fight_id]
             logger.info(f"Pillow fight {fight_id} completed")
+        else:
+            # If the connection is still active, schedule another check later
+            # This creates a recurring check without stopping the pillow fight prematurely
+            background_tasks = BackgroundTasks()
+            background_tasks.add_task(pillow_fight_complete, fight_id, connection_id)
+            logger.info(f"Pillow fight {fight_id} still running, scheduling another check")
     except Exception as e:
         logger.error(f"Error in pillow fight complete callback: {str(e)}")

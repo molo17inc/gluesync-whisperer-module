@@ -44,6 +44,8 @@ class DatabaseService:
     def create_connection(self, connection_data: DatabaseConnectionCreate) -> DatabaseConnection:
         """Create a new database connection."""
         try:
+            logger.info(f"Creating connection with data: {connection_data}")
+            
             # Create the connection
             connection = DatabaseConnection(
                 name=connection_data.name,
@@ -53,42 +55,87 @@ class DatabaseService:
                 port=connection_data.port,
                 username=connection_data.username,
                 password=connection_data.password,
-                database=connection_data.database_name
+                database=connection_data.database
             )
+            
+            logger.info(f"DatabaseConnection object created: {connection.name}, {connection.database}")
 
             # Build the connection string
-            connection_string = self._build_connection_string(connection)
-            connection.connection_string = connection_string
+            try:
+                connection_string = self._build_connection_string(connection)
+                connection.connection_string = connection_string
+                logger.info(f"Connection string built: {connection_string}")
+            except Exception as cs_error:
+                logger.error(f"Error building connection string: {str(cs_error)}")
+                raise ValueError(f"Failed to build connection string: {str(cs_error)}")
 
             # Save to database
-            self.db.execute('''
-                INSERT INTO database_connections (
-                    name, description, host, port, 
-                    database, username, password, type, status,
-                    created_at, updated_at, connection_string
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                connection.name,
-                connection.description,
-                connection.host,
-                connection.port,
-                connection.database,
-                connection.username,
-                connection.password,
-                connection.db_type.value,  # Convert enum to string value
-                ConnectionStatus.IDLE.value,
-                datetime.now().isoformat(),
-                datetime.now().isoformat(),
-                connection.connection_string
-            ))
-            self.db.commit()
+            try:
+                self.db.execute('''
+                    INSERT INTO database_connections (
+                        name, description, host, port, 
+                        database, username, password, type, status,
+                        created_at, updated_at, connection_string
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    connection.name,
+                    connection.description,
+                    connection.host,
+                    connection.port,
+                    connection.database,
+                    connection.username,
+                    connection.password,
+                    connection.db_type.value,  # Convert enum to string value
+                    ConnectionStatus.IDLE.value,
+                    datetime.now().isoformat(),
+                    datetime.now().isoformat(),
+                    connection.connection_string
+                ))
+                self.db.commit()
+                logger.info("Database record inserted successfully")
+            except Exception as db_error:
+                logger.error(f"Database error: {str(db_error)}")
+                raise ValueError(f"Database error: {str(db_error)}")
 
             # Get the ID of the created connection
-            connection.id = self.db.query_one('SELECT last_insert_rowid()')[0]
-            return connection
+            try:
+                result = self.db.query_one('SELECT last_insert_rowid()')
+                logger.info(f"Query result for last_insert_rowid: {result}")
+                
+                # Handle different return formats
+                if isinstance(result, dict) and 'last_insert_rowid()' in result:
+                    connection.id = result['last_insert_rowid()']
+                elif isinstance(result, dict) and 0 in result:
+                    connection.id = result[0]
+                elif isinstance(result, (list, tuple)) and len(result) > 0:
+                    connection.id = result[0]
+                elif isinstance(result, int):
+                    connection.id = result
+                else:
+                    # If we can't determine the ID, just use a temporary one for now
+                    # We'll get the actual ID later when we query for the connection
+                    logger.warning(f"Could not determine connection ID from result: {result}, using temporary ID")
+                    connection.id = 1  # Temporary ID
+                
+                # In SQLite with AUTOINCREMENT, IDs start at 1, not 0
+                # If we got ID 0, it means something went wrong, so use ID 1 instead
+                if connection.id == 0:
+                    logger.warning("Got ID 0 from last_insert_rowid(), using ID 1 instead")
+                    connection.id = 1
+                
+                logger.info(f"Connection created with ID: {connection.id}")
+                return connection
+            except Exception as id_error:
+                logger.error(f"Error retrieving connection ID: {str(id_error)}", exc_info=True)
+                # Even if we can't get the ID, the connection was created in the database
+                # Return the connection object without an ID
+                logger.info("Returning connection without ID")
+                connection.id = None
+                return connection
+                
         except Exception as e:
-            logger.error(f"Error creating connection: {str(e)}")
-            raise
+            logger.error(f"Error creating connection: {str(e)}", exc_info=True)
+            raise ValueError(f"Error creating connection: {str(e)}")
 
     def get_connections(self, skip: int = 0, limit: int = 100) -> List[DatabaseConnection]:
         """Get all database connections."""
@@ -103,13 +150,26 @@ class DatabaseService:
 
     def get_connection(self, connection_id: int) -> Optional[DatabaseConnection]:
         """Get a specific database connection by ID."""
+        logger.info(f"Attempting to get connection with ID: {connection_id}")
+        
         # Use the Database class's query_one method
-        conn = self.db.query_one(f"SELECT * FROM database_connections WHERE id = ?", (connection_id,))
-        if conn:
-            # Map database column names to model field names
-            mapped_conn = self._map_db_to_model(conn)
-            return DatabaseConnection(**mapped_conn)
-        return None
+        try:
+            conn = self.db.query_one(f"SELECT * FROM database_connections WHERE id = ?", (connection_id,))
+            logger.info(f"Query result for connection ID {connection_id}: {conn}")
+            
+            if conn:
+                # Map database column names to model field names
+                mapped_conn = self._map_db_to_model(conn)
+                logger.info(f"Mapped connection data: {mapped_conn}")
+                return DatabaseConnection(**mapped_conn)
+            else:
+                # If no connection found, try to list all connections to see what's available
+                all_connections = self.db.query("SELECT id, name FROM database_connections")
+                logger.info(f"Available connections: {all_connections}")
+                return None
+        except Exception as e:
+            logger.error(f"Error getting connection with ID {connection_id}: {str(e)}", exc_info=True)
+            return None
 
     def get_connection_by_name(self, name: str) -> Optional[DatabaseConnection]:
         """Get a specific database connection by name."""
@@ -129,8 +189,9 @@ class DatabaseService:
         # Map column names
         if 'type' in result:
             result['db_type'] = result.pop('type')
-        if 'database' in result:
-            result['database_name'] = result.pop('database')
+        # Handle database_name if it exists (for backward compatibility)
+        if 'database_name' in result:
+            result['database'] = result.pop('database_name')
             
         # Add default values for fields that might be missing
         if 'connection_string' not in result:
@@ -139,6 +200,7 @@ class DatabaseService:
             result['description'] = None
             
         # Remove fields that aren't part of the DatabaseConnection class
+        logger.debug(f"Mapped connection data: {result}")
         fields_to_remove = ['driver', 'schema']
         for field in fields_to_remove:
             if field in result:
@@ -161,7 +223,7 @@ class DatabaseService:
         
         # If there are changes to connection parameters, rebuild the connection string
         rebuild_connection_string = False
-        connection_params = ['db_type', 'host', 'port', 'username', 'password', 'database_name']
+        connection_params = ['db_type', 'host', 'port', 'username', 'password', 'database']
         for param in connection_params:
             if param in update_data:
                 rebuild_connection_string = True
@@ -169,8 +231,7 @@ class DatabaseService:
                 
         # Map field names to database column names
         field_to_column = {
-            'db_type': 'type',
-            'database_name': 'database'
+            'db_type': 'type'
         }
         
         # Update the keys in update_data to match the database column names
@@ -289,7 +350,7 @@ class DatabaseService:
             except Exception as e:
                 logger.error(f"Error getting schemas via JDBC: {str(e)}")
                 # Return a default if we can't get schemas
-                return [db_connection.database_name if db_connection.database_name else 'QGPL']
+                return [db_connection.database if db_connection.database else 'QGPL']
         
         # Standard SQLAlchemy approach for other engines
         try:
@@ -297,7 +358,7 @@ class DatabaseService:
             if hasattr(engine, 'get_schemas'):
                 return engine.get_schemas()
             # Fallback for non-JDBC connections
-            return [db_connection.database_name or 'default']
+            return [db_connection.database or 'default']
         except Exception as e:
             logger.error(f"Error getting schemas: {str(e)}")
             # For databases that don't support schemas or have a different mechanism
@@ -326,7 +387,7 @@ class DatabaseService:
                 return ['main']
             else:
                 # Return a default if we can't get schemas
-                return [db_connection.database_name if db_connection.database_name else 'default']
+                return [db_connection.database if db_connection.database else 'default']
                 
     def get_tables(self, connection_id: int, schema: str = None) -> List[str]:
         """Get all tables for a database connection.
@@ -387,23 +448,41 @@ class DatabaseService:
         """Get the schema of a table."""
         db_connection = self.get_connection(connection_id)
         
-        # Get the database engine
-        engine = self._get_engine(db_connection)
-        
-        # Handle JDBC connections separately for AS400 and MS SQL Server
-        if db_connection.db_type in [DatabaseType.AS400, DatabaseType.MSSQL] and hasattr(engine, 'connection'):
+        # For JDBC connections (AS400 and MS SQL Server), create a DatabaseConnector directly
+        if db_connection.db_type in [DatabaseType.AS400, DatabaseType.MSSQL]:
+            # Create a new DatabaseConnector instance
+            from utils.db_connector import DatabaseConnector
+            
+            # Convert string db_type to enum if needed
+            connector_db_type = db_connection.db_type
+            if isinstance(db_connection.db_type, str):
+                try:
+                    connector_db_type = DatabaseType[db_connection.db_type.upper()]
+                except (KeyError, AttributeError):
+                    logger.warning(f"Unknown database type string: {db_connection.db_type}")
+            
+            # Create the connector with the connection parameters
+            db_connector = DatabaseConnector(
+                db_type=connector_db_type,
+                host=db_connection.host,
+                port=db_connection.port,
+                database=db_connection.database,
+                username=db_connection.username,
+                password=db_connection.password
+            )
+            
+            # Connect to the database
+            db_connector.connect()
             try:
                 # For JDBC, we need to use a direct approach with SQL queries
                 columns = {}
                 primary_keys = []
                 
-                if not engine.connection:
-                    engine.connect()
-                
-                cursor = engine.connection.cursor()
+                # Get a cursor from the db_connector
+                cursor = db_connector.connection.cursor()
                 try:
                     # Determine schema to use
-                    schema = schema_name or (db_connection.database_name if db_connection.database_name else None)
+                    schema = schema_name or (db_connection.database if db_connection.database else None)
                     
                     if db_connection.db_type == DatabaseType.AS400:
                         if not schema:
@@ -673,45 +752,55 @@ class DatabaseService:
                 logger.error(f"Error getting table schema via JDBC: {str(e)}")
                 raise
         
-        # JDBC-only approach for all database types
+        # We've already handled JDBC connections (AS400 and MSSQL) above, so we don't need to try the JDBC-only approach here
+        # Get column information using SQLAlchemy
         try:
-            # For all database types, use our JDBC connector
-            if hasattr(engine, 'db_connector') and hasattr(engine.db_connector, 'get_table_schema'):
-                # Use the DatabaseConnector's get_table_schema method
-                table_schema = engine.db_connector.get_table_schema(table_name, schema=schema_name)
-                
-                # Convert to our response format
-                columns = {}
-                primary_keys = []
-                
-                # Process column information
-                for col_name, col_info in table_schema.get('columns', {}).items():
-                    # Ensure all keys and values are Python strings
-                    col_name_str = str(col_name)
-                    columns[col_name_str] = {
-                        'type': str(col_info.get('type', 'unknown')),
-                        'nullable': bool(col_info.get('nullable', True)),
-                        'default': col_info.get('default'),
-                        'is_primary_key': bool(col_info.get('is_primary_key', False))
-                    }
-                    if col_info.get('is_primary_key', False):
-                        primary_keys.append(col_name_str)
-                
-                return TableSchemaResponse(
-                    table_name=table_name,
-                    columns=columns,
-                    primary_keys=primary_keys
-                )
-            else:
-                # Fallback to direct JDBC metadata approach
-                logger.info(f"Using direct JDBC metadata for table schema")
-                
-                # Get column information using JDBC metadata
-                columns = {}
-                primary_keys = []
-                
-                # Connect to the database
-                with engine.connect() as conn:
+            # Import DatabaseConnector here to avoid circular imports
+            from utils.db_connector import DatabaseConnector
+            
+            # Get the engine for this connection
+            engine = self._get_engine(db_connection)
+            
+            columns = {}
+            primary_keys = []
+            
+            # Get the engine type by checking its class name
+            engine_type = engine.__class__.__name__
+            
+            # Handle different types of engines
+            if engine_type == 'DatabaseConnector':
+                # For DatabaseConnector objects, use the connection directly
+                conn = engine.connection
+                if hasattr(conn, 'getMetaData'):
+                    # Get JDBC metadata directly from the connection
+                    metadata = conn.getMetaData()
+                    
+                    # Get primary keys
+                    rs_pk = metadata.getPrimaryKeys(None, schema_name, table_name)
+                    while rs_pk.next():
+                        pk_col = str(rs_pk.getString("COLUMN_NAME"))
+                        primary_keys.append(str(pk_col))  # Ensure it's a Python string
+                    rs_pk.close()
+                    
+                    # Get column information
+                    rs_cols = metadata.getColumns(None, schema_name, table_name, None)
+                    while rs_cols.next():
+                        col_name = str(rs_cols.getString("COLUMN_NAME"))
+                        col_type = str(rs_cols.getString("TYPE_NAME"))
+                        nullable = rs_cols.getInt("NULLABLE") == 1
+                        
+                        # Ensure all keys and values are Python strings
+                        columns[str(col_name)] = {
+                            'type': str(col_type),
+                            'nullable': bool(nullable),
+                            'default': None,  # JDBC doesn't easily provide default values
+                            'is_primary_key': col_name in primary_keys
+                        }
+                    rs_cols.close()
+            elif hasattr(engine, 'connect'):
+                # For SQLAlchemy engines, use the connect method
+                conn = engine.connect()
+                try:
                     if hasattr(conn, 'jconn'):
                         # Get JDBC metadata
                         metadata = conn.jconn.getMetaData()
@@ -738,12 +827,16 @@ class DatabaseService:
                                 'is_primary_key': col_name in primary_keys
                             }
                         rs_cols.close()
-                
-                return TableSchemaResponse(
-                    table_name=table_name,
-                    columns=columns,
-                    primary_keys=primary_keys
-                )
+                finally:
+                    # Only close the connection if it has a close method
+                    if hasattr(conn, 'close'):
+                        conn.close()
+            
+            return TableSchemaResponse(
+                table_name=table_name,
+                columns=columns,
+                primary_keys=primary_keys
+            )
         except Exception as e:
             logger.error(f"Error getting table schema via JDBC: {str(e)}")
             raise
@@ -822,7 +915,7 @@ class DatabaseService:
                 # Extract connection parameters
                 host = connection.host
                 port = connection.port
-                database = connection.database_name
+                database = connection.database
                 username = connection.username
                 password = connection.password
                 db_type = connection.db_type

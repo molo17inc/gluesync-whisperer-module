@@ -323,14 +323,17 @@ class DatabaseConnector:
                 # Extract table names based on available columns
                 if dict_results and len(dict_results) > 0:
                     if 'TABLE_NAME' in dict_results[0]:
-                        tables = [row['TABLE_NAME'] for row in dict_results]
+                        tables = [str(row['TABLE_NAME']) for row in dict_results]
                     elif 'TABLENAME' in dict_results[0]:
-                        tables = [row['TABLENAME'] for row in dict_results]
+                        tables = [str(row['TABLENAME']) for row in dict_results]
                     elif len(dict_results[0]) == 1:  # One-column result
-                        tables = [list(row.values())[0] for row in dict_results]
+                        tables = [str(list(row.values())[0]) for row in dict_results]
                     else:
                         # As a fallback, use the first column
-                        tables = [row[list(row.keys())[0]] for row in dict_results]
+                        tables = [str(row[list(row.keys())[0]]) for row in dict_results]
+                        
+                # Ensure all table names are Python strings
+                tables = [str(table) for table in tables]
             
             cursor.close()
             
@@ -362,6 +365,10 @@ class DatabaseConnector:
                 
                 rs.close()
                 logger.info(f"Using JDBC metadata, found {len(tables)} tables")
+                
+                # Double-check that all table names are Python strings
+                tables = [str(table) for table in tables]
+                logger.debug(f"Table names: {tables}")
                 return tables
             except Exception as jdbc_err:
                 logger.error(f"Error getting tables via JDBC metadata: {str(jdbc_err)}")
@@ -1119,18 +1126,33 @@ class DatabaseConnector:
                 
             elif self.db_type == DatabaseType.MSSQL:
                 # For MS SQL Server, get actual schemas
+                logger.info("Getting MS SQL Server schemas via JDBC metadata")
+                
+                # Define roles to filter out - these are not actual schemas
+                roles_to_filter = [
+                    "db_accessadmin", "db_backupoperator", "db_datareader", "db_datawriter",
+                    "db_ddladmin", "db_denydatareader", "db_denydatawriter", "db_owner",
+                    "db_securityadmin", "guest"
+                ]
+                
                 rs = metadata.getSchemas()
                 while rs.next():
                     schema = rs.getString("TABLE_SCHEM")
                     # Convert Java String to Python string
                     schema_str = str(schema) if schema else None
-                    if schema_str and schema_str not in ["INFORMATION_SCHEMA", "sys", "db_owner", "db_accessadmin", "db_securityadmin", "db_ddladmin", "db_backupoperator", "db_datareader", "db_datawriter", "db_denydatareader", "db_denydatawriter"]:
+                    
+                    # Only include actual schemas, not roles
+                    if schema_str and schema_str not in roles_to_filter:
                         schemas.append(schema_str)
+                        logger.debug(f"Found schema: {schema_str}")
                 rs.close()
                 
-                # If no custom schemas found, return the default 'dbo' schema
+                # If no schemas found, return the default 'dbo' schema
                 if not schemas:
+                    logger.info("No schemas found, adding default 'dbo' schema")
                     schemas.append("dbo")
+                    
+                logger.info(f"Retrieved {len(schemas)} schemas from MS SQL Server: {schemas}")
                     
             elif self.db_type == DatabaseType.POSTGRESQL:
                 # For PostgreSQL, get schemas

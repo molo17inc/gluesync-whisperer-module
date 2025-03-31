@@ -30,7 +30,7 @@ import json
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
-from models import DatabaseConnection, TableConfig, OperationType, ConnectionStatus
+from models import DatabaseConnection, TableConfig, OperationType, ConnectionStatus, DatabaseType
 from services.database_service import DatabaseService
 
 # Configure logging
@@ -69,9 +69,43 @@ class PillowFightService:
             logger.error(f"Connection with ID {connection_id} not found")
             return
         
-        # Ensure the database_name field is used correctly
-        connection_data['database_name'] = connection_data.pop('database', None)
-        connection = DatabaseConnection(**connection_data)
+        # Convert database_name to database for the DatabaseConnection model
+        connection_dict = dict(connection_data)
+        
+        # Ensure we have the required fields with correct names
+        if 'database_name' in connection_dict:
+            connection_dict['database'] = connection_dict['database_name']
+        
+        # Make sure we have db_type field
+        if 'type' in connection_dict and 'db_type' not in connection_dict:
+            connection_dict['db_type'] = connection_dict['type']
+        
+        # Log the fields we're working with
+        logger.debug(f"Connection data fields: {connection_dict.keys()}")
+        
+        # Create a clean dictionary with only the fields that DatabaseConnection expects
+        clean_dict = {
+            'id': connection_dict.get('id'),
+            'name': connection_dict.get('name'),
+            'description': connection_dict.get('description'),
+            'db_type': connection_dict.get('db_type'),
+            'host': connection_dict.get('host'),
+            'port': connection_dict.get('port'),
+            'username': connection_dict.get('username'),
+            'password': connection_dict.get('password'),
+            'database': connection_dict.get('database_name'),  # Use database_name from DB as database in model
+            'connection_string': connection_dict.get('connection_string'),
+            'status': connection_dict.get('status'),
+            'created_at': connection_dict.get('created_at'),
+            'updated_at': connection_dict.get('updated_at'),
+            'last_operation_at': connection_dict.get('last_operation_at')
+        }
+        
+        # Remove any None values to avoid passing None to required fields
+        clean_dict = {k: v for k, v in clean_dict.items() if v is not None}
+        
+        logger.debug(f"Creating DatabaseConnection with fields: {clean_dict.keys()}")
+        connection = DatabaseConnection(**clean_dict)
         
         # Update the connection status
         self.db.execute("UPDATE database_connections SET status = ? WHERE id = ?", 
@@ -211,67 +245,158 @@ class PillowFightService:
         key: tuple
     ) -> None:
         """Run the pillow fight for a connection and table."""
-        try:
-            # Get the database engine
-            engine = self.db_service._get_engine(connection)
-            
-            # Main loop for the pillow fight
-            while not stop_event.is_set():
+        # Log that we're starting the pillow fight
+        logger.info(f"Starting pillow fight for connection {connection.id} and table {table.table_name}")
+        logger.info(f"Using operation types: {operation_types}")
+        logger.info(f"Table config: {table.__dict__}")
+        
+        # Create database engine outside the loop to avoid recreating it for each operation
+        engine = None
+        
+        while not stop_event.is_set():
+            try:
+                # Only create the engine if it doesn't exist or if there was an error
+                if engine is None:
+                    logger.info(f"Creating database engine for connection {connection.id}")
+                    # For JDBC connections (AS400 and MS SQL Server), create a DatabaseConnector directly
+                    if connection.db_type in [DatabaseType.AS400, DatabaseType.MSSQL] or \
+                       (isinstance(connection.db_type, str) and connection.db_type.upper() in ['AS400', 'MSSQL']):
+                        # Import here to avoid circular imports
+                        from utils.db_connector import DatabaseConnector
+                        
+                        # Convert string db_type to enum if needed
+                        connector_db_type = connection.db_type
+                        if isinstance(connection.db_type, str):
+                            try:
+                                connector_db_type = DatabaseType[connection.db_type.upper()]
+                            except (KeyError, AttributeError):
+                                logger.warning(f"Unknown database type string: {connection.db_type}")
+                        
+                        logger.info(f"Creating JDBC DatabaseConnector with parameters: db_type={connector_db_type}, host={connection.host}, port={connection.port}, database={connection.database}")
+                        # Create the connector with the connection parameters
+                        db_connector = DatabaseConnector(
+                            db_type=connector_db_type,
+                            host=connection.host,
+                            port=connection.port,
+                            database=connection.database,
+                            username=connection.username,
+                            password=connection.password
+                        )
+                        
+                        # Connect to the database
+                        logger.info("Connecting to database...")
+                        db_connector.connect()
+                        
+                        # Use the connector as our engine
+                        engine = db_connector
+                        logger.info(f"Created direct JDBC connection for {connection.db_type} database")
+                    else:
+                        # For other database types, use the engine from DatabaseService
+                        logger.info(f"Using DatabaseService._get_engine for connection {connection.id}")
+                        engine = self.db_service._get_engine(connection)
+                        logger.info(f"Using engine from DatabaseService for {connection.db_type} database")
+                    
+                    # Update status to running
+                    self.status[key]["status"] = "running"
+                    logger.info(f"Updated status to running for pillow fight {key}")
+                
                 # Perform a batch of operations
                 for _ in range(batch_size):
+                    if stop_event.is_set():
+                        logger.info(f"Stop event set, breaking out of batch loop")
+                        break
+                        
                     # Randomly select an operation type
                     op_type = random.choice(operation_types)
+                    logger.info(f"Selected operation type: {op_type}")
                     
                     try:
-                        # Perform the operation
-                        if op_type == "INSERT":
+                        # Perform the operation - normalize to uppercase for comparison
+                        op_type_upper = op_type.upper()
+                        logger.info(f"Attempting to perform {op_type_upper} operation on {table.table_name}")
+                        
+                        if op_type_upper == "INSERT":
+                            logger.info(f"Calling _perform_insert for {table.table_name}")
                             self._perform_insert(engine, connection, table)
                             self.status[key]["operations"]["insert"] += 1
-                        elif op_type == "UPDATE":
+                            logger.info(f"Successfully performed INSERT on {table.table_name}")
+                        elif op_type_upper == "UPDATE":
+                            logger.info(f"Calling _perform_update for {table.table_name}")
                             self._perform_update(engine, connection, table)
                             self.status[key]["operations"]["update"] += 1
-                        elif op_type == "DELETE":
+                            logger.info(f"Successfully performed UPDATE on {table.table_name}")
+                        elif op_type_upper == "DELETE":
+                            logger.info(f"Calling _perform_delete for {table.table_name}")
                             self._perform_delete(engine, connection, table)
                             self.status[key]["operations"]["delete"] += 1
+                            logger.info(f"Successfully performed DELETE on {table.table_name}")
                         
                         # Update the last operation time
                         self.status[key]["last_operation_time"] = datetime.now().isoformat()
+                        logger.info(f"Updated last_operation_time for pillow fight {key}")
                         
                     except Exception as e:
                         logger.error(f"Error performing {op_type} on {table.table_name}: {str(e)}")
+                        logger.error(f"Exception type: {type(e).__name__}")
+                        import traceback
+                        logger.error(f"Traceback: {traceback.format_exc()}")
                         self.status[key]["operations"]["errors"] += 1
                 
                 # Sleep for the specified delay
+                logger.info(f"Sleeping for {operation_delay} seconds before next batch")
                 time.sleep(operation_delay)
                 
-        except Exception as e:
-            logger.error(f"Error in pillow fight thread for connection {connection.id} and table {table.id}: {str(e)}")
-            self.status[key]["status"] = "error"
-            self.status[key]["error"] = str(e)
-        finally:
-            # Update the status
-            self.status[key]["status"] = "stopped"
-            self.status[key]["duration"] = (
-                datetime.now() - datetime.fromisoformat(self.status[key]["start_time"])
-            ).total_seconds()
+            except Exception as e:
+                logger.error(f"Error in pillow fight thread for connection {connection.id} and table {table.id}: {str(e)}")
+                logger.error(f"Exception type: {type(e).__name__}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                self.status[key]["status"] = "error"
+                self.status[key]["error"] = str(e)
+                
+                # Reset the engine so it will be recreated on the next iteration
+                logger.info("Resetting engine due to error")
+                engine = None
+                
+                # Sleep before retrying to avoid tight error loops
+                logger.info("Sleeping for 5 seconds before retrying")
+                time.sleep(5)
+        
+        # Only update status to stopped when the stop_event is set
+        self.status[key]["status"] = "stopped"
+        self.status[key]["duration"] = (
+            datetime.now() - datetime.fromisoformat(self.status[key]["start_time"])
+        ).total_seconds()
+        logger.info(f"Stopped pillow fight for connection {connection.id} and table {table.id}")
     
     def _perform_insert(self, engine, connection: DatabaseConnection, table: TableConfig) -> None:
         """Perform an insert operation on a table."""
         try:
-            # Get the table schema
-            schema_info = self.db_service.get_table_schema(connection, table.table_name)
-            columns = schema_info.get("columns", [])
-            primary_keys = schema_info.get("primary_keys", [])
+            logger.info(f"Starting insert operation for table {table.table_name}")
+            
+            # Get the table schema - pass connection ID instead of connection object
+            logger.info(f"Getting table schema for connection ID {connection.id}, table {table.table_name}, schema {table.schema_name}")
+            schema_info = self.db_service.get_table_schema(connection.id, table.table_name, table.schema_name)
+            
+            logger.info(f"Schema info received: {schema_info}")
+            # Access columns and primary_keys as attributes of the TableSchemaResponse object
+            columns = schema_info.columns
+            primary_keys = schema_info.primary_keys
+            
+            logger.info(f"Found {len(columns)} columns and {len(primary_keys)} primary keys")
             
             # Generate random data for each column
             data = {}
             for column in columns:
                 # Skip auto-increment columns
                 if column["name"] in primary_keys and column.get("auto_increment", False):
+                    logger.info(f"Skipping auto-increment primary key column: {column['name']}")
                     continue
                 
                 # Generate random data based on column type
                 data[column["name"]] = self._generate_random_data(column["type"])
+            
+            logger.info(f"Generated data for insert: {data}")
             
             # Build the fully qualified table name
             table_name = table.table_name
@@ -282,23 +407,37 @@ class PillowFightService:
             placeholders = ', '.join(['?' for _ in data.keys()])
             stmt = f"INSERT INTO {table_name} ({', '.join(data.keys())}) VALUES ({placeholders})"
             
-            # Execute the insert
-            with engine.connect() as conn:
-                conn.execute(stmt, list(data.values()))
+            logger.info(f"Prepared insert statement: {stmt}")
+            logger.info(f"With values: {list(data.values())}")
             
-            logger.info(f"Inserted record into {table.table_name}")
+            # Check if we're using a JDBC engine (has connection attribute) or SQLAlchemy engine
+            if hasattr(engine, 'connection') and engine.connection:
+                # For JDBC engine
+                logger.info(f"Using JDBC engine for insert operation")
+                engine.execute_query(stmt, list(data.values()))
+            else:
+                # For SQLAlchemy engine
+                logger.info(f"Using SQLAlchemy engine for insert operation")
+                with engine.connect() as conn:
+                    conn.execute(stmt, list(data.values()))
+            
+            logger.info(f"Successfully inserted record into {table.table_name}")
         
         except Exception as e:
             logger.error(f"Error performing insert on {table.table_name}: {str(e)}")
+            logger.error(f"Exception type: {type(e).__name__}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             raise
     
     def _perform_update(self, engine, connection: DatabaseConnection, table: TableConfig) -> None:
         """Perform an update operation on a table."""
         try:
-            # Get the table schema
-            schema_info = self.db_service.get_table_schema(connection, table.table_name)
-            columns = schema_info.get("columns", [])
-            primary_keys = schema_info.get("primary_keys", [])
+            # Get the table schema - pass connection ID instead of connection object
+            schema_info = self.db_service.get_table_schema(connection.id, table.table_name, table.schema_name)
+            # Access columns and primary_keys as attributes of the TableSchemaResponse object
+            columns = schema_info.columns
+            primary_keys = schema_info.primary_keys
             
             # First, get a random existing record
             existing_record = self._get_random_record(engine, table)
@@ -339,9 +478,15 @@ class PillowFightService:
             
             stmt = f"UPDATE {table_name} SET {', '.join(set_clauses)} WHERE {' AND '.join(where_clauses)}"
             
-            # Execute the update
-            with engine.connect() as conn:
-                conn.execute(stmt, list(data.values()) + where_values)
+            # Check if we're using a JDBC engine (has connection attribute) or SQLAlchemy engine
+            if hasattr(engine, 'connection') and engine.connection:
+                # For JDBC engine
+                logger.debug(f"Executing JDBC update: {stmt}")
+                engine.execute_query(stmt, list(data.values()) + where_values)
+            else:
+                # For SQLAlchemy engine
+                with engine.connect() as conn:
+                    conn.execute(stmt, list(data.values()) + where_values)
             
             logger.info(f"Updated record in {table.table_name}")
         
@@ -352,9 +497,10 @@ class PillowFightService:
     def _perform_delete(self, engine, connection: DatabaseConnection, table: TableConfig) -> None:
         """Perform a delete operation on a table."""
         try:
-            # Get the table schema
-            schema_info = self.db_service.get_table_schema(connection, table.table_name)
-            primary_keys = schema_info.get("primary_keys", [])
+            # Get the table schema - pass connection ID instead of connection object
+            schema_info = self.db_service.get_table_schema(connection.id, table.table_name, table.schema_name)
+            # Access primary_keys as an attribute of the TableSchemaResponse object
+            primary_keys = schema_info.primary_keys
             
             # First, get a random existing record
             existing_record = self._get_random_record(engine, table)
@@ -382,9 +528,15 @@ class PillowFightService:
                 
             stmt = f"DELETE FROM {table_name} WHERE {' AND '.join(where_clauses)}"
             
-            # Execute the delete
-            with engine.connect() as conn:
-                conn.execute(stmt, where_values)
+            # Check if we're using a JDBC engine (has connection attribute) or SQLAlchemy engine
+            if hasattr(engine, 'connection') and engine.connection:
+                # For JDBC engine
+                logger.debug(f"Executing JDBC delete: {stmt}")
+                engine.execute_query(stmt, where_values)
+            else:
+                # For SQLAlchemy engine
+                with engine.connect() as conn:
+                    conn.execute(stmt, where_values)
             
             logger.info(f"Deleted record from {table.table_name}")
         
@@ -399,29 +551,167 @@ class PillowFightService:
             if table.schema_name:
                 table_name = f"{table.schema_name}.{table_name}"
             
-            # First, count the total number of records
-            count_stmt = f"SELECT COUNT(*) as cnt FROM {table_name}"
+            # Check if we're using JDBC engine (has db_connector attribute)
+            is_jdbc = hasattr(engine, 'db_connector')
+            logger.debug(f"Using JDBC engine: {is_jdbc} for table {table_name}")
             
-            with engine.connect() as conn:
-                count_result = conn.execute(count_stmt).scalar()
-            
-            if not count_result or count_result == 0:
+            # Handle differently based on engine type
+            if is_jdbc:
+                # For JDBC engines, use direct execute method
+                # First, count the total number of records
+                count_stmt = f"SELECT COUNT(*) as cnt FROM {table_name}"
+                logger.debug(f"Executing count query: {count_stmt}")
+                
+                # Make sure we have a connection
+                if not engine.connection:
+                    engine.connect()
+                
+                # Execute count query
+                count_result = engine.execute(count_stmt)
+                if count_result:
+                    row = count_result.fetchone()
+                    if row:
+                        # Extract count value - might be at index 0 or might have a name 'cnt'
+                        count_value = row[0] if isinstance(row, (list, tuple)) else row.get('cnt', 0)
+                    
+                    if count_value == 0:
+                        logger.info(f"No records found in {table_name}")
+                        return None
+                    
+                    # Get a random record - MS SQL Server uses TOP instead of LIMIT
+                    if engine.db_connector.db_type == DatabaseType.MSSQL:
+                        select_stmt = f"SELECT TOP 1 * FROM {table_name}"
+                    else:
+                        select_stmt = f"SELECT * FROM {table_name} LIMIT 1"
+                    
+                    logger.debug(f"Executing select query: {select_stmt}")
+                    result = engine.execute(select_stmt)
+                    
+                    if result:
+                        row = result.fetchone()
+                        if row:
+                            # Convert row to dict - handle case where keys() method might not be available
+                            try:
+                                return {k: v for k, v in zip(result.keys(), row)}
+                            except:
+                                # Fallback if keys() method is not available
+                                return {f"col_{i}": v for i, v in enumerate(row)}
+                
                 return None
-            
-            # Get a random offset
-            offset = random.randint(0, count_result - 1)
-            
-            # Query a random record
-            select_stmt = f"SELECT * FROM {table_name} LIMIT 1 OFFSET {offset}"
-            
-            with engine.connect() as conn:
-                result = conn.execute(select_stmt).mappings().first()
-            
-            if not result:
-                return None
-            
-            # Convert to dictionary
-            return dict(result)
+            else:
+                # For SQLAlchemy engines or JDBC engines with execute method
+                # Check if engine has execute method directly
+                if hasattr(engine, 'execute') and callable(engine.execute):
+                    # Engine has direct execute method (JDBC wrapper)
+                    logger.debug(f"Using engine with direct execute method for {table_name}")
+                    
+                    # First, count the total number of records
+                    count_stmt = f"SELECT COUNT(*) as cnt FROM {table_name}"
+                    count_result = engine.execute(count_stmt)
+                    
+                    if count_result:
+                        row = count_result.fetchone()
+                        if row:
+                            # Extract count value - might be at index 0 or might have a name 'cnt'
+                            count_value = row[0] if isinstance(row, (list, tuple)) else row.get('cnt', 0)
+                            
+                            if count_value == 0:
+                                logger.info(f"No records found in {table_name}")
+                                return None
+                            
+                            # Get a random offset - MS SQL Server uses TOP instead of LIMIT
+                            offset = random.randint(0, count_value - 1)
+                            
+                            # Query a random record based on database type
+                            if hasattr(engine, 'db_connector') and engine.db_connector.db_type == DatabaseType.MSSQL:
+                                # For MS SQL Server
+                                select_stmt = f"SELECT TOP 1 * FROM {table_name} ORDER BY NEWID()"
+                            else:
+                                # For other databases
+                                select_stmt = f"SELECT * FROM {table_name} LIMIT 1 OFFSET {offset}"
+                            
+                            result = engine.execute(select_stmt)
+                            if result:
+                                row = result.fetchone()
+                                if row:
+                                    # Convert row to dict
+                                    try:
+                                        return {k: v for k, v in zip(result.keys(), row)}
+                                    except:
+                                        # Fallback if keys() method is not available
+                                        return {f"col_{i}": v for i, v in enumerate(row)}
+                    
+                    return None
+                
+                # For SQLAlchemy engines with connect method
+                elif hasattr(engine, 'connect') and callable(engine.connect):
+                    # Check if engine supports context manager
+                    try:
+                        conn = engine.connect()
+                        supports_context = hasattr(conn, '__enter__')
+                        if hasattr(conn, 'close'):
+                            conn.close()
+                    except Exception as e:
+                        logger.error(f"Error checking if engine supports context manager: {str(e)}")
+                        supports_context = False
+                    
+                    # First, count the total number of records
+                    count_stmt = f"SELECT COUNT(*) as cnt FROM {table_name}"
+                    count_result = None
+                    
+                    try:
+                        if supports_context:
+                            # Use context manager if supported
+                            with engine.connect() as conn:
+                                count_result = conn.execute(count_stmt).scalar()
+                        else:
+                            # Otherwise, use direct connection
+                            conn = engine.connect()
+                            if conn and hasattr(conn, 'execute'):
+                                count_result = conn.execute(count_stmt).scalar()
+                                if hasattr(conn, 'close'):
+                                    conn.close()
+                            else:
+                                logger.error(f"Could not establish connection to database for {table_name}")
+                                return None
+                    except Exception as e:
+                        logger.error(f"Error executing count query: {str(e)}")
+                        return None
+                    
+                    if not count_result or count_result == 0:
+                        return None
+                    
+                    # Get a random offset
+                    offset = random.randint(0, count_result - 1)
+                    
+                    # Query a random record
+                    select_stmt = f"SELECT * FROM {table_name} LIMIT 1 OFFSET {offset}"
+                    result = None
+                    
+                    try:
+                        if supports_context:
+                            # Use context manager if supported
+                            with engine.connect() as conn:
+                                result = conn.execute(select_stmt).mappings().first()
+                        else:
+                            # Otherwise, use direct connection
+                            conn = engine.connect()
+                            if conn and hasattr(conn, 'execute'):
+                                result = conn.execute(select_stmt).mappings().first()
+                                if hasattr(conn, 'close'):
+                                    conn.close()
+                            else:
+                                logger.error(f"Could not establish connection to database for {table_name}")
+                                return None
+                    except Exception as e:
+                        logger.error(f"Error executing select query: {str(e)}")
+                        return None
+                
+                if not result:
+                    return None
+                
+                # Convert to dictionary
+                return dict(result)
         
         except Exception as e:
             logger.error(f"Error getting random record from {table.table_name}: {str(e)}")

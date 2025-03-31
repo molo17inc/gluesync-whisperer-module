@@ -37,7 +37,7 @@ class DatabaseConnectionBase(BaseModel):
     port: Optional[int] = None
     username: Optional[str] = None
     password: Optional[str] = None
-    database_name: str
+    database: str
 
 
 class DatabaseConnectionCreate(DatabaseConnectionBase):
@@ -52,7 +52,7 @@ class DatabaseConnectionUpdate(BaseModel):
     port: Optional[int] = None
     username: Optional[str] = None
     password: Optional[str] = None
-    database_name: Optional[str] = None
+    database: Optional[str] = None
     status: Optional[ConnectionStatus] = None
 
 

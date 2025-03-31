@@ -42,26 +42,26 @@ logger = logging.getLogger(__name__)
 
 # This function is no longer needed as we're directly building JDBC URLs in the test_connection function
 
-def test_connection(db_type, host, port, username, password, database_name):
+def test_connection(db_type, host, port, username, password, database):
     """Test a database connection using JDBC."""
     try:
         # Determine JDBC driver class and URL based on database type
         if db_type == DatabaseType.MYSQL:
-            jdbc_url = f"jdbc:mysql://{host}:{port}/{database_name}"
+            jdbc_url = f"jdbc:mysql://{host}:{port}/{database}"
             driver_class = "com.mysql.cj.jdbc.Driver"
         elif db_type == DatabaseType.POSTGRESQL:
-            jdbc_url = f"jdbc:postgresql://{host}:{port}/{database_name}"
+            jdbc_url = f"jdbc:postgresql://{host}:{port}/{database}"
             driver_class = "org.postgresql.Driver"
         elif db_type == DatabaseType.SQLITE:
-            jdbc_url = f"jdbc:sqlite:{database_name}"
+            jdbc_url = f"jdbc:sqlite:{database}"
             driver_class = "org.sqlite.JDBC"
             username = None
             password = None
         elif db_type == DatabaseType.MSSQL:
-            jdbc_url = f"jdbc:sqlserver://{host}:{port};databaseName={database_name};trustServerCertificate=true;encrypt=true"
+            jdbc_url = f"jdbc:sqlserver://{host}:{port};databaseName={database};trustServerCertificate=true;encrypt=true"
             driver_class = "com.microsoft.sqlserver.jdbc.SQLServerDriver"
         elif db_type == DatabaseType.ORACLE:
-            jdbc_url = f"jdbc:oracle:thin:@{host}:{port}/{database_name}"
+            jdbc_url = f"jdbc:oracle:thin:@{host}:{port}/{database}"
             driver_class = "oracle.jdbc.OracleDriver"
         else:
             raise ValueError(f"Unsupported database type: {db_type}")
@@ -214,7 +214,7 @@ def main():
         port=args.port,
         username=args.username,
         password=args.password,
-        database_name=args.database
+        database=args.database
     )
     
     if not conn:

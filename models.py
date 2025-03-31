@@ -56,7 +56,7 @@ class DatabaseConnection:
     """Database connection information."""
     
     def __init__(self, id=None, name=None, description=None, db_type=None, host=None, port=None,
-                 username=None, password=None, database=None, connection_string=None, 
+                 username=None, password=None, database=None, database_name=None, connection_string=None, 
                  status=ConnectionStatus.IDLE, created_at=None, updated_at=None, last_operation_at=None):
         self.id = id
         self.name = name 
@@ -66,7 +66,8 @@ class DatabaseConnection:
         self.port = port
         self.username = username
         self.password = password
-        self.database = database
+        # Use database_name if provided, otherwise use database
+        self.database = database_name if database_name is not None else database
         self.connection_string = connection_string
         self.status = status
         self.created_at = created_at or datetime.now()
