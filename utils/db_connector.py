@@ -340,10 +340,30 @@ class DatabaseConnector:
             return tables
         except Exception as e:
             logger.error(f"Error getting tables: {str(e)}")
-            # Fallback to SQLAlchemy inspect method
-            tables = self.inspector.get_table_names()
-            logger.info(f"Using SQLAlchemy inspector, found {len(tables)} tables")
-            return tables
+            # Fallback to JDBC metadata
+            try:
+                # Use JDBC DatabaseMetaData to get tables
+                metadata = self.connection.jconn.getMetaData()
+                catalog = None  # Usually null in JDBC
+                schema_pattern = schema if schema else "%"
+                table_name_pattern = "%"  # All tables
+                table_types = ["TABLE"]  # Only regular tables, not views
+                
+                # Get result set with table info
+                rs = metadata.getTables(catalog, schema_pattern, table_name_pattern, table_types)
+                
+                # Extract table names
+                tables = []
+                while rs.next():
+                    table_name = rs.getString("TABLE_NAME")
+                    tables.append(table_name)
+                
+                rs.close()
+                logger.info(f"Using JDBC metadata, found {len(tables)} tables")
+                return tables
+            except Exception as jdbc_err:
+                logger.error(f"Error getting tables via JDBC metadata: {str(jdbc_err)}")
+                return []
             
     def get_tables_info(self, schema=None):
         """Get comprehensive information about all tables in the database.
@@ -416,9 +436,7 @@ class DatabaseConnector:
                 if self.db_type == DatabaseType.MYSQL:
                     # Directly substitute parameters in the query for MySQL
                     # This is a special case to work around the %s escaping issue
-                    from sqlalchemy import text
-                    
-                    # Replace the %s with concrete values
+                    # Replace the %s with concrete values directly using string formatting
                     import re
                     # Extract the SQL parts before and after WHERE clause
                     match = re.search(r'(.*WHERE\s+C\.TABLE_SCHEMA\s*=\s*)%s(\s*AND\s+C\.TABLE_NAME\s*=\s*)%s(.*)', query, re.DOTALL | re.IGNORECASE)
@@ -429,9 +447,37 @@ class DatabaseConnector:
                         formatted_query = f"{part1}'{schema}'{part2}'{table_name}'{part3}"
                         column_results = self.execute_query(formatted_query)
                     else:
-                        # Fallback to inspector if we can't parse the query
-                        logger.warning("Could not parse MySQL query pattern, falling back to SQLAlchemy inspector")
-                        return self.inspector.get_columns(table_name)
+                        # Fallback to JDBC metadata if we can't parse the query
+                        logger.warning("Could not parse MySQL query pattern, falling back to JDBC metadata")
+                        # Use JDBC DatabaseMetaData to get columns
+                        try:
+                            metadata = self.connection.jconn.getMetaData()
+                            catalog = None  # Usually null in JDBC
+                            schema_pattern = schema
+                            table_name_pattern = table_name
+                            column_name_pattern = "%"  # All columns
+                            
+                            # Get result set with column info
+                            rs = metadata.getColumns(catalog, schema_pattern, table_name_pattern, column_name_pattern)
+                            
+                            # Extract column information
+                            column_results = []
+                            while rs.next():
+                                column_info = {
+                                    'column_name': rs.getString("COLUMN_NAME"),
+                                    'data_type': rs.getString("TYPE_NAME"),
+                                    'is_nullable': rs.getString("IS_NULLABLE") == "YES",
+                                    'column_default': rs.getString("COLUMN_DEF"),
+                                    'is_primary_key': False,  # Will be set later
+                                    'extra': ''
+                                }
+                                column_results.append(column_info)
+                            
+                            rs.close()
+                            return column_results
+                        except Exception as jdbc_err:
+                            logger.error(f"Error getting columns via JDBC metadata: {str(jdbc_err)}")
+                            return []
                 else:
                     # For other databases, use the standard parameter mechanism
                     params = {}
@@ -553,17 +599,30 @@ class DatabaseConnector:
                     except Exception as e2:
                         logger.warning(f"Error with JDBC metadata primary key detection: {str(e2)}")
                 
-                # If still no primary keys, try SQLAlchemy inspector as a last resort
-                if not primary_keys and self.inspector:
+                # If still no primary keys, try JDBC metadata as a last resort
+                if not primary_keys:
                     try:
-                        pk_constraint = self.inspector.get_pk_constraint(table_name)
-                        if pk_constraint and 'constrained_columns' in pk_constraint:
-                            primary_keys = pk_constraint['constrained_columns']
-                            for pk in primary_keys:
-                                if pk in columns:
-                                    columns[pk]['primary_key'] = True
+                        # Use JDBC DatabaseMetaData to get primary keys
+                        metadata = self.connection.jconn.getMetaData()
+                        catalog = None  # Usually null in JDBC
+                        schema_pattern = schema
+                        table_name_pattern = table_name
+                        
+                        # Get primary key information
+                        rs = metadata.getPrimaryKeys(catalog, schema_pattern, table_name_pattern)
+                        
+                        # Extract primary key column names
+                        while rs.next():
+                            pk_column = rs.getString("COLUMN_NAME")
+                            primary_keys.append(pk_column)
+                            # Update column info to mark as primary key
+                            if pk_column in columns:
+                                columns[pk_column]['primary_key'] = True
+                        
+                        rs.close()
+                        logger.info(f"Using JDBC metadata, found {len(primary_keys)} primary keys")
                     except Exception as e3:
-                        logger.warning(f"Error getting primary keys via SQLAlchemy: {str(e3)}")
+                        logger.warning(f"Error getting primary keys via JDBC metadata: {str(e3)}")
             
             # Get foreign keys
             foreign_keys = []
@@ -718,15 +777,51 @@ class DatabaseConnector:
                                 })
             except Exception as e:
                 logger.warning(f"Error getting foreign keys: {str(e)}")
-                # Fallback to SQLAlchemy inspector
-                for fk in self.inspector.get_foreign_keys(table_name):
-                    foreign_keys.append({
-                        'constrained_columns': fk.get('constrained_columns', []),
-                        'referred_table': fk.get('referred_table', ''),
-                        'referred_columns': fk.get('referred_columns', [])
-                    })
+                # Fallback to JDBC metadata
+                try:
+                    # Use JDBC DatabaseMetaData to get foreign keys
+                    metadata = self.connection.jconn.getMetaData()
+                    catalog = None  # Usually null in JDBC
+                    schema_pattern = schema
+                    table_name_pattern = table_name
+                    
+                    # Get imported keys (foreign keys in this table)
+                    rs = metadata.getImportedKeys(catalog, schema_pattern, table_name_pattern)
+                    
+                    # Process foreign key information
+                    fk_dict = {}
+                    while rs.next():
+                        fk_name = rs.getString("FK_NAME")
+                        fk_column = rs.getString("FKCOLUMN_NAME")
+                        pk_table = rs.getString("PKTABLE_NAME")
+                        pk_column = rs.getString("PKCOLUMN_NAME")
+                        
+                        if fk_name not in fk_dict:
+                            fk_dict[fk_name] = {
+                                'constrained_columns': [],
+                                'referred_table': pk_table,
+                                'referred_columns': []
+                            }
+                        
+                        if fk_column and fk_column not in fk_dict[fk_name]['constrained_columns']:
+                            fk_dict[fk_name]['constrained_columns'].append(fk_column)
+                        
+                        if pk_column and pk_column not in fk_dict[fk_name]['referred_columns']:
+                            fk_dict[fk_name]['referred_columns'].append(pk_column)
+                    
+                    # Close the result set
+                    rs.close()
+                    
+                    # Add foreign keys to our list
+                    for fk in fk_dict.values():
+                        if fk['constrained_columns'] and fk['referred_columns']:
+                            foreign_keys.append(fk)
+                    
+                    logger.info(f"Retrieved {len(foreign_keys)} foreign keys for table {table_name} using JDBC metadata")
+                except Exception as jdbc_err:
+                    logger.warning(f"Error getting foreign keys via JDBC metadata: {str(jdbc_err)}")
             
-            # Get indexes - primarily use SQLAlchemy here as index info is complex
+            # Get indexes using JDBC metadata
             indexes = []
             try:
                 # Special handling for AS400 - inspector might be None or not support get_indexes
@@ -820,15 +915,48 @@ class DatabaseConnector:
                         logger.warning(f"Error getting AS400 indexes via JDBC metadata: {str(e)}")
                         # If this fails, we'll fall back to empty indexes
                         indexes = []
-                elif self.inspector:  # Make sure inspector is not None
-                    for idx in self.inspector.get_indexes(table_name):
-                        indexes.append({
-                            'name': idx.get('name', ''),
-                            'columns': idx.get('column_names', []),
-                            'unique': idx.get('unique', False)
-                        })
                 else:
-                    logger.warning("SQLAlchemy inspector is None, cannot retrieve indexes")
+                    # Use JDBC metadata as fallback for other database types
+                    try:
+                        # Get metadata from JDBC connection
+                        metadata = self.connection.jconn.getMetaData()
+                        catalog = None  # Usually null in JDBC
+                        schema_pattern = schema
+                        table_name_pattern = table_name
+                        
+                        # Get index information
+                        rs = metadata.getIndexInfo(catalog, schema_pattern, table_name_pattern, False, True)
+                        
+                        # Group by index name
+                        index_dict = {}
+                        while rs.next():
+                            index_name = rs.getString("INDEX_NAME")
+                            column_name = rs.getString("COLUMN_NAME")
+                            non_unique = rs.getBoolean("NON_UNIQUE")
+                            
+                            if index_name and index_name != 'PRIMARY':
+                                if index_name not in index_dict:
+                                    index_dict[index_name] = {
+                                        'name': index_name,
+                                        'columns': [],
+                                        'unique': not non_unique
+                                    }
+                                if column_name and column_name not in index_dict[index_name]['columns']:
+                                    index_dict[index_name]['columns'].append(column_name)
+                        
+                        # Close the result set
+                        rs.close()
+                        
+                        # Add indexes to our list
+                        for idx in index_dict.values():
+                            if idx['columns']:
+                                indexes.append(idx)
+                                
+                        logger.info(f"Retrieved {len(indexes)} indexes for table {table_name} using JDBC metadata")
+                    except Exception as jdbc_err:
+                        logger.warning(f"Error getting indexes via JDBC metadata: {str(jdbc_err)}")
+                        # If this fails, we'll have empty indexes
+                        indexes = []
             except Exception as e:
                 logger.warning(f"Error getting indexes: {str(e)}")
             
@@ -843,51 +971,120 @@ class DatabaseConnector:
         
         except Exception as e:
             logger.error(f"Error getting table schema: {str(e)}")
-            # Fallback to the original SQLAlchemy-based implementation
-            logger.info("Falling back to SQLAlchemy inspector for schema info")
+            # Fallback to JDBC metadata as a last resort
+            logger.info("Falling back to JDBC metadata for schema info")
             
-            # Get columns using SQLAlchemy inspector
-            columns = {}
-            for column in self.inspector.get_columns(table_name):
-                columns[column['name']] = {
-                    'type': str(column['type']),
-                    'nullable': column.get('nullable', True),
-                    'default': str(column.get('default', None)),
-                    'primary_key': False,  # Will be updated below
-                    'extra': ''
-                }
-            
-            # Get primary keys
-            primary_keys = []
-            pk_constraint = self.inspector.get_pk_constraint(table_name)
-            if pk_constraint and 'constrained_columns' in pk_constraint:
-                primary_keys = pk_constraint['constrained_columns']
-                for pk in primary_keys:
-                    if pk in columns:
-                        columns[pk]['primary_key'] = True
-            
-            # Get foreign keys
-            foreign_keys = []
-            for fk in self.inspector.get_foreign_keys(table_name):
-                foreign_keys.append({
-                    'constrained_columns': fk.get('constrained_columns', []),
-                    'referred_table': fk.get('referred_table', ''),
-                    'referred_columns': fk.get('referred_columns', [])
-                })
-            
-            # Get indexes
-            indexes = []
-            # Check if inspector exists and supports get_indexes
-            if self.inspector and hasattr(self.inspector, 'get_indexes'):
+            try:
+                # Get columns using JDBC metadata
+                columns = {}
+                metadata = self.connection.jconn.getMetaData()
+                catalog = None  # Usually null in JDBC
+                schema_pattern = schema
+                table_name_pattern = table_name
+                column_name_pattern = "%"  # All columns
+                
+                # Get column information
+                rs = metadata.getColumns(catalog, schema_pattern, table_name_pattern, column_name_pattern)
+                
+                while rs.next():
+                    column_name = rs.getString("COLUMN_NAME")
+                    type_name = rs.getString("TYPE_NAME")
+                    nullable = rs.getInt("NULLABLE") != 0  # 0 means not nullable
+                    default_value = rs.getString("COLUMN_DEF")
+                    
+                    columns[column_name] = {
+                        'type': type_name,
+                        'nullable': nullable,
+                        'default': default_value,
+                        'primary_key': False,  # Will be updated below
+                        'extra': ''
+                    }
+                
+                rs.close()
+                
+                # Get primary keys
+                primary_keys = []
+                rs = metadata.getPrimaryKeys(catalog, schema_pattern, table_name_pattern)
+                
+                while rs.next():
+                    pk_column = rs.getString("COLUMN_NAME")
+                    primary_keys.append(pk_column)
+                    if pk_column in columns:
+                        columns[pk_column]['primary_key'] = True
+                
+                rs.close()
+                
+                # Get foreign keys
+                foreign_keys = []
+                rs = metadata.getImportedKeys(catalog, schema_pattern, table_name_pattern)
+                
+                # Process foreign key information
+                fk_dict = {}
+                while rs.next():
+                    fk_name = rs.getString("FK_NAME")
+                    fk_column = rs.getString("FKCOLUMN_NAME")
+                    pk_table = rs.getString("PKTABLE_NAME")
+                    pk_column = rs.getString("PKCOLUMN_NAME")
+                    
+                    if fk_name not in fk_dict:
+                        fk_dict[fk_name] = {
+                            'constrained_columns': [],
+                            'referred_table': pk_table,
+                            'referred_columns': []
+                        }
+                    
+                    if fk_column and fk_column not in fk_dict[fk_name]['constrained_columns']:
+                        fk_dict[fk_name]['constrained_columns'].append(fk_column)
+                    
+                    if pk_column and pk_column not in fk_dict[fk_name]['referred_columns']:
+                        fk_dict[fk_name]['referred_columns'].append(pk_column)
+                
+                rs.close()
+                
+                # Add foreign keys to our list
+                for fk in fk_dict.values():
+                    if fk['constrained_columns'] and fk['referred_columns']:
+                        foreign_keys.append(fk)
+                
+                # Get indexes
+                indexes = []
                 try:
-                    for idx in self.inspector.get_indexes(table_name):
-                        indexes.append({
-                            'name': idx.get('name', ''),
-                            'columns': idx.get('column_names', []),
-                            'unique': idx.get('unique', False)
-                        })
-                except Exception as e:
-                    logger.warning(f"Fallback method: Error getting indexes: {str(e)}")
+                    rs = metadata.getIndexInfo(catalog, schema_pattern, table_name_pattern, False, True)
+                    
+                    # Group by index name
+                    index_dict = {}
+                    while rs.next():
+                        index_name = rs.getString("INDEX_NAME")
+                        column_name = rs.getString("COLUMN_NAME")
+                        non_unique = rs.getBoolean("NON_UNIQUE")
+                        
+                        if index_name and index_name != 'PRIMARY':
+                            if index_name not in index_dict:
+                                index_dict[index_name] = {
+                                    'name': index_name,
+                                    'columns': [],
+                                    'unique': not non_unique
+                                }
+                            if column_name and column_name not in index_dict[index_name]['columns']:
+                                index_dict[index_name]['columns'].append(column_name)
+                    
+                    rs.close()
+                    
+                    # Add indexes to our list
+                    for idx in index_dict.values():
+                        if idx['columns']:
+                            indexes.append(idx)
+                except Exception as idx_err:
+                    logger.warning(f"Fallback method: Error getting indexes via JDBC: {str(idx_err)}")
+                
+                logger.info(f"Retrieved schema for table {table_name} using JDBC metadata")
+            except Exception as jdbc_err:
+                logger.error(f"Error getting schema via JDBC metadata: {str(jdbc_err)}")
+                # Return empty schema structure if all else fails
+                columns = {}
+                primary_keys = []
+                foreign_keys = []
+                indexes = []
             
             return {
                 'table_name': table_name,
@@ -973,134 +1170,65 @@ class DatabaseConnector:
                 if cursor:
                     cursor.close()
                 raise
-                from utils.jdbc_utils import execute_query
-                return execute_query(self.connection, query, jdbc_params, max_rows)
-            except Exception as jdbc_err:
-                logger.error(f"JDBC query execution error: {jdbc_err}")
-                raise
-            
-        try:
-            # Standard SQLAlchemy execution path
-            # Check if query is a data modification query (not a SELECT)
-            is_modification_query = False
-            query_upper = query.strip().upper()
-            if query_upper.startswith(('INSERT', 'UPDATE', 'DELETE', 'CREATE', 'ALTER', 'DROP', 'TRUNCATE')):
-                is_modification_query = True
-            
-            # Use transaction for data modification queries
-            with self.engine.begin() if is_modification_query else self.engine.connect() as conn:
-                # Convert the query to SQLAlchemy text object
-                sql_text = text(query)
-                
-                # Handle different parameter styles based on database type
-                if params is not None:
-                    # CASE 1: MySQL with %s placeholders
-                    if self.db_type == DatabaseType.MYSQL and "%s" in query:
-                        # MySQL needs special handling for %s placeholders
-                        # Use direct string interpolation with proper quoting
-                        param_values = []
-                        
-                        # Extract parameter values in the correct order
-                        if isinstance(params, dict):
-                            # Extract values for named parameters in expected order
-                            if "schema" in params:
-                                param_values.append(params["schema"])
-                            if "table" in params:
-                                param_values.append(params["table"])
-                            if "column" in params:
-                                param_values.append(params["column"])
-                        elif isinstance(params, (list, tuple)):
-                            param_values = list(params)
-                        else:
-                            # Single parameter
-                            param_values = [params]
-                        
-                        # Safely replace each %s with properly quoted values
-                        formatted_query = query
-                        for value in param_values:
-                            placeholder_pos = formatted_query.find("%s")
-                            if placeholder_pos >= 0:
-                                # Apply proper quoting based on value type
-                                quoted_value = f"'{value}'" if isinstance(value, str) else str(value)
-                                formatted_query = formatted_query[:placeholder_pos] + quoted_value + formatted_query[placeholder_pos+2:]
-                        
-                        # Execute with the safely interpolated query
-                        sql_text = text(formatted_query)
-                        result = conn.execute(sql_text)
-                    
-                    # CASE 2: PostgreSQL/Oracle with named parameters (:param)
-                    elif self.db_type in [DatabaseType.POSTGRESQL, DatabaseType.ORACLE, DatabaseType.MSSQL] and any(f":{param}" in query for param in ["schema", "table", "column"]):
-                        # These databases work well with SQLAlchemy's named parameter binding
-                        result = conn.execute(sql_text, params)
-                    
-                    # CASE 3: SQLite with named parameters (:param)
-                    elif self.db_type == DatabaseType.SQLITE and any(f":{param}" in query for param in ["schema", "table", "column"]):
-                        # SQLite works with both named parameters and ? placeholders
-                        result = conn.execute(sql_text, params)
-                    
-                    # CASE 4: AS400/DB2 with parameter markers
-                    elif self.db_type == DatabaseType.AS400:
-                        # AS400/DB2 uses ? or :name parameter markers depending on configuration
-                        # If query contains ? placeholders and params is a list/tuple
-                        if "?" in query and isinstance(params, (list, tuple)):
-                            # Convert list to dict with positional keys for SQLAlchemy
-                            positional_dict = {i: val for i, val in enumerate(params)}
-                            result = conn.execute(sql_text, positional_dict)
-                        else:
-                            # Otherwise use standard parameter binding
-                            result = conn.execute(sql_text, params)
-                    
-                    # CASE 5: Any other database or parameter style
-                    else:
-                        # Use standard SQLAlchemy parameter binding as fallback
-                        result = conn.execute(sql_text, params)
-                else:
-                    # No parameters - execute the query as-is
-                    result = conn.execute(sql_text)
-                
-                # Note: When using engine.begin(), the transaction is automatically committed
-                # when the context manager exits. No need for explicit commit.
-                
-                # For SELECT queries
-                if result.returns_rows:
-                    # Get column names
-                    columns = result.keys()
-                    
-                    # Convert rows to dictionaries
-                    rows = []
-                    for row in result.fetchmany(max_rows):
-                        rows.append(dict(zip(columns, row)))
-                    
-                    return rows
-                else:
-                    # For UPDATE/INSERT/DELETE queries
-                    return {"affected_rows": result.rowcount}
-        
-        except SQLAlchemyError as e:
+        except Exception as e:
             logger.error(f"Error executing query: {str(e)}")
             raise
     
     def execute_batch(self, queries):
-        """Execute multiple queries in a batch."""
-        if not self.engine:
+        """Execute multiple queries in a batch using JDBC."""
+        if not self.connection:
             raise RuntimeError("Not connected to database")
         
         results = []
+        cursor = None
         try:
-            with self.engine.begin() as conn:
-                for query in queries:
-                    result = conn.execute(text(query))
-                    if result.returns_rows:
-                        rows = [dict(zip(result.keys(), row)) for row in result.fetchall()]
+            # Start a transaction
+            self.connection.jconn.setAutoCommit(False)
+            cursor = self.connection.cursor()
+            
+            for query in queries:
+                try:
+                    # Execute the query
+                    cursor.execute(query)
+                    
+                    # Check if the query returns results
+                    if cursor.description:
+                        # Get column names
+                        column_names = [desc[0] for desc in cursor.description]
+                        
+                        # Fetch results
+                        result_set = cursor.fetchall()
+                        
+                        # Convert to dictionaries
+                        rows = []
+                        for row in result_set:
+                            row_dict = {}
+                            for i, col_name in enumerate(column_names):
+                                row_dict[col_name] = row[i]
+                            rows.append(row_dict)
+                        
                         results.append(rows)
                     else:
-                        results.append({'affected_rows': result.rowcount})
+                        # For non-SELECT queries, return affected rows
+                        results.append({'affected_rows': cursor.rowcount})
+                except Exception as query_error:
+                    logger.error(f"Error executing query in batch: {str(query_error)}")
+                    raise
             
+            # Commit the transaction
+            self.connection.commit()
             return results
-        
-        except SQLAlchemyError as e:
+            
+        except Exception as e:
+            # Rollback on error
+            if self.connection:
+                self.connection.rollback()
             logger.error(f"Error executing batch: {str(e)}")
             raise
+        finally:
+            # Close cursor
+            if cursor:
+                cursor.close()
 
 def main():
     """Main function for testing database connections."""

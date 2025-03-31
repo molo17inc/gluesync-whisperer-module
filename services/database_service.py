@@ -23,13 +23,14 @@
 
 import logging
 
-# Import the SQLAlchemy patch before any SQLAlchemy imports
-# JDBC drivers are used for all database connections - no need for patching
-
+# Import SQLAlchemy for ORM operations only
 import sqlalchemy
 from sqlalchemy import create_engine, MetaData, Table, inspect, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
+
+# Import our JDBC-only DatabaseConnector
+from utils.db_connector import DatabaseConnector
 from typing import List, Dict, Any, Optional
 
 from models import DatabaseConnection, ConnectionStatus, DatabaseType
@@ -635,8 +636,7 @@ class DatabaseService:
     def _get_engine(self, connection: DatabaseConnection):
         """
         Get or create a database engine for a connection.
-        For AS400 connections on platforms without native driver support,
-        this will use JDBC via the jdbc_utils module.
+        Uses our JDBC-only DatabaseConnector for JDBC connections.
         """
         connection_id = connection.id
         
@@ -645,138 +645,172 @@ class DatabaseService:
             return self.engines[connection_id]
         
         # Check if this is a JDBC connection string (for any supported database)
-        if ('+jdbc' in connection.connection_string or connection.connection_string.startswith("jdbc:")):
+        if ('+jdbc' in connection.connection_string or connection.connection_string.startswith("jdbc:") or
+            connection.db_type in [DatabaseType.AS400, DatabaseType.MSSQL]):
             try:
-                from utils import jdbc_utils
+                # Extract connection parameters
+                host = connection.host
+                port = connection.port
+                database = connection.database_name
+                username = connection.username
+                password = connection.password
+                db_type = connection.db_type
                 
-                # Get JDBC driver paths
-                driver_paths = jdbc_utils.get_jdbc_drivers_path()
-                if not driver_paths:
-                    raise ValueError("No JDBC driver JAR files found in the jdbc_drivers directory")
-                
-                # Determine database type and set appropriate JDBC URL and driver class
-                jdbc_url = connection.connection_string
-                driver_class = None
-                driver_options = {
-                    'user': connection.username,
-                    'password': connection.password,
-                }
-                
-                if connection.db_type == DatabaseType.AS400:
-                    # Extract host and optional database from the JDBC URL for AS400
-                    url_parts = connection.connection_string.replace("jdbc:as400://", "").split("/")
-                    host = url_parts[0]
-                    database = url_parts[1] if len(url_parts) > 1 else None
-                    
-                    # Rebuild the AS400 JDBC URL
-                    if database:
-                        jdbc_url = f"jdbc:as400://{host}/{database}"
-                    else:
-                        jdbc_url = f"jdbc:as400://{host}"
-                    
-                    logger.info(f"Using JDBC for AS400 connection to {host}")
-                    
-                    # AS400-specific connection options
-                    driver_options.update({
-                        'prompt': 'false',
-                        'naming': 'system',
-                    })
-                    
-                    driver_class = "com.ibm.as400.access.AS400JDBCDriver"
-                    
-                elif connection.db_type == DatabaseType.MSSQL:
-                    # The JDBC URL for SQL Server is already in the correct format
-                    logger.info(f"Using JDBC for MS SQL Server connection to {jdbc_url}")
-                    driver_class = "com.microsoft.sqlserver.jdbc.SQLServerDriver"
-                
-                # We can't use SQLAlchemy directly with JDBC in this case,
-                # so we'll create a wrapper object that provides the minimum functionality needed
-                class JdbcEngineWrapper:
-                    def __init__(self, conn_func, driver_paths, jdbc_url, driver_class, options):
-                        self.conn_func = conn_func
-                        self.driver_paths = driver_paths
-                        self.jdbc_url = jdbc_url
-                        self.driver_class = driver_class
-                        self.options = options
+                # Create a wrapper class that provides SQLAlchemy-compatible interfaces
+                # while using our JDBC-only DatabaseConnector under the hood
+                class DbConnectorWrapper:
+                    def __init__(self, db_type, host, port, database, username, password):
+                        self.db_type = db_type
+                        self.host = host
+                        self.port = port
+                        self.database = database
+                        self.username = username
+                        self.password = password
+                        self.url = connection.connection_string  # Required for SQLAlchemy inspector compatibility
+                        
+                        # Create the DatabaseConnector instance
+                        self.db_connector = DatabaseConnector(
+                            db_type=db_type,
+                            host=host,
+                            port=port,
+                            database=database,
+                            username=username,
+                            password=password
+                        )
                         self.connection = None
-                        self.url = jdbc_url  # Required for SQLAlchemy inspector
                     
                     def connect(self):
-                        # Connect using JDBC
-                        self.connection = self.conn_func(
-                            self.driver_paths,
-                            self.jdbc_url,
-                            self.driver_class,
-                            self.options
-                        )
+                        # Connect using DatabaseConnector
+                        self.db_connector.connect()
+                        self.connection = self.db_connector
                         return self.connection
                     
-                    def execute(self, query):
+                    def execute(self, query, params=None):
                         # Make sure we have a connection
                         if not self.connection:
                             self.connect()
-                        # Execute through JDBC
-                        return jdbc_utils.execute_query(self.connection, query)
+                        # Execute through DatabaseConnector
+                        return self.db_connector.execute_query(query, params)
                     
                     def get_schemas(self):
                         """Get all schemas in the database."""
                         # Make sure we have a connection
                         if not self.connection:
                             self.connect()
-                        # Get schemas through JDBC
-                        return jdbc_utils.get_schemas(self.connection)
+                        # Get schemas through DatabaseConnector
+                        return self.db_connector.get_schemas()
                     
                     def get_tables(self, schema=None):
                         """Get all tables in the specified schema."""
                         # Make sure we have a connection
                         if not self.connection:
                             self.connect()
-                        # Get tables through JDBC
-                        return jdbc_utils.get_tables(self.connection, schema)
+                        # Get tables through DatabaseConnector
+                        return self.db_connector.get_tables(schema)
                     
                     def dispose(self):
                         # Clean up resources
                         if self.connection:
                             try:
-                                self.connection.close()
+                                self.db_connector.disconnect()
                             except:
                                 pass
                             self.connection = None
                     
-                    # Support methods for SQLAlchemy inspection
+                    # Support methods for SQLAlchemy inspection compatibility
                     def dialect(self):
                         # Simulate the dialect property for SQLAlchemy inspector
                         class Dialect:
+                            def __init__(self, connector):
+                                self.connector = connector
+                            
                             def get_schema_names(self, conn):
                                 if not conn.connection:
                                     conn.connect()
-                                return jdbc_utils.get_schemas(conn.connection)
-                                
+                                return conn.db_connector.get_schemas()
+                            
                             def get_table_names(self, conn, schema=None):
                                 if not conn.connection:
                                     conn.connect()
-                                return jdbc_utils.get_tables(conn.connection, schema)
+                                return conn.db_connector.get_tables(schema)
+                            
+                            def get_columns(self, conn, table_name, schema=None):
+                                if not conn.connection:
+                                    conn.connect()
+                                table_schema = conn.db_connector.get_table_schema(table_name, schema)
+                                # Convert to SQLAlchemy-compatible format
+                                columns = []
+                                for name, info in table_schema['columns'].items():
+                                    columns.append({
+                                        'name': name,
+                                        'type': info['type'],
+                                        'nullable': info['nullable'],
+                                        'default': info['default'],
+                                        'primary_key': info['primary_key']
+                                    })
+                                return columns
+                            
+                            def get_pk_constraint(self, conn, table_name, schema=None):
+                                if not conn.connection:
+                                    conn.connect()
+                                table_schema = conn.db_connector.get_table_schema(table_name, schema)
+                                return {
+                                    'constrained_columns': table_schema['primary_keys'],
+                                    'name': 'PRIMARY'
+                                }
+                            
+                            def get_foreign_keys(self, conn, table_name, schema=None):
+                                if not conn.connection:
+                                    conn.connect()
+                                table_schema = conn.db_connector.get_table_schema(table_name, schema)
+                                return table_schema['foreign_keys']
+                            
+                            def get_indexes(self, conn, table_name, schema=None):
+                                if not conn.connection:
+                                    conn.connect()
+                                table_schema = conn.db_connector.get_table_schema(table_name, schema)
+                                return table_schema['indexes']
                         
-                        return Dialect()
+                        return Dialect(self)
+                    
+                    def begin(self):
+                        # Implement a minimal transaction context manager
+                        class Transaction:
+                            def __init__(self, conn):
+                                self.conn = conn
+                            
+                            def __enter__(self):
+                                return self
+                            
+                            def __exit__(self, exc_type, exc_val, exc_tb):
+                                pass
+                        
+                        return Transaction(self)
+                    
+                    def __enter__(self):
+                        return self.connect()
+                    
+                    def __exit__(self, exc_type, exc_val, exc_tb):
+                        self.dispose()
                 
-                # Create the wrapper with the appropriate JDBC driver
-                engine = JdbcEngineWrapper(
-                    jdbc_utils.connect_to_database,
-                    driver_paths,
-                    jdbc_url,
-                    driver_class,
-                    driver_options
+                # Create the DatabaseConnector wrapper
+                logger.info(f"Creating DatabaseConnector for {db_type} connection to {host}")
+                engine = DbConnectorWrapper(
+                    db_type=db_type,
+                    host=host,
+                    port=port,
+                    database=database,
+                    username=username,
+                    password=password
                 )
                 
+                # Cache and return the engine
                 self.engines[connection_id] = engine
                 return engine
                 
-            except ImportError as e:
-                logger.error(f"Failed to import JDBC utilities: {str(e)}")
-                raise ValueError("JDBC support is required for AS400 on this platform but is not available")
             except Exception as e:
-                logger.error(f"Error creating JDBC engine: {str(e)}")
-                raise Exception(f"Failed to create JDBC engine: {str(e)}")
+                logger.error(f"Error creating DatabaseConnector: {str(e)}")
+                raise ValueError(f"Error creating DatabaseConnector: {str(e)}")
         
         # Standard SQLAlchemy engine creation for other database types
         try:
