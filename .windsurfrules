@@ -1,0 +1,6 @@
+remove sqlalchemy at any cost
+use jdbc-only implementation
+no mocks
+test using docker
+modify codebase if needed
+iterate over tests until all pass

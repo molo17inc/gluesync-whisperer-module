@@ -22,12 +22,8 @@
 """
 
 import logging
-
-# Import SQLAlchemy for ORM operations only
-import sqlalchemy
-from sqlalchemy import create_engine, MetaData, Table, inspect, select
-from sqlalchemy.orm import Session
-from sqlalchemy.pool import NullPool
+import sqlite3
+from datetime import datetime
 
 # Import our JDBC-only DatabaseConnector
 from utils.db_connector import DatabaseConnector
@@ -41,59 +37,127 @@ logger = logging.getLogger(__name__)
 
 
 class DatabaseService:
-    def __init__(self, db: Session):
+    def __init__(self, db):
         self.db = db
         self.engines = {}  # Cache for database engines
 
-    def create_connection(self, connection: DatabaseConnectionCreate) -> DatabaseConnection:
+    def create_connection(self, connection_data: DatabaseConnectionCreate) -> DatabaseConnection:
         """Create a new database connection."""
-        # Build the connection string based on the database type
-        connection_string = self._build_connection_string(connection)
-        
-        # Create the database connection record
-        db_connection = DatabaseConnection(
-            name=connection.name,
-            description=connection.description,
-            db_type=connection.db_type,
-            host=connection.host,
-            port=connection.port,
-            username=connection.username,
-            password=connection.password,
-            database_name=connection.database_name,
-            connection_string=connection_string,
-            status=ConnectionStatus.IDLE
-        )
-        
-        self.db.add(db_connection)
-        self.db.commit()
-        self.db.refresh(db_connection)
-        
-        return db_connection
+        try:
+            # Create the connection
+            connection = DatabaseConnection(
+                name=connection_data.name,
+                description=connection_data.description,
+                db_type=connection_data.db_type,
+                host=connection_data.host,
+                port=connection_data.port,
+                username=connection_data.username,
+                password=connection_data.password,
+                database=connection_data.database_name
+            )
+
+            # Build the connection string
+            connection_string = self._build_connection_string(connection)
+            connection.connection_string = connection_string
+
+            # Save to database
+            self.db.execute('''
+                INSERT INTO database_connections (
+                    name, description, host, port, 
+                    database, username, password, type, status,
+                    created_at, updated_at, connection_string
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                connection.name,
+                connection.description,
+                connection.host,
+                connection.port,
+                connection.database,
+                connection.username,
+                connection.password,
+                connection.db_type.value,  # Convert enum to string value
+                ConnectionStatus.IDLE.value,
+                datetime.now().isoformat(),
+                datetime.now().isoformat(),
+                connection.connection_string
+            ))
+            self.db.commit()
+
+            # Get the ID of the created connection
+            connection.id = self.db.query_one('SELECT last_insert_rowid()')[0]
+            return connection
+        except Exception as e:
+            logger.error(f"Error creating connection: {str(e)}")
+            raise
 
     def get_connections(self, skip: int = 0, limit: int = 100) -> List[DatabaseConnection]:
         """Get all database connections."""
-        # SQLAlchemy 2.0 syntax
-        stmt = select(DatabaseConnection).offset(skip).limit(limit)
-        return list(self.db.execute(stmt).scalars().all())
+        # Use the Database class's query method
+        connections = self.db.query(f"SELECT * FROM database_connections LIMIT {limit} OFFSET {skip}")
+        result = []
+        for conn in connections:
+            # Map database column names to model field names
+            mapped_conn = self._map_db_to_model(conn)
+            result.append(DatabaseConnection(**mapped_conn))
+        return result
 
     def get_connection(self, connection_id: int) -> Optional[DatabaseConnection]:
         """Get a specific database connection by ID."""
-        # SQLAlchemy 2.0 syntax
-        stmt = select(DatabaseConnection).where(DatabaseConnection.id == connection_id)
-        return self.db.execute(stmt).scalar_one_or_none()
+        # Use the Database class's query_one method
+        conn = self.db.query_one(f"SELECT * FROM database_connections WHERE id = ?", (connection_id,))
+        if conn:
+            # Map database column names to model field names
+            mapped_conn = self._map_db_to_model(conn)
+            return DatabaseConnection(**mapped_conn)
+        return None
 
     def get_connection_by_name(self, name: str) -> Optional[DatabaseConnection]:
         """Get a specific database connection by name."""
-        # SQLAlchemy 2.0 syntax
-        stmt = select(DatabaseConnection).where(DatabaseConnection.name == name)
-        return self.db.execute(stmt).scalar_one_or_none()
+        # Use the Database class's query_one method
+        conn = self.db.query_one(f"SELECT * FROM database_connections WHERE name = ?", (name,))
+        if conn:
+            # Map database column names to model field names
+            mapped_conn = self._map_db_to_model(conn)
+            return DatabaseConnection(**mapped_conn)
+        return None
+        
+    def _map_db_to_model(self, conn_data: dict) -> dict:
+        """Map database column names to model field names."""
+        # Create a copy to avoid modifying the original
+        result = dict(conn_data)
+        
+        # Map column names
+        if 'type' in result:
+            result['db_type'] = result.pop('type')
+        if 'database' in result:
+            result['database_name'] = result.pop('database')
+            
+        # Add default values for fields that might be missing
+        if 'connection_string' not in result:
+            result['connection_string'] = None
+        if 'description' not in result:
+            result['description'] = None
+            
+        # Remove fields that aren't part of the DatabaseConnection class
+        fields_to_remove = ['driver', 'schema']
+        for field in fields_to_remove:
+            if field in result:
+                result.pop(field)
+            
+        return result
 
     def update_connection(self, connection_id: int, connection_update: DatabaseConnectionUpdate) -> DatabaseConnection:
         """Update a database connection."""
         db_connection = self.get_connection(connection_id)
+        if not db_connection:
+            raise Exception(f"Connection with ID {connection_id} not found")
         
         # Update fields that are provided
         update_data = connection_update.dict(exclude_unset=True)
+        
+        # Remove description field if present as it's not in the database schema
+        if 'description' in update_data:
+            del update_data['description']
         
         # If there are changes to connection parameters, rebuild the connection string
         rebuild_connection_string = False
@@ -102,43 +166,98 @@ class DatabaseService:
             if param in update_data:
                 rebuild_connection_string = True
                 break
+                
+        # Map field names to database column names
+        field_to_column = {
+            'db_type': 'type',
+            'database_name': 'database'
+        }
         
-        for key, value in update_data.items():
-            setattr(db_connection, key, value)
+        # Update the keys in update_data to match the database column names
+        for field, column in field_to_column.items():
+            if field in update_data:
+                update_data[column] = update_data.pop(field)
         
-        if rebuild_connection_string:
-            connection_string = self._build_connection_string(db_connection)
-            db_connection.connection_string = connection_string
-            
-            # Remove from engine cache if it exists
-            if connection_id in self.engines:
-                del self.engines[connection_id]
+        # Convert enum values to strings
+        if 'type' in update_data and isinstance(update_data['type'], DatabaseType):
+            update_data['type'] = update_data['type'].value
+        if 'status' in update_data and isinstance(update_data['status'], ConnectionStatus):
+            update_data['status'] = update_data['status'].value
         
-        self.db.commit()
-        self.db.refresh(db_connection)
+        # Build SQL update statement dynamically
+        if update_data:
+            try:
+                set_clauses = []
+                params = []
+                
+                for key, value in update_data.items():
+                    set_clauses.append(f"{key} = ?")
+                    params.append(value)
+                
+                if rebuild_connection_string:
+                    # Remove from engine cache if it exists
+                    if connection_id in self.engines:
+                        del self.engines[connection_id]
+                
+                # Add updated_at timestamp
+                set_clauses.append("updated_at = CURRENT_TIMESTAMP")
+                
+                # Add connection_id to params
+                params.append(connection_id)
+                
+                # Execute update query
+                query = f"UPDATE database_connections SET {', '.join(set_clauses)} WHERE id = ?"
+                cursor = self.db.cursor()
+                cursor.execute(query, params)
+                cursor.commit()
+                
+                # Return the updated connection
+                return self.get_connection(connection_id)
+            except Exception as e:
+                logger.error(f"Error updating connection: {str(e)}")
+                raise Exception(f"Error updating connection: {str(e)}")
         
+        # If no updates were provided, just return the existing connection
         return db_connection
 
     def delete_connection(self, connection_id: int) -> None:
         """Delete a database connection."""
         db_connection = self.get_connection(connection_id)
+        if not db_connection:
+            raise Exception(f"Connection with ID {connection_id} not found")
         
         # Remove from engine cache if it exists
         if connection_id in self.engines:
             del self.engines[connection_id]
         
-        self.db.delete(db_connection)
-        self.db.commit()
+        try:
+            # Execute delete query
+            query = "DELETE FROM database_connections WHERE id = ?"
+            cursor = self.db.cursor()
+            cursor.execute(query, [connection_id])
+            cursor.commit()
+        except Exception as e:
+            logger.error(f"Error deleting connection: {str(e)}")
+            raise Exception(f"Error deleting connection: {str(e)}")
 
     def update_connection_status(self, connection_id: int, status: ConnectionStatus) -> DatabaseConnection:
         """Update a database connection status."""
         db_connection = self.get_connection(connection_id)
-        db_connection.status = status
+        if not db_connection:
+            raise Exception(f"Connection with ID {connection_id} not found")
         
-        self.db.commit()
-        self.db.refresh(db_connection)
-        
-        return db_connection
+        try:
+            # Execute update query
+            query = "UPDATE database_connections SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+            cursor = self.db.cursor()
+            cursor.execute(query, [status.value, connection_id])
+            cursor.commit()
+            
+            # Return the updated connection
+            return self.get_connection(connection_id)
+        except Exception as e:
+            logger.error(f"Error updating connection status: {str(e)}")
+            raise Exception(f"Error updating connection status: {str(e)}")
 
     def test_connection(self, connection_id: int) -> ConnectionTestResponse:
         """Test a database connection."""
@@ -148,7 +267,7 @@ class DatabaseService:
             # Try to connect to the database
             engine = self._get_engine(db_connection)
             with engine.connect() as conn:
-                conn.execute(sqlalchemy.text("SELECT 1"))
+                conn.execute("SELECT 1")
             
             return ConnectionTestResponse(success=True, message="Connection successful")
         except Exception as e:
@@ -174,10 +293,11 @@ class DatabaseService:
         
         # Standard SQLAlchemy approach for other engines
         try:
-            # Get all schemas using SQLAlchemy inspector
-            inspector = inspect(engine)
-            schemas = inspector.get_schema_names()
-            return schemas
+            # Use JDBC connector to get schemas
+            if hasattr(engine, 'get_schemas'):
+                return engine.get_schemas()
+            # Fallback for non-JDBC connections
+            return [db_connection.database_name or 'default']
         except Exception as e:
             logger.error(f"Error getting schemas: {str(e)}")
             # For databases that don't support schemas or have a different mechanism
@@ -191,7 +311,7 @@ class DatabaseService:
                 try:
                     with engine.connect() as conn:
                         # Use sys.schemas to get the actual schema names
-                        result = conn.execute(sqlalchemy.text("SELECT name FROM sys.schemas WHERE name NOT LIKE 'db\_%' AND name != 'sys' AND name != 'INFORMATION_SCHEMA'"))
+                        result = conn.execute("SELECT name FROM sys.schemas WHERE name NOT LIKE 'db\_%' AND name != 'sys' AND name != 'INFORMATION_SCHEMA'")
                         schemas = [row[0] for row in result]
                         if schemas:
                             return schemas
@@ -237,14 +357,15 @@ class DatabaseService:
         
         # Standard SQLAlchemy approach for other engines
         try:
-            # Get the inspector
-            inspector = inspect(engine)
-            
             # For database types that require schemas, make sure one is provided
             if schema is None:
                 # SQLite doesn't use schemas in the traditional sense
                 if db_connection.db_type == DatabaseType.SQLITE:
-                    return inspector.get_table_names()
+                    # Use JDBC connector to get tables without schema
+                    if hasattr(engine, 'get_tables'):
+                        return engine.get_tables()
+                    # Fallback for non-JDBC SQLite
+                    return []
                 else:
                     # For all other database types, require a schema
                     schemas = self.get_schemas(connection_id)
@@ -253,8 +374,11 @@ class DatabaseService:
                     logger.error(error_msg)
                     raise ValueError(error_msg)
                     
-            # Get tables for the specified schema
-            return inspector.get_table_names(schema=schema)
+            # Use JDBC connector to get tables for the specified schema
+            if hasattr(engine, 'get_tables'):
+                return engine.get_tables(schema)
+            # Fallback for non-JDBC connections
+            return []
         except Exception as e:
             logger.error(f"Error getting tables: {str(e)}")
             raise
@@ -549,44 +673,79 @@ class DatabaseService:
                 logger.error(f"Error getting table schema via JDBC: {str(e)}")
                 raise
         
-        # Standard SQLAlchemy approach for other engines
+        # JDBC-only approach for all database types
         try:
-            # Get table schema
-            inspector = inspect(engine)
-            
-            # Get column information
-            columns = {}
-            primary_keys = []
-            
-            # Determine schema
-            schema = schema_name
-            if not schema:
-                if db_connection.db_type == DatabaseType.POSTGRESQL:
-                    schema = 'public'
-            
-            # Get primary key columns
-            pk_constraint = inspector.get_pk_constraint(table_name, schema=schema)
-            if pk_constraint and 'constrained_columns' in pk_constraint:
-                primary_keys = pk_constraint['constrained_columns']
-            
-            # Get column details
-            for column in inspector.get_columns(table_name, schema=schema):
-                col_name = column['name']
-                col_type = str(column['type'])
-                columns[col_name] = {
-                    'type': col_type,
-                    'nullable': column.get('nullable', True),
-                    'default': str(column.get('default', None)) if column.get('default') else None,
-                    'is_primary_key': col_name in primary_keys
-                }
-            
-            return TableSchemaResponse(
-                table_name=table_name,
-                columns=columns,
-                primary_keys=primary_keys
-            )
+            # For all database types, use our JDBC connector
+            if hasattr(engine, 'db_connector') and hasattr(engine.db_connector, 'get_table_schema'):
+                # Use the DatabaseConnector's get_table_schema method
+                table_schema = engine.db_connector.get_table_schema(table_name, schema=schema_name)
+                
+                # Convert to our response format
+                columns = {}
+                primary_keys = []
+                
+                # Process column information
+                for col_name, col_info in table_schema.get('columns', {}).items():
+                    # Ensure all keys and values are Python strings
+                    col_name_str = str(col_name)
+                    columns[col_name_str] = {
+                        'type': str(col_info.get('type', 'unknown')),
+                        'nullable': bool(col_info.get('nullable', True)),
+                        'default': col_info.get('default'),
+                        'is_primary_key': bool(col_info.get('is_primary_key', False))
+                    }
+                    if col_info.get('is_primary_key', False):
+                        primary_keys.append(col_name_str)
+                
+                return TableSchemaResponse(
+                    table_name=table_name,
+                    columns=columns,
+                    primary_keys=primary_keys
+                )
+            else:
+                # Fallback to direct JDBC metadata approach
+                logger.info(f"Using direct JDBC metadata for table schema")
+                
+                # Get column information using JDBC metadata
+                columns = {}
+                primary_keys = []
+                
+                # Connect to the database
+                with engine.connect() as conn:
+                    if hasattr(conn, 'jconn'):
+                        # Get JDBC metadata
+                        metadata = conn.jconn.getMetaData()
+                        
+                        # Get primary keys
+                        rs_pk = metadata.getPrimaryKeys(None, schema_name, table_name)
+                        while rs_pk.next():
+                            pk_col = str(rs_pk.getString("COLUMN_NAME"))
+                            primary_keys.append(str(pk_col))  # Ensure it's a Python string
+                        rs_pk.close()
+                        
+                        # Get column information
+                        rs_cols = metadata.getColumns(None, schema_name, table_name, None)
+                        while rs_cols.next():
+                            col_name = str(rs_cols.getString("COLUMN_NAME"))
+                            col_type = str(rs_cols.getString("TYPE_NAME"))
+                            nullable = rs_cols.getInt("NULLABLE") == 1
+                            
+                            # Ensure all keys and values are Python strings
+                            columns[str(col_name)] = {
+                                'type': str(col_type),
+                                'nullable': bool(nullable),
+                                'default': None,  # JDBC doesn't easily provide default values
+                                'is_primary_key': col_name in primary_keys
+                            }
+                        rs_cols.close()
+                
+                return TableSchemaResponse(
+                    table_name=table_name,
+                    columns=columns,
+                    primary_keys=primary_keys
+                )
         except Exception as e:
-            logger.error(f"Error getting table schema via SQLAlchemy: {str(e)}")
+            logger.error(f"Error getting table schema via JDBC: {str(e)}")
             raise
 
     def _build_connection_string(self, connection) -> str:
@@ -600,28 +759,28 @@ class DatabaseService:
             
             if connection.db_type == DatabaseType.MYSQL:
                 # MySQL with JDBC
-                return f"mysql+jdbc://{connection.username}:{connection.password}@{connection.host}:{connection.port}/{connection.database_name}?driver=com.mysql.cj.jdbc.Driver"
+                return f"mysql+jdbc://{connection.username}:{connection.password}@{connection.host}:{connection.port}/{connection.database}?driver=com.mysql.cj.jdbc.Driver"
             
             elif connection.db_type == DatabaseType.POSTGRESQL:
                 # PostgreSQL with JDBC
-                return f"postgresql+jdbc://{connection.username}:{connection.password}@{connection.host}:{connection.port}/{connection.database_name}?driver=org.postgresql.Driver"
+                return f"postgresql+jdbc://{connection.username}:{connection.password}@{connection.host}:{connection.port}/{connection.database}?driver=org.postgresql.Driver"
             
             elif connection.db_type == DatabaseType.SQLITE:
                 # SQLite: still use sqlite:// protocol as it's not JDBC-based
-                return f"sqlite:///{connection.database_name}"
+                return f"sqlite:///{connection.database}"
             
             elif connection.db_type == DatabaseType.MSSQL:
                 # MS SQL Server with JDBC
-                return f"mssql+jdbc://{connection.username}:{connection.password}@{connection.host}:{connection.port}/{connection.database_name}?driver=com.microsoft.sqlserver.jdbc.SQLServerDriver&trustServerCertificate=true&encrypt=true"
+                return f"mssql+jdbc://{connection.username}:{connection.password}@{connection.host}:{connection.port}/{connection.database}?driver=com.microsoft.sqlserver.jdbc.SQLServerDriver&trustServerCertificate=true&encrypt=true"
             
             elif connection.db_type == DatabaseType.ORACLE:
                 # Oracle with JDBC
-                return f"oracle+jdbc://{connection.username}:{connection.password}@{connection.host}:{connection.port}/{connection.database_name}?driver=oracle.jdbc.OracleDriver"
+                return f"oracle+jdbc://{connection.username}:{connection.password}@{connection.host}:{connection.port}/{connection.database}?driver=oracle.jdbc.OracleDriver"
             
             elif connection.db_type == DatabaseType.AS400:
                 # AS400 with JDBC
-                if connection.database_name:
-                    return f"as400+jdbc://{connection.username}:{connection.password}@{connection.host}/{connection.database_name}?driver=com.ibm.as400.access.AS400JDBCDriver"
+                if connection.database:
+                    return f"as400+jdbc://{connection.username}:{connection.password}@{connection.host}/{connection.database}?driver=com.ibm.as400.access.AS400JDBCDriver"
                 else:
                     return f"as400+jdbc://{connection.username}:{connection.password}@{connection.host}?driver=com.ibm.as400.access.AS400JDBCDriver"
                     
@@ -631,7 +790,7 @@ class DatabaseService:
         except ImportError:
             # JDBC not available
             logger.error("JDBC utilities not available. All database connections require JDBC support.")
-            raise ValueError("Database connections require JDBC utilities.")
+            raise ValueError("Database connection requires JDBC support")
 
     def _get_engine(self, connection: DatabaseConnection):
         """
@@ -645,8 +804,20 @@ class DatabaseService:
             return self.engines[connection_id]
         
         # Check if this is a JDBC connection string (for any supported database)
-        if ('+jdbc' in connection.connection_string or connection.connection_string.startswith("jdbc:") or
-            connection.db_type in [DatabaseType.AS400, DatabaseType.MSSQL]):
+        # Convert string db_type to enum if needed
+        db_type_enum = None
+        if isinstance(connection.db_type, str):
+            try:
+                db_type_enum = DatabaseType[connection.db_type.upper()]
+            except (KeyError, AttributeError):
+                logger.warning(f"Unknown database type string: {connection.db_type}")
+        else:
+            db_type_enum = connection.db_type
+            
+        # Always use JDBC for our supported database types, regardless of connection string
+        # This ensures we use JDBC even when connection_string is None
+        if db_type_enum in [DatabaseType.AS400, DatabaseType.MSSQL, DatabaseType.MYSQL, DatabaseType.POSTGRESQL, DatabaseType.ORACLE] or \
+           (connection.connection_string and ('+jdbc' in connection.connection_string or connection.connection_string.startswith("jdbc:"))):
             try:
                 # Extract connection parameters
                 host = connection.host
@@ -669,8 +840,16 @@ class DatabaseService:
                         self.url = connection.connection_string  # Required for SQLAlchemy inspector compatibility
                         
                         # Create the DatabaseConnector instance
+                        # Convert string db_type to enum if needed
+                        connector_db_type = db_type
+                        if isinstance(db_type, str):
+                            try:
+                                connector_db_type = DatabaseType[db_type.upper()]
+                            except (KeyError, AttributeError):
+                                logger.warning(f"Unknown database type string: {db_type}")
+                                
                         self.db_connector = DatabaseConnector(
-                            db_type=db_type,
+                            db_type=connector_db_type,
                             host=host,
                             port=port,
                             database=database,
@@ -812,12 +991,57 @@ class DatabaseService:
                 logger.error(f"Error creating DatabaseConnector: {str(e)}")
                 raise ValueError(f"Error creating DatabaseConnector: {str(e)}")
         
-        # Standard SQLAlchemy engine creation for other database types
-        try:
-            # Use NullPool to avoid leaving connections open
-            engine = create_engine(connection.connection_string, poolclass=NullPool)
-            self.engines[connection_id] = engine
-            return engine
-        except Exception as e:
-            logger.error(f"Error creating database engine: {str(e)}")
-            raise Exception(f"Failed to create database engine: {str(e)}")
+        # For SQLite, use a simple wrapper around sqlite3
+        if connection.db_type == DatabaseType.SQLITE:
+            try:
+                # Create a wrapper class for SQLite that mimics the JDBC interface
+                class SqliteWrapper:
+                    def __init__(self, db_path):
+                        self.db_path = db_path.replace('sqlite:///', '')
+                        self.connection = None
+                        self.url = connection.connection_string  # For compatibility
+                    
+                    def connect(self):
+                        self.connection = sqlite3.connect(self.db_path)
+                        return self
+                    
+                    def execute(self, query, params=None):
+                        if not self.connection:
+                            self.connect()
+                        cursor = self.connection.cursor()
+                        if params:
+                            cursor.execute(query, params)
+                        else:
+                            cursor.execute(query)
+                        return cursor
+                    
+                    def get_schemas(self):
+                        return ['main']
+                    
+                    def get_tables(self, schema=None):
+                        cursor = self.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                        return [row[0] for row in cursor.fetchall()]
+                    
+                    def dispose(self):
+                        if self.connection:
+                            self.connection.close()
+                            self.connection = None
+                    
+                    def __enter__(self):
+                        return self.connect()
+                    
+                    def __exit__(self, exc_type, exc_val, exc_tb):
+                        self.dispose()
+                
+                # Extract the database path from the connection string
+                db_path = connection.connection_string
+                engine = SqliteWrapper(db_path)
+                self.engines[connection_id] = engine
+                return engine
+            except Exception as e:
+                logger.error(f"Error creating SQLite connection: {str(e)}")
+                raise Exception(f"Failed to create SQLite connection: {str(e)}")
+        else:
+            # For all other database types, we require JDBC
+            logger.error(f"Unsupported database type without JDBC: {connection.db_type}")
+            raise Exception(f"Database type {connection.db_type} requires JDBC support which is not available")

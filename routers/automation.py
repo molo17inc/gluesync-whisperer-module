@@ -25,7 +25,6 @@ import asyncio
 import logging
 from typing import Dict, List, Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from sqlalchemy.orm import Session
 
 from database import get_db
 from models import DatabaseType, OperationType, ConnectionStatus
@@ -49,245 +48,249 @@ router = APIRouter(prefix="/api/v1/automation", tags=["automation"])
 # Store active automation tasks
 active_automations: Dict[str, WhispererService] = {}
 
-@router.post("/connections/test", response_model=ConnectionTestResponse)
-async def test_connection(
-    connection_request: TableOperationRequest,
-    db: Session = Depends(get_db)
-):
-    """Test a database connection without saving it"""
-    connection_service = ConnectionService(db)
-    connection = connection_service.get_connection(connection_request.connection_id)
-    
-    if not connection:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Connection with id {connection_request.connection_id} not found"
-        )
-    
-    from services.database_service import DatabaseService
-    db_service = DatabaseService(db)
-    whisperer = WhispererService(db=db)
-    
-    success, message = await whisperer.test_connection()
-    return ConnectionTestResponse(success=success, message=message)
-
-
 @router.get("/connections/{connection_id}/tables", response_model=TableListResponse)
-async def list_tables(
+def list_tables(
     connection_id: int,
     schema: str,
-    db: Session = Depends(get_db)
+    db = Depends(get_db)
 ):
-    """List all tables for a connection with the specified schema"""
-    connection_service = ConnectionService(db)
-    connection = connection_service.get_connection(connection_id)
-    
-    if not connection:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Connection with id {connection_id} not found"
-        )
-    
-    from services.database_service import DatabaseService
-    db_service = DatabaseService(db)
-    whisperer = WhispererService(db=db)
-    
+    """List all tables for a connection with the specified schema."""
     try:
-        tables = await whisperer.list_tables(connection_id=connection_id, schema=schema)
-        return TableListResponse(tables=tables)
-    except ValueError as e:
-        # If schema is missing or invalid, return appropriate error
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
+        # Get the connection service
+        connection_service = ConnectionService(db)
+        
+        # Check if connection exists
+        connection = connection_service.get_connection(connection_id)
+        if not connection:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Connection with ID {connection_id} not found"
+            )
+        
+        # Get tables for the specified schema
+        tables = connection_service.get_tables(connection_id, schema)
+        
+        return TableListResponse(
+            connection_id=connection_id,
+            schema=schema,
+            tables=tables
         )
-
+    except Exception as e:
+        logger.error(f"Error listing tables: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error listing tables: {str(e)}"
+        )
 
 @router.get("/connections/{connection_id}/tables/{table_name}/schema", response_model=TableSchemaResponse)
-async def get_table_schema(
+def get_table_schema(
     connection_id: int,
     table_name: str,
-    db: Session = Depends(get_db)
+    db = Depends(get_db)
 ):
-    """Get schema for a specific table"""
-    connection_service = ConnectionService(db)
-    connection = connection_service.get_connection(connection_id)
-    
-    if not connection:
+    """Get schema for a specific table."""
+    try:
+        # Get the connection service
+        connection_service = ConnectionService(db)
+        
+        # Check if connection exists
+        connection = connection_service.get_connection(connection_id)
+        if not connection:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Connection with ID {connection_id} not found"
+            )
+        
+        # Get table schema
+        schema = connection_service.get_table_schema(connection_id, table_name)
+        
+        return schema
+    except Exception as e:
+        logger.error(f"Error getting table schema: {str(e)}")
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Connection with id {connection_id} not found"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting table schema: {str(e)}"
         )
-    
-    from services.database_service import DatabaseService
-    db_service = DatabaseService(db)
-    whisperer = WhispererService(db=db)
-    
-    schema = await whisperer.get_table_schema(table_name)
-    if not schema:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Table {table_name} not found"
-        )
-    
-    return TableSchemaResponse(
-        table_name=table_name,
-        columns=schema["columns"],
-        primary_keys=schema["primary_keys"]
-    )
-
 
 @router.post("/start", status_code=status.HTTP_202_ACCEPTED)
-async def start_automation(
+def start_automation(
     request: TableOperationRequest,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)
+    db = Depends(get_db)
 ):
-    """Start database automation for specified tables"""
-    connection_service = ConnectionService(db)
-    connection = connection_service.get_connection(request.connection_id)
-    
-    if not connection:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Connection with id {request.connection_id} not found"
-        )
-    
-    # Update connection status
-    connection_service.update_connection_status(
-        connection_id=connection.id,
-        status=ConnectionStatus.BUSY
-    )
-    
-    # Initialize whisperer service
-    whisperer = WhispererService(
-        db_type=connection.db_type,
-        host=connection.host,
-        port=connection.port,
-        database=connection.database_name,
-        username=connection.username,
-        password=connection.password,
-        operation_type=request.operation_type,
-        operation_delay=request.operation_delay,
-        batch_size=request.batch_size
-    )
-    
-    # Register the automation tasks
-    for table_name in request.table_names:
-        automation_id = f"{connection.id}_{table_name}"
+    """Start database automation for specified tables."""
+    try:
+        # Get the connection service
+        connection_service = ConnectionService(db)
         
-        # Stop existing automation if running
+        # Check if connection exists
+        connection = connection_service.get_connection(request.connection_id)
+        if not connection:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Connection with ID {request.connection_id} not found"
+            )
+        
+        # Check if tables exist
+        for table_name in request.table_names:
+            if not connection_service.table_exists(request.connection_id, table_name):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Table {table_name} not found in connection {request.connection_id}"
+                )
+        
+        # Create a unique ID for this automation
+        automation_id = f"{request.connection_id}_{'-'.join(request.table_names)}"
+        
+        # Check if automation is already running
         if automation_id in active_automations:
-            await stop_automation_task(automation_id)
+            return {
+                "status": "already_running",
+                "message": f"Automation for connection {request.connection_id} and tables {request.table_names} is already running",
+                "automation_id": automation_id
+            }
         
-        # Start new automation
-        active_automations[automation_id] = whisperer
+        # Create a new whisperer service
+        whisperer_service = WhispererService(db)
+        
+        # Start the automation
+        whisperer_service.start_whisperer(request.connection_id)
+        
+        # Store the automation
+        active_automations[automation_id] = whisperer_service
+        
+        # Add a background task to check when automation is complete
         background_tasks.add_task(
-            whisperer.run_automation,
-            table_name=table_name,
-            on_complete=lambda: automation_complete(automation_id, connection.id)
+            automation_complete,
+            automation_id,
+            request.connection_id
         )
-    
-    return {
-        "message": f"Started automation for {len(request.table_names)} tables",
-        "connection_id": connection.id,
-        "tables": request.table_names,
-        "automation_ids": [f"{connection.id}_{table}" for table in request.table_names]
-    }
+        
+        return {
+            "status": "started",
+            "message": f"Automation started for connection {request.connection_id} and tables {request.table_names}",
+            "automation_id": automation_id
+        }
+    except Exception as e:
+        logger.error(f"Error starting automation: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error starting automation: {str(e)}"
+        )
 
-
-@router.post("/stop/{connection_id}/{table_name}", status_code=status.HTTP_200_OK)
-async def stop_automation(
+@router.post("/stop/{connection_id}/{table_name}", status_code=status.HTTP_202_ACCEPTED)
+def stop_automation(
     connection_id: int,
     table_name: str,
-    db: Session = Depends(get_db)
+    db = Depends(get_db)
 ):
-    """Stop automation for a specific table"""
-    automation_id = f"{connection_id}_{table_name}"
-    
-    if automation_id not in active_automations:
+    """Stop automation for a specific table."""
+    try:
+        # Create the automation ID
+        automation_id = f"{connection_id}_{table_name}"
+        
+        # Check if automation is running
+        if automation_id not in active_automations:
+            return {
+                "status": "not_running",
+                "message": f"Automation for connection {connection_id} and table {table_name} is not running"
+            }
+        
+        # Stop the automation
+        whisperer_service = active_automations[automation_id]
+        whisperer_service.stop_whisperer(connection_id)
+        
+        # Remove from active automations
+        del active_automations[automation_id]
+        
+        return {
+            "status": "stopped",
+            "message": f"Automation stopped for connection {connection_id} and table {table_name}"
+        }
+    except Exception as e:
+        logger.error(f"Error stopping automation: {str(e)}")
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No active automation found for table {table_name}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error stopping automation: {str(e)}"
         )
-    
-    await stop_automation_task(automation_id)
-    
-    # Check if there are any other automations for this connection
-    connection_automations = [aid for aid in active_automations.keys() if aid.startswith(f"{connection_id}_")]
-    
-    # If no other automations are running for this connection, update status
-    if not connection_automations:
-        connection_service = ConnectionService(db)
-        connection_service.update_connection_status(
-            connection_id=connection_id,
-            status=ConnectionStatus.CONNECTED
+
+@router.post("/stop-all", status_code=status.HTTP_202_ACCEPTED)
+def stop_all_automations(db = Depends(get_db)):
+    """Stop all running automations."""
+    try:
+        # Stop all automations
+        for automation_id, whisperer_service in active_automations.items():
+            connection_id = int(automation_id.split('_')[0])
+            whisperer_service.stop_whisperer(connection_id)
+        
+        # Clear active automations
+        active_automations.clear()
+        
+        return {
+            "status": "stopped",
+            "message": "All automations stopped"
+        }
+    except Exception as e:
+        logger.error(f"Error stopping all automations: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error stopping all automations: {str(e)}"
         )
-    
-    return {"message": f"Stopped automation for table {table_name}"}
-
-
-@router.post("/stop/all", status_code=status.HTTP_200_OK)
-async def stop_all_automations(db: Session = Depends(get_db)):
-    """Stop all running automations"""
-    for automation_id in list(active_automations.keys()):
-        await stop_automation_task(automation_id)
-    
-    # Update all busy connections to connected
-    connection_service = ConnectionService(db)
-    connection_service.update_all_busy_connections(ConnectionStatus.CONNECTED)
-    
-    return {"message": "Stopped all automations"}
-
 
 @router.get("/status", status_code=status.HTTP_200_OK)
-async def get_automation_status():
-    """Get status of all running automations"""
-    automations = []
-    
-    for automation_id, whisperer in active_automations.items():
-        connection_id, table_name = automation_id.split("_", 1)
-        stats = whisperer.get_stats(table_name)
+def get_automation_status():
+    """Get status of all running automations."""
+    try:
+        # Get status of all automations
+        status_list = []
+        for automation_id, whisperer_service in active_automations.items():
+            parts = automation_id.split('_')
+            connection_id = int(parts[0])
+            table_names = parts[1].split('-')
+            
+            status_list.append({
+                "automation_id": automation_id,
+                "connection_id": connection_id,
+                "table_names": table_names,
+                "status": "running"
+            })
         
-        automations.append({
-            "automation_id": automation_id,
-            "connection_id": int(connection_id),
-            "table_name": table_name,
-            "operation_type": whisperer.operation_type.value,
-            "operation_delay": whisperer.operation_delay,
-            "batch_size": whisperer.batch_size,
-            "stats": stats
-        })
-    
-    return {"automations": automations}
+        return {
+            "automations": status_list
+        }
+    except Exception as e:
+        logger.error(f"Error getting automation status: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting automation status: {str(e)}"
+        )
 
-
-async def stop_automation_task(automation_id: str):
-    """Helper function to stop an automation task"""
+def stop_automation_task(automation_id: str):
+    """Helper function to stop an automation task."""
     if automation_id in active_automations:
-        whisperer = active_automations[automation_id]
-        await whisperer.stop_automation()
+        connection_id = int(automation_id.split('_')[0])
+        whisperer_service = active_automations[automation_id]
+        whisperer_service.stop_whisperer(connection_id)
         del active_automations[automation_id]
-
 
 def automation_complete(automation_id: str, connection_id: int):
-    """Callback when automation is complete"""
-    if automation_id in active_automations:
-        del active_automations[automation_id]
-    
-    # Check if there are any other automations for this connection
-    connection_automations = [aid for aid in active_automations.keys() if aid.startswith(f"{connection_id}_")]
-    
-    # If no other automations are running for this connection, update status
-    if not connection_automations:
-        # Need to create a new DB session since this is called from a background task
-        from database import SessionLocal
-        db = SessionLocal()
-        try:
-            connection_service = ConnectionService(db)
-            connection_service.update_connection_status(
-                connection_id=connection_id,
-                status=ConnectionStatus.CONNECTED
-            )
-        finally:
-            db.close()
+    """Callback when automation is complete."""
+    try:
+        # Check if automation is still running
+        if automation_id not in active_automations:
+            return
+        
+        # Get the whisperer service
+        whisperer_service = active_automations[automation_id]
+        
+        # Check if the connection is still running
+        db = get_db()
+        connection = db.query_one("SELECT * FROM database_connections WHERE id = ?", (connection_id,))
+        
+        if not connection or connection["status"] != ConnectionStatus.RUNNING.value:
+            # Stop the automation
+            whisperer_service.stop_whisperer(connection_id)
+            del active_automations[automation_id]
+            logger.info(f"Automation {automation_id} completed")
+    except Exception as e:
+        logger.error(f"Error in automation complete callback: {str(e)}")

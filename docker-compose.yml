@@ -9,21 +9,23 @@ services:
     container_name: whisperer
     restart: unless-stopped
     ports:
-      - "1717:1717"
+      - "8000:8000"
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
+      - ./:/app  # Mount the entire project for live code changes
     environment:
       - DB_URL=sqlite:///./data/whisperer.db
       - HOST=0.0.0.0
-      - PORT=1717
-      - DEBUG=false
+      - PORT=8000
+      - DEBUG=true
       - DEFAULT_OPERATION_DELAY=1.0
       - DEFAULT_BATCH_SIZE=1
       - MAX_OPERATIONS=0
       - INSERT_WEIGHT=0.33
       - UPDATE_WEIGHT=0.33
       - DELETE_WEIGHT=0.34
+      - JAVA_HOME=/usr/lib/jvm/zulu21-ca-amd64
       
   jdbc-test:
     image: gluesync-whisperer:latest

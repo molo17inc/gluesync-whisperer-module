@@ -39,7 +39,7 @@ from api.table_router import router as table_router
 from routers.automation import router as automation_router
 from routers.pillow_fight import router as pillow_fight_router
 from config import settings, Settings
-from database import Base, engine
+from database import init_db
 
 # Initialize settings to ensure data directory exists
 settings = Settings()
@@ -49,108 +49,102 @@ logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
+
 logger = logging.getLogger(__name__)
 
-# Create the database tables if they don't exist
-Base.metadata.create_all(bind=engine)
+# Initialize the database
+init_db()
 
+# Create the FastAPI app
 app = FastAPI(
     title="Gluesync Whisperer",
-    description="A specialized module for orchestrating controlled database operations",
-    version="1.0.0"
+    description="API for Gluesync Whisperer",
+    version="0.1.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
 )
 
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allow all methods
-    allow_headers=["*"],  # Allow all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-
-# Middleware to catch any uncaught exceptions
+# Add exception handling middleware
 async def catch_exceptions_middleware(request: Request, call_next):
     try:
         return await call_next(request)
     except Exception as e:
-        logger.error(f"Uncaught exception: {str(e)}")
-        import traceback
-        logger.error(traceback.format_exc())
-        return RedirectResponse("/error", status_code=303)
-
+        logger.error(f"Unhandled exception: {str(e)}")
+        return RedirectResponse(url="/error")
 
 app.middleware("http")(catch_exceptions_middleware)
 
-
-# Include the API routers
-app.include_router(router, prefix="/api")
-app.include_router(table_router, prefix="/api")
+# Include routers
+app.include_router(router)
+app.include_router(table_router)
 app.include_router(automation_router)
 app.include_router(pillow_fight_router)
 
-
-@app.get("/", tags=["root"])
-async def read_root():
+@app.get("/", include_in_schema=False)
+def read_root():
     """Root endpoint that redirects to the API documentation."""
     return RedirectResponse(url="/docs")
 
-
-@app.get("/api/docs", tags=["documentation"])
-async def api_docs():
+@app.get("/api/docs", include_in_schema=False)
+def api_docs():
     """Redirect to API documentation to match the scheduler module."""
     return RedirectResponse(url="/docs")
 
-
-@app.get("/docs/v1", tags=["documentation"])
-async def docs_v1():
+@app.get("/api/v1/docs", include_in_schema=False)
+def docs_v1():
     """Redirect to API documentation - alternative path."""
     return RedirectResponse(url="/docs")
 
-
-@app.get("/health", tags=["health"])
-async def health_check():
+@app.get("/health", include_in_schema=False)
+def health_check():
     """Health check endpoint."""
-    return {"status": "healthy", "version": "1.0.0"}
-
+    return {"status": "ok"}
 
 if __name__ == "__main__":
     ssl_enabled = settings.SSL_ENABLED
     
     if ssl_enabled:
-        logger.info("Starting server with SSL enabled")
+        # SSL configuration
+        ssl_keyfile = settings.SSL_KEYFILE
+        ssl_certfile = settings.SSL_CERTFILE
         
-        # Check for SSL certificate paths in environment
-        cert_file = os.getenv('SSL_CERT_FILE')
-        key_file = os.getenv('SSL_KEY_FILE')
+        # Check if SSL files exist
+        if not os.path.exists(ssl_keyfile):
+            logger.error(f"SSL keyfile not found: {ssl_keyfile}")
+            ssl_enabled = False
         
-        if cert_file and key_file and os.path.exists(cert_file) and os.path.exists(key_file):
-            # Use provided certificate files
-            ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-            ssl_context.load_cert_chain(cert_file, key_file)
-            
-            uvicorn.run(
-                "app:app",
-                host=settings.HOST,
-                port=settings.PORT,
-                reload=settings.DEBUG,
-                ssl_keyfile=key_file,
-                ssl_certfile=cert_file
-            )
-        else:
-            logger.warning("SSL certificates not found, falling back to HTTP mode")
-            uvicorn.run(
-                "app:app",
-                host=settings.HOST,
-                port=settings.PORT,
-                reload=settings.DEBUG
-            )
-    else:
-        logger.info("Starting server in HTTP mode")
+        if not os.path.exists(ssl_certfile):
+            logger.error(f"SSL certfile not found: {ssl_certfile}")
+            ssl_enabled = False
+    
+    if ssl_enabled:
+        # Create SSL context
+        ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        ssl_context.load_cert_chain(ssl_certfile, keyfile=ssl_keyfile)
+        
+        # Run with SSL
         uvicorn.run(
             "app:app",
-            host=settings.HOST, 
+            host=settings.HOST,
             port=settings.PORT,
-            reload=settings.DEBUG
+            reload=settings.DEBUG,
+            ssl_keyfile=ssl_keyfile,
+            ssl_certfile=ssl_certfile,
+        )
+    else:
+        # Run without SSL
+        uvicorn.run(
+            "app:app",
+            host=settings.HOST,
+            port=settings.PORT,
+            reload=settings.DEBUG,
         )

@@ -311,7 +311,8 @@ class DatabaseConnector:
             result = cursor.fetchall()
             
             # Get column names
-            column_names = [desc[0].upper() for desc in cursor.description] 
+            # Convert Java String objects to Python strings before calling upper()
+            column_names = [str(desc[0]).upper() for desc in cursor.description] 
             
             # Process results
             tables = []
@@ -355,7 +356,8 @@ class DatabaseConnector:
                 # Extract table names
                 tables = []
                 while rs.next():
-                    table_name = rs.getString("TABLE_NAME")
+                    # Convert Java string to Python string
+                    table_name = str(rs.getString("TABLE_NAME"))
                     tables.append(table_name)
                 
                 rs.close()
@@ -1093,6 +1095,109 @@ class DatabaseConnector:
                 'foreign_keys': foreign_keys,
                 'indexes': indexes
             }
+    def get_schemas(self):
+        """Get all schemas for the current database connection using JDBC."""
+        if not self.connection:
+            raise RuntimeError("Not connected to database")
+            
+        try:
+            logger.info(f"Getting schemas via JDBC for {self.db_type.value}")
+            schemas = []
+            
+            # Use JDBC metadata to get schemas
+            metadata = self.connection.jconn.getMetaData()
+            
+            # Different databases handle schemas differently
+            if self.db_type == DatabaseType.MYSQL:
+                # For MySQL, databases are essentially schemas
+                rs = metadata.getCatalogs()
+                while rs.next():
+                    catalog = rs.getString("TABLE_CAT")
+                    if catalog and catalog not in ["information_schema", "mysql", "performance_schema", "sys"]:
+                        schemas.append(catalog)
+                rs.close()
+                
+            elif self.db_type == DatabaseType.MSSQL:
+                # For MS SQL Server, get actual schemas
+                rs = metadata.getSchemas()
+                while rs.next():
+                    schema = rs.getString("TABLE_SCHEM")
+                    # Convert Java String to Python string
+                    schema_str = str(schema) if schema else None
+                    if schema_str and schema_str not in ["INFORMATION_SCHEMA", "sys", "db_owner", "db_accessadmin", "db_securityadmin", "db_ddladmin", "db_backupoperator", "db_datareader", "db_datawriter", "db_denydatareader", "db_denydatawriter"]:
+                        schemas.append(schema_str)
+                rs.close()
+                
+                # If no custom schemas found, return the default 'dbo' schema
+                if not schemas:
+                    schemas.append("dbo")
+                    
+            elif self.db_type == DatabaseType.POSTGRESQL:
+                # For PostgreSQL, get schemas
+                rs = metadata.getSchemas()
+                while rs.next():
+                    schema = rs.getString("TABLE_SCHEM")
+                    if schema and schema not in ["information_schema", "pg_catalog", "pg_toast"]:
+                        schemas.append(schema)
+                rs.close()
+                
+                # If no custom schemas found, return the default 'public' schema
+                if not schemas:
+                    schemas.append("public")
+                    
+            elif self.db_type == DatabaseType.ORACLE:
+                # For Oracle, get schemas (usually user schemas)
+                rs = metadata.getSchemas()
+                while rs.next():
+                    schema = rs.getString("TABLE_SCHEM")
+                    if schema:
+                        schemas.append(schema)
+                rs.close()
+                
+            elif self.db_type == DatabaseType.SQLITE:
+                # SQLite doesn't have traditional schemas
+                schemas.append("main")
+                
+            elif self.db_type == DatabaseType.AS400:
+                # For AS400, get schemas
+                rs = metadata.getSchemas()
+                while rs.next():
+                    schema = rs.getString("TABLE_SCHEM")
+                    if schema and schema not in ["QSYS", "QSYS2", "SYSIBM", "SYSCAT", "SYSFUN", "SYSPROC", "SYSTOOLS"]:
+                        schemas.append(schema)
+                rs.close()
+                
+                # If no schemas found, use the database name or username as default
+                if not schemas:
+                    if self.database:
+                        schemas.append(self.database)
+                    elif self.username:
+                        schemas.append(self.username.upper())
+                    else:
+                        schemas.append("QGPL")  # Default AS400 schema
+            
+            logger.info(f"Retrieved {len(schemas)} schemas using JDBC metadata")
+            # Ensure all schemas are Python strings
+            return [str(schema) for schema in schemas]
+            
+        except Exception as e:
+            logger.error(f"Error getting schemas via JDBC: {str(e)}")
+            # Return a default schema based on database type
+            if self.db_type == DatabaseType.MYSQL:
+                return [self.database] if self.database else ["mysql"]
+            elif self.db_type == DatabaseType.MSSQL:
+                return ["dbo"]
+            elif self.db_type == DatabaseType.POSTGRESQL:
+                return ["public"]
+            elif self.db_type == DatabaseType.SQLITE:
+                return ["main"]
+            elif self.db_type == DatabaseType.AS400:
+                return [self.database] if self.database else ["QGPL"]
+            elif self.db_type == DatabaseType.ORACLE:
+                return [self.username.upper()] if self.username else ["SYSTEM"]
+            else:
+                return ["default"]
+    
     def execute_query(self, query, params=None, max_rows=100):
         """Execute a query with optional parameters and return the results using JDBC."""
         if not self.connection:

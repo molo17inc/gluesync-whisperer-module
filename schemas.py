@@ -58,7 +58,7 @@ class DatabaseConnectionUpdate(BaseModel):
 
 class DatabaseConnectionResponse(DatabaseConnectionBase):
     id: int
-    connection_string: str
+    connection_string: Optional[str] = None
     status: ConnectionStatus
     created_at: datetime
     updated_at: datetime

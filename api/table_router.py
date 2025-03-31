@@ -24,7 +24,6 @@
 import logging
 from typing import List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
 
 from database import get_db
 from schemas import (
@@ -40,11 +39,11 @@ from services.database_service import DatabaseService
 # Configure logging
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["tables"])
+router = APIRouter(prefix="/api", tags=["tables"])
 
 # Table configuration routes
 @router.post("/tables", response_model=TableConfigResponse, status_code=status.HTTP_201_CREATED)
-def create_table_config(table: TableConfigCreate, db: Session = Depends(get_db)):
+def create_table_config(table: TableConfigCreate, db = Depends(get_db)):
     """Create a new table configuration for automation."""
     table_service = TableService(db)
     db_service = DatabaseService(db)
@@ -113,7 +112,7 @@ def get_tables_for_connection(
     connection_id: int, 
     skip: int = 0, 
     limit: int = 100, 
-    db: Session = Depends(get_db)
+    db = Depends(get_db)
 ):
     """Get all table configurations for a connection."""
     table_service = TableService(db)
@@ -132,7 +131,7 @@ def get_tables_for_connection(
 
 
 @router.get("/tables", response_model=List[TableConfigResponse])
-def get_tables(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def get_tables(skip: int = 0, limit: int = 100, db = Depends(get_db)):
     """Get all table configurations."""
     table_service = TableService(db)
     tables = table_service.get_tables(skip=skip, limit=limit)
@@ -140,7 +139,7 @@ def get_tables(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
 
 
 @router.get("/tables/{table_id}", response_model=TableConfigResponse)
-def get_table(table_id: int, db: Session = Depends(get_db)):
+def get_table(table_id: int, db = Depends(get_db)):
     """Get a specific table configuration by ID."""
     table_service = TableService(db)
     table = table_service.get_table(table_id)
@@ -156,7 +155,7 @@ def get_table(table_id: int, db: Session = Depends(get_db)):
 def update_table(
     table_id: int, 
     table_update: TableConfigUpdate, 
-    db: Session = Depends(get_db)
+    db = Depends(get_db)
 ):
     """Update a table configuration."""
     table_service = TableService(db)
@@ -182,7 +181,7 @@ def update_table(
 
 
 @router.delete("/tables/{table_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_table(table_id: int, db: Session = Depends(get_db)):
+def delete_table(table_id: int, db = Depends(get_db)):
     """Delete a table configuration."""
     table_service = TableService(db)
     
@@ -207,7 +206,7 @@ def delete_table(table_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/connections/{connection_id}/schemas", response_model=List[str])
-def get_schemas(connection_id: int, db: Session = Depends(get_db)):
+def get_schemas(connection_id: int, db = Depends(get_db)):
     """Get all schemas for a database connection."""
     db_service = DatabaseService(db)
     
@@ -232,7 +231,7 @@ def get_schemas(connection_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/connections/{connection_id}/tables", response_model=List[str])
-def get_database_tables(connection_id: int, schema: str = None, db: Session = Depends(get_db)):
+def get_database_tables(connection_id: int, schema: str = None, db = Depends(get_db)):
     """Get all tables from the database for a connection. Optionally specify a schema."""
     db_service = DatabaseService(db)
     
@@ -257,7 +256,7 @@ def get_database_tables(connection_id: int, schema: str = None, db: Session = De
 
 
 @router.get("/connections/{connection_id}/tables/{table_name}/schema", response_model=TableSchemaResponse)
-def get_table_schema(connection_id: int, table_name: str, schema_name: str = None, db: Session = Depends(get_db)):
+def get_table_schema(connection_id: int, table_name: str, schema_name: str = None, db = Depends(get_db)):
     """Get the schema of a table in the database."""
     db_service = DatabaseService(db)
     
@@ -283,7 +282,7 @@ def get_table_schema(connection_id: int, table_name: str, schema_name: str = Non
 
 
 @router.post("/operations", status_code=status.HTTP_202_ACCEPTED)
-def start_operations(operation_request: TableOperationRequest, db: Session = Depends(get_db)):
+def start_operations(operation_request: TableOperationRequest, db = Depends(get_db)):
     """Start automated operations on tables."""
     table_service = TableService(db)
     db_service = DatabaseService(db)

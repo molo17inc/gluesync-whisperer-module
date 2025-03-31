@@ -24,7 +24,6 @@
 import logging
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
 
 from database import get_db
 from models import DatabaseConnection, ConnectionStatus
@@ -40,11 +39,11 @@ from services.database_service import DatabaseService
 # Configure logging
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["connections"])
+router = APIRouter(prefix="/api", tags=["connections"])
 
 # Database connection routes
 @router.post("/connections", response_model=DatabaseConnectionResponse, status_code=status.HTTP_201_CREATED)
-def create_connection(connection: DatabaseConnectionCreate, db: Session = Depends(get_db)):
+def create_connection(connection: DatabaseConnectionCreate, db = Depends(get_db)):
     """Create a new database connection."""
     db_service = DatabaseService(db)
     
@@ -69,7 +68,7 @@ def create_connection(connection: DatabaseConnectionCreate, db: Session = Depend
 
 
 @router.get("/connections", response_model=List[DatabaseConnectionResponse])
-def get_connections(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def get_connections(skip: int = 0, limit: int = 100, db = Depends(get_db)):
     """Get all database connections."""
     db_service = DatabaseService(db)
     connections = db_service.get_connections(skip=skip, limit=limit)
@@ -77,7 +76,7 @@ def get_connections(skip: int = 0, limit: int = 100, db: Session = Depends(get_d
 
 
 @router.get("/connections/{connection_id}", response_model=DatabaseConnectionResponse)
-def get_connection(connection_id: int, db: Session = Depends(get_db)):
+def get_connection(connection_id: int, db = Depends(get_db)):
     """Get a specific database connection by ID."""
     db_service = DatabaseService(db)
     connection = db_service.get_connection(connection_id)
@@ -93,7 +92,7 @@ def get_connection(connection_id: int, db: Session = Depends(get_db)):
 def update_connection(
     connection_id: int, 
     connection_update: DatabaseConnectionUpdate, 
-    db: Session = Depends(get_db)
+    db = Depends(get_db)
 ):
     """Update a database connection."""
     db_service = DatabaseService(db)
@@ -119,7 +118,7 @@ def update_connection(
 
 
 @router.delete("/connections/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_connection(connection_id: int, db: Session = Depends(get_db)):
+def delete_connection(connection_id: int, db = Depends(get_db)):
     """Delete a database connection."""
     db_service = DatabaseService(db)
     
@@ -151,7 +150,7 @@ def delete_connection(connection_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/connections/{connection_id}/test", response_model=ConnectionTestResponse)
-def test_connection(connection_id: int, db: Session = Depends(get_db)):
+def test_connection(connection_id: int, db = Depends(get_db)):
     """Test a database connection."""
     db_service = DatabaseService(db)
     
@@ -173,7 +172,7 @@ def test_connection(connection_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/connections/{connection_id}/schemas", response_model=List[str])
-def get_schemas(connection_id: int, db: Session = Depends(get_db)):
+def get_schemas(connection_id: int, db = Depends(get_db)):
     """Get all schemas for a database connection."""
     db_service = DatabaseService(db)
     
@@ -197,7 +196,7 @@ def get_schemas(connection_id: int, db: Session = Depends(get_db)):
         )
 
 @router.get("/connections/{connection_id}/tables", response_model=List[str])
-def get_tables(connection_id: int, schema: Optional[str] = None, db: Session = Depends(get_db)):
+def get_tables(connection_id: int, schema: Optional[str] = None, db = Depends(get_db)):
     """Get all tables for a database connection. Optionally specify a schema."""
     db_service = DatabaseService(db)
     
@@ -225,7 +224,7 @@ def get_tables(connection_id: int, schema: Optional[str] = None, db: Session = D
 def update_connection_status(
     connection_id: int, 
     status_update: ConnectionStatusUpdate, 
-    db: Session = Depends(get_db)
+    db = Depends(get_db)
 ):
     """Update a database connection status (start/stop/pause)."""
     db_service = DatabaseService(db)

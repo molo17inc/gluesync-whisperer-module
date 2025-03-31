@@ -24,7 +24,6 @@
 import logging
 from typing import Dict, List, Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 
 from database import get_db
@@ -50,15 +49,15 @@ class PillowFightResponse(BaseModel):
     operation_types: List[str]
     operation_delay: float
     batch_size: int
-    fight_ids: List[str]
-    message: str
+    status: str
+    fight_id: str
 
 # Schema for pillow fight status
 class PillowFightStatusItem(BaseModel):
     fight_id: str
     connection_id: int
     table_id: int
-    table_name: str  # Keep table_name for display purposes
+    table_name: str
     operation_types: List[str]
     operation_delay: float
     batch_size: int
@@ -71,290 +70,274 @@ class PillowFightStatusItem(BaseModel):
 class PillowFightStatusResponse(BaseModel):
     pillow_fights: List[PillowFightStatusItem]
 
-@router.post("/start", response_model=PillowFightResponse, status_code=status.HTTP_202_ACCEPTED)
-async def start_pillow_fight(
+@router.post("/start", response_model=PillowFightResponse)
+def start_pillow_fight(
     request: TableOperationRequest,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)
+    db = Depends(get_db)
 ):
     """Start a pillow fight (automated operations) on tables."""
-    connection_service = ConnectionService(db)
-    table_service = TableService(db)
-    connection = connection_service.get_connection(request.connection_id)
-    
-    if not connection:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Connection with id {request.connection_id} not found"
-        )
-    
-    # Convert operation_type to a list of operations
-    operations = []
-    if request.operation_type == OperationType.INSERT:
-        operations = ["insert"]
-    elif request.operation_type == OperationType.UPDATE:
-        operations = ["update"]
-    elif request.operation_type == OperationType.DELETE:
-        operations = ["delete"]
-    else:  # ALL
-        operations = ["insert", "update", "delete"]
-    
-    # Update connection status
-    connection_service.update_connection_status(
-        connection_id=connection.id,
-        status=ConnectionStatus.BUSY
-    )
-    
-    # Initialize pillow fight service
-    pillow_fight = PillowFightService(
-        db_type=connection.db_type,
-        host=connection.host,
-        port=connection.port,
-        database=connection.database_name,
-        username=connection.username,
-        password=connection.password,
-        operation_types=operations,
-        operation_delay=request.operation_delay,
-        batch_size=request.batch_size
-        # Schema name will be passed per table
-    )
-    
-    # Register the pillow fight
-    fight_ids = []
-    table_ids_found = []
-    
-    for table_id in request.table_ids:
-        # Get table config from database
-        table_config = table_service.get_table(table_id)
-        if not table_config:
-            logger.warning(f"Table with ID {table_id} not found, skipping")
-            continue
-            
-        if table_config.connection_id != connection.id:
-            logger.warning(f"Table with ID {table_id} does not belong to connection {connection.id}, skipping")
-            continue
-            
-        table_name = table_config.table_name
-        fight_id = f"{connection.id}_{table_id}"
+    try:
+        # Get the connection service
+        connection_service = ConnectionService(db)
+        table_service = TableService(db)
         
-        # Stop existing pillow fight if running
-        if fight_id in active_pillow_fights:
-            await active_pillow_fights[fight_id].stop_pillow_fight(table_name)
+        # Check if connection exists
+        connection = connection_service.get_connection(request.connection_id)
+        if not connection:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Connection with ID {request.connection_id} not found"
+            )
         
-        # Store the pillow fight service
-        active_pillow_fights[fight_id] = pillow_fight
+        # Check if tables exist
+        table_ids = request.table_ids if hasattr(request, 'table_ids') else []
+        if not table_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No table IDs provided"
+            )
         
-        # Get schema name for AS400 databases
-        schema_name = table_config.schema_name if connection.db_type == DatabaseType.AS400 else None
+        tables = []
+        for table_id in table_ids:
+            table = table_service.get_table(table_id)
+            if not table:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Table with ID {table_id} not found"
+                )
+            tables.append(table)
         
-        # Log if we have a schema for AS400
-        if connection.db_type == DatabaseType.AS400:
-            if schema_name:
-                logger.info(f"Using schema '{schema_name}' for AS400 table '{table_name}'")
+        # Check operation types
+        operation_types = request.operation_types if hasattr(request, 'operation_types') else ["INSERT", "UPDATE", "DELETE"]
+        valid_operation_types = [op.value for op in OperationType]
+        valid_operation_types_upper = [op.upper() for op in valid_operation_types]
+        
+        # Normalize operation types to lowercase for comparison
+        normalized_operation_types = []
+        for op_type in operation_types:
+            if op_type.upper() in valid_operation_types_upper:
+                # Find the corresponding enum value
+                index = valid_operation_types_upper.index(op_type.upper())
+                normalized_operation_types.append(valid_operation_types[index])
             else:
-                logger.warning(f"No schema provided for AS400 table '{table_name}', will use default schema")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid operation type: {op_type}"
+                )
         
-        # Start new pillow fight - pass the table configuration to use its schema info
+        # Replace the original operation_types with normalized ones
+        operation_types = normalized_operation_types
+        
+        # Create a unique ID for this pillow fight
+        fight_id = f"{request.connection_id}_{'-'.join(map(str, table_ids))}"
+        
+        # Check if pillow fight is already running
+        if fight_id in active_pillow_fights:
+            return PillowFightResponse(
+                connection_id=request.connection_id,
+                table_ids=table_ids,
+                operation_types=operation_types,
+                operation_delay=request.operation_delay if hasattr(request, 'operation_delay') else 1.0,
+                batch_size=request.batch_size if hasattr(request, 'batch_size') else 1,
+                status="already_running",
+                fight_id=fight_id
+            )
+        
+        # Create a new pillow fight service
+        pillow_fight_service = PillowFightService(db)
+        
+        # Start the pillow fight
+        pillow_fight_service.start_pillow_fight(
+            connection_id=request.connection_id,
+            table_ids=table_ids,
+            operation_types=operation_types,
+            operation_delay=request.operation_delay if hasattr(request, 'operation_delay') else 1.0,
+            batch_size=request.batch_size if hasattr(request, 'batch_size') else 1
+        )
+        
+        # Store the pillow fight
+        active_pillow_fights[fight_id] = pillow_fight_service
+        
+        # Add a background task to check when pillow fight is complete
         background_tasks.add_task(
-            pillow_fight.start_pillow_fight,
-            table_name=table_name,
-            schema_name=schema_name,
-            on_complete=lambda: pillow_fight_complete(fight_id, connection.id),
-            table_config=table_config
+            pillow_fight_complete,
+            fight_id,
+            request.connection_id
         )
         
-        fight_ids.append(fight_id)
-        table_ids_found.append(table_id)
-    
-    if not table_ids_found:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No valid tables found for the provided table IDs"
+        return PillowFightResponse(
+            connection_id=request.connection_id,
+            table_ids=table_ids,
+            operation_types=operation_types,
+            operation_delay=request.operation_delay if hasattr(request, 'operation_delay') else 1.0,
+            batch_size=request.batch_size if hasattr(request, 'batch_size') else 1,
+            status="started",
+            fight_id=fight_id
         )
-    
-    return PillowFightResponse(
-        connection_id=connection.id,
-        table_ids=table_ids_found,
-        operation_types=operations,
-        operation_delay=request.operation_delay,
-        batch_size=request.batch_size,
-        fight_ids=fight_ids,
-        message=f"Started pillow fight for {len(table_ids_found)} tables"
-    )
+    except Exception as e:
+        logger.error(f"Error starting pillow fight: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error starting pillow fight: {str(e)}"
+        )
 
-
-@router.post("/stop/{connection_id}/{table_id}", status_code=status.HTTP_200_OK)
-async def stop_pillow_fight(
+@router.post("/stop/{connection_id}/{table_id}", status_code=status.HTTP_202_ACCEPTED)
+def stop_pillow_fight(
     connection_id: int,
     table_id: int,
-    db: Session = Depends(get_db)
+    db = Depends(get_db)
 ):
     """Stop a pillow fight for a specific table."""
-    fight_id = f"{connection_id}_{table_id}"
-    
-    if fight_id not in active_pillow_fights:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No active pillow fight found for table ID {table_id}"
-        )
-    
-    # Get table name for the table ID
-    table_service = TableService(db)
-    table_config = table_service.get_table(table_id)
-    
-    if not table_config:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Table with ID {table_id} not found"
-        )
+    try:
+        # Create the fight ID
+        fight_id = f"{connection_id}_{table_id}"
         
-    table_name = table_config.table_name
-    schema_name = table_config.schema_name
-    pillow_fight = active_pillow_fights[fight_id]
-    
-    # Use schema_name for AS400
-    connection_service = ConnectionService(db)
-    connection = connection_service.get_connection(connection_id)
-    if connection and connection.db_type == DatabaseType.AS400 and schema_name:
-        await pillow_fight.stop_pillow_fight(table_name, schema_name)
-    else:
-        await pillow_fight.stop_pillow_fight(table_name)
-    
-    # Check if there are any other pillow fights for this connection
-    connection_fights = [fid for fid in active_pillow_fights.keys() if fid.startswith(f"{connection_id}_")]
-    
-    # If no other pillow fights are running for this connection, update status
-    if not connection_fights:
+        # Check if pillow fight is running
+        if fight_id not in active_pillow_fights:
+            return {
+                "status": "not_running",
+                "message": f"Pillow fight for connection {connection_id} and table {table_id} is not running"
+            }
+        
+        # Stop the pillow fight
+        pillow_fight_service = active_pillow_fights[fight_id]
+        pillow_fight_service.stop_pillow_fight(connection_id, table_id)
+        
+        # Remove from active pillow fights
+        del active_pillow_fights[fight_id]
+        
+        # Update the connection status
         connection_service = ConnectionService(db)
-        connection_service.update_connection_status(
-            connection_id=connection_id,
-            status=ConnectionStatus.CONNECTED
+        connection = connection_service.get_connection(connection_id)
+        if connection:
+            connection.status = ConnectionStatus.IDLE
+            connection_service.update_connection(connection_id, connection)
+        
+        return {
+            "status": "stopped",
+            "message": f"Pillow fight stopped for connection {connection_id} and table {table_id}"
+        }
+    except Exception as e:
+        logger.error(f"Error stopping pillow fight: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error stopping pillow fight: {str(e)}"
         )
-    
-    return {"message": f"Stopped pillow fight for table {table_name}"}
 
-
-@router.post("/stop/all", status_code=status.HTTP_200_OK)
-async def stop_all_pillow_fights(db: Session = Depends(get_db)):
+@router.post("/stop-all", status_code=status.HTTP_202_ACCEPTED)
+def stop_all_pillow_fights(db = Depends(get_db)):
     """Stop all running pillow fights."""
-    connection_ids = set()
-    table_service = TableService(db)
-    
-    # Stop all pillow fights
-    for fight_id in list(active_pillow_fights.keys()):
-        connection_id, table_id_str = fight_id.split("_", 1)
-        connection_ids.add(int(connection_id))
+    try:
+        # Stop all pillow fights
+        for fight_id, pillow_fight_service in active_pillow_fights.items():
+            try:
+                # Parse the fight ID
+                parts = fight_id.split('_')
+                if len(parts) >= 2:
+                    connection_id = int(parts[0])
+                    table_id = int(parts[1])
+                    
+                    # Stop the pillow fight
+                    pillow_fight_service.stop_pillow_fight(connection_id, table_id)
+                    
+                    # Update the connection status
+                    connection_service = ConnectionService(db)
+                    connection = connection_service.get_connection(connection_id)
+                    if connection:
+                        connection.status = ConnectionStatus.IDLE
+                        connection_service.update_connection(connection_id, connection)
+            except Exception as e:
+                logger.error(f"Error stopping pillow fight {fight_id}: {str(e)}")
         
-        try:
-            # Convert table_id from string to int
-            table_id = int(table_id_str)
-            
-            # Look up the table info from the database
-            table_config = table_service.get_table(table_id)
-            if not table_config:
-                logger.warning(f"Table with ID {table_id} not found when stopping all pillow fights")
-                continue
-                
-            table_name = table_config.table_name
-            schema_name = table_config.schema_name
-            pillow_fight = active_pillow_fights[fight_id]
-            
-            # Get connection to check if it's AS400
-            connection_service = ConnectionService(db)
-            connection = connection_service.get_connection(int(connection_id))
-            
-            # Use schema_name for AS400
-            if connection and connection.db_type == DatabaseType.AS400 and schema_name:
-                await pillow_fight.stop_pillow_fight(table_name, schema_name)
-            else:
-                await pillow_fight.stop_pillow_fight(table_name)
-        except Exception as e:
-            logger.error(f"Error stopping pillow fight {fight_id}: {str(e)}")
-    
-    # Update all connections to CONNECTED
-    connection_service = ConnectionService(db)
-    for connection_id in connection_ids:
-        connection_service.update_connection_status(
-            connection_id=connection_id,
-            status=ConnectionStatus.CONNECTED
+        # Clear active pillow fights
+        active_pillow_fights.clear()
+        
+        return {
+            "status": "stopped",
+            "message": "All pillow fights stopped"
+        }
+    except Exception as e:
+        logger.error(f"Error stopping all pillow fights: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error stopping all pillow fights: {str(e)}"
         )
-    
-    return {"message": f"Stopped all pillow fights ({len(active_pillow_fights)} total)"}
 
-
-@router.get("/status", response_model=PillowFightStatusResponse, status_code=status.HTTP_200_OK)
-async def get_pillow_fight_status(db: Session = Depends(get_db)):
+@router.get("/status", response_model=PillowFightStatusResponse)
+def get_pillow_fight_status(db = Depends(get_db)):
     """Get status of all running pillow fights."""
-    status_items = []
-    table_service = TableService(db)
-    
-    for fight_id, pillow_fight in active_pillow_fights.items():
-        connection_id, table_id_str = fight_id.split("_", 1)
+    try:
+        # Get status of all pillow fights
+        status_items = []
+        table_service = TableService(db)
         
-        try:
-            # Convert table_id from string to int
-            table_id = int(table_id_str)
-            
-            # Look up the table info from the database
-            table_config = table_service.get_table(table_id)
-            if not table_config:
-                logger.warning(f"Table with ID {table_id} not found, skipping status")
-                continue
-                
-            table_name = table_config.table_name
-            schema_name = table_config.schema_name
-            
-            # Get connection to check if it's AS400
-            connection_service = ConnectionService(db)
-            connection = connection_service.get_connection(int(connection_id))
-            
-            # Get stats with schema name for AS400
-            if connection and connection.db_type == DatabaseType.AS400 and schema_name:
-                stats = pillow_fight.get_stats(table_name, schema_name)
-            else:
-                stats = pillow_fight.get_stats(table_name)
-            
-            start_time = stats.get("start_time")
-            last_operation_time = stats.get("last_operation_time")
-            
-            status_items.append(PillowFightStatusItem(
-                fight_id=fight_id,
-                connection_id=int(connection_id),
-                table_id=table_id,
-                table_name=table_name,
-                operation_types=pillow_fight.operation_types,
-                operation_delay=pillow_fight.operation_delay,
-                batch_size=pillow_fight.batch_size,
-                start_time=start_time.isoformat() if start_time else None,
-                last_operation_time=last_operation_time.isoformat() if last_operation_time else None,
-                status=stats.get("status", "unknown"),
-                operations=stats.get("operations", {"insert": 0, "update": 0, "delete": 0}),
-                duration=stats.get("duration")
-            ))
-        except Exception as e:
-            logger.error(f"Error processing fight_id {fight_id}: {str(e)}")
-    
-    return PillowFightStatusResponse(pillow_fights=status_items)
-
+        for fight_id, pillow_fight_service in active_pillow_fights.items():
+            try:
+                # Parse the fight ID
+                parts = fight_id.split('_')
+                if len(parts) >= 2:
+                    connection_id = int(parts[0])
+                    table_id = int(parts[1])
+                    
+                    # Get the table
+                    table = table_service.get_table(table_id)
+                    if not table:
+                        continue
+                    
+                    # Get the status
+                    status = pillow_fight_service.get_status(connection_id, table_id)
+                    if status:
+                        status_item = PillowFightStatusItem(
+                            fight_id=fight_id,
+                            connection_id=connection_id,
+                            table_id=table_id,
+                            table_name=table.table_name,
+                            operation_types=status.get("operation_types", []),
+                            operation_delay=status.get("operation_delay", 1.0),
+                            batch_size=status.get("batch_size", 1),
+                            start_time=status.get("start_time"),
+                            last_operation_time=status.get("last_operation_time"),
+                            status=status.get("status", "unknown"),
+                            operations=status.get("operations", {}),
+                            duration=status.get("duration")
+                        )
+                        status_items.append(status_item)
+            except Exception as e:
+                logger.error(f"Error getting status for pillow fight {fight_id}: {str(e)}")
+        
+        return PillowFightStatusResponse(pillow_fights=status_items)
+    except Exception as e:
+        logger.error(f"Error getting pillow fight status: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting pillow fight status: {str(e)}"
+        )
 
 def pillow_fight_complete(fight_id: str, connection_id: int):
     """Callback when a pillow fight is complete."""
-    if fight_id in active_pillow_fights:
-        del active_pillow_fights[fight_id]
-    
-    # Check if there are any other pillow fights for this connection
-    connection_fights = [fid for fid in active_pillow_fights.keys() if fid.startswith(f"{connection_id}_")]
-    
-    # If no other pillow fights are running for this connection, update status
-    if not connection_fights:
-        # Need to create a new DB session since this is called from a background task
-        from database import SessionLocal
-        db = SessionLocal()
-        try:
-            connection_service = ConnectionService(db)
-            connection_service.update_connection_status(
-                connection_id=connection_id,
-                status=ConnectionStatus.CONNECTED
-            )
-        finally:
-            db.close()
+    try:
+        # Check if pillow fight is still running
+        if fight_id not in active_pillow_fights:
+            return
+        
+        # Get the pillow fight service
+        pillow_fight_service = active_pillow_fights[fight_id]
+        
+        # Check if the connection is still running
+        db = get_db()
+        connection_service = ConnectionService(db)
+        connection = connection_service.get_connection(connection_id)
+        
+        if not connection or connection.status != ConnectionStatus.RUNNING:
+            # Stop the pillow fight
+            parts = fight_id.split('_')
+            if len(parts) >= 2:
+                table_id = int(parts[1])
+                pillow_fight_service.stop_pillow_fight(connection_id, table_id)
+            
+            # Remove from active pillow fights
+            del active_pillow_fights[fight_id]
+            logger.info(f"Pillow fight {fight_id} completed")
+    except Exception as e:
+        logger.error(f"Error in pillow fight complete callback: {str(e)}")

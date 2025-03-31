@@ -56,7 +56,7 @@ class DatabaseConnection:
     """Database connection information."""
     
     def __init__(self, id=None, name=None, description=None, db_type=None, host=None, port=None,
-                 username=None, password=None, database_name=None, connection_string=None, 
+                 username=None, password=None, database=None, connection_string=None, 
                  status=ConnectionStatus.IDLE, created_at=None, updated_at=None, last_operation_at=None):
         self.id = id
         self.name = name 
@@ -66,7 +66,7 @@ class DatabaseConnection:
         self.port = port
         self.username = username
         self.password = password
-        self.database_name = database_name
+        self.database = database
         self.connection_string = connection_string
         self.status = status
         self.created_at = created_at or datetime.now()
@@ -86,7 +86,7 @@ class DatabaseConnection:
             port=row['port'],
             username=row['username'],
             password=row['password'],
-            database_name=row['database_name'],
+            database=row['database'],
             connection_string=row['connection_string'],
             status=ConnectionStatus(row['status']),
             created_at=row['created_at'],
@@ -106,7 +106,7 @@ class DatabaseConnection:
             'port': self.port,
             'username': self.username,
             'password': self.password,
-            'database_name': self.database_name,
+            'database': self.database,
             'connection_string': self.connection_string,
             'status': self.status.value if self.status else 'idle',
             'last_operation_at': self.last_operation_at

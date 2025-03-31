@@ -29,10 +29,8 @@ import time
 import datetime
 import threading
 import uuid
+import json
 from typing import Dict, List, Any, Optional, Tuple
-from sqlalchemy import text, insert, update, delete, select, MetaData, Table, Column
-from sqlalchemy.orm import Session
-from sqlalchemy.sql import quoted_name
 
 from models import DatabaseConnection, TableConfig, OperationLog, OperationType, ConnectionStatus
 from config import settings
@@ -45,163 +43,104 @@ running_whisperers = {}
 
 
 class WhispererService:
-    def __init__(self, db: Session):
+    def __init__(self, db):
         self.db = db
         self.stop_events = {}  # Connection ID -> threading.Event
         
-    async def test_connection(self) -> Tuple[bool, str]:
-        """Test a database connection"""
-        try:
-            # Use the DatabaseService to test the connection
-            from services.database_service import DatabaseService
-            db_service = DatabaseService(self.db)
-            return True, "Connection successful"
-        except Exception as e:
-            logger.error(f"Connection test failed: {str(e)}")
-            return False, f"Connection failed: {str(e)}"
-            
-    async def list_tables(self, connection_id: int = None, schema: str = None) -> List[str]:
-        """List all tables for a connection
-        
-        Args:
-            connection_id: Database connection ID
-            schema: Schema name (required for most databases)
-            
-        Returns:
-            List of table names
-        """
-        try:
-            # Use the DatabaseService to get the actual tables from the connection
-            from services.database_service import DatabaseService
-            db_service = DatabaseService(self.db)
-            
-            if connection_id is None:
-                # If no connection ID is provided, get the first available connection
-                connections = db_service.get_connections(limit=1)
-                if not connections:
-                    logger.error("No database connections found")
-                    return []
-                connection_id = connections[0].id
-                
-            # Get tables from the actual database connection
-            # Schema is required for most database types and will raise an error if missing
-            return db_service.get_tables(connection_id, schema=schema)
-        except ValueError as e:
-            # Pass through the schema error from the database service
-            raise ValueError(str(e))
-        except Exception as e:
-            logger.error(f"Failed to list tables: {str(e)}")
-            return []
-
     def start_whisperer(self, connection_id: int) -> None:
-        """Start the whisperer for a connection."""
+        """Start a whisperer for a connection."""
+        # Check if the whisperer is already running
         global running_whisperers
-        
-        # Get the connection
-        db_connection = self.db.query(DatabaseConnection).filter(
-            DatabaseConnection.id == connection_id
-        ).first()
-        
-        if not db_connection:
-            raise ValueError(f"Connection with ID {connection_id} not found")
-        
-        # Update the connection status
-        db_connection.status = ConnectionStatus.RUNNING
-        self.db.commit()
-        
-        # Create a stop event for this connection if it doesn't exist
-        if connection_id not in self.stop_events:
-            self.stop_events[connection_id] = threading.Event()
-        else:
-            # Reset the event if it exists
-            self.stop_events[connection_id].clear()
-        
-        # Check if there's already an whisperer running for this connection
         if connection_id in running_whisperers:
-            logger.info(f"Whisperer already running for connection {connection_id}")
+            logger.info(f"Whisperer for connection {connection_id} is already running")
             return
         
-        # Start the whisperer in a new thread
-        whisperer_thread = threading.Thread(
+        # Create a stop event
+        stop_event = threading.Event()
+        self.stop_events[connection_id] = stop_event
+        
+        # Start the whisperer in a separate thread
+        thread = threading.Thread(
             target=self._run_whisperer,
-            args=(connection_id, self.stop_events[connection_id]),
+            args=(connection_id, stop_event),
             daemon=True
         )
-        whisperer_thread.start()
+        thread.start()
         
-        # Track the running whisperer
-        running_whisperers[connection_id] = whisperer_thread
+        # Add to tracking
+        running_whisperers[connection_id] = {
+            "thread": thread,
+            "stop_event": stop_event,
+            "started_at": datetime.datetime.now()
+        }
+        
         logger.info(f"Started whisperer for connection {connection_id}")
-
+    
     def stop_whisperer(self, connection_id: int) -> None:
-        """Stop the whisperer for a connection."""
-        global running_whisperers
-        
-        # Get the connection
-        db_connection = self.db.query(DatabaseConnection).filter(
-            DatabaseConnection.id == connection_id
-        ).first()
-        
-        if not db_connection:
-            raise ValueError(f"Connection with ID {connection_id} not found")
-        
+        """Stop a whisperer for a connection."""
         # Check if the whisperer is running
+        global running_whisperers
         if connection_id not in running_whisperers:
-            logger.info(f"No whisperer running for connection {connection_id}")
+            logger.info(f"Whisperer for connection {connection_id} is not running")
             return
         
-        # Signal the whisperer to stop
-        if connection_id in self.stop_events:
-            self.stop_events[connection_id].set()
-        
-        # Update the connection status
-        db_connection.status = ConnectionStatus.IDLE
-        self.db.commit()
+        # Set the stop event
+        stop_event = self.stop_events.get(connection_id)
+        if stop_event:
+            stop_event.set()
         
         # Remove from tracking
         if connection_id in running_whisperers:
             del running_whisperers[connection_id]
         
+        # Remove from stop events
+        if connection_id in self.stop_events:
+            del self.stop_events[connection_id]
+        
         logger.info(f"Stopped whisperer for connection {connection_id}")
-
+    
     def pause_whisperer(self, connection_id: int) -> None:
-        """Pause the whisperer for a connection."""
-        # Get the connection
-        db_connection = self.db.query(DatabaseConnection).filter(
-            DatabaseConnection.id == connection_id
-        ).first()
-        
-        if not db_connection:
-            raise ValueError(f"Connection with ID {connection_id} not found")
-        
+        """Pause a whisperer for a connection."""
         # Check if the whisperer is running
+        global running_whisperers
         if connection_id not in running_whisperers:
-            logger.info(f"No whisperer running for connection {connection_id}")
+            logger.info(f"Whisperer for connection {connection_id} is not running")
+            return
+        
+        # Get the connection
+        db_connection = self.db.query_one("SELECT * FROM database_connections WHERE id = ?", (connection_id,))
+        if not db_connection:
+            logger.error(f"Connection with ID {connection_id} not found")
             return
         
         # Update the connection status to paused
+        db_connection = DatabaseConnection(**db_connection)
         db_connection.status = ConnectionStatus.PAUSED
+        self.db.execute("UPDATE database_connections SET status = ? WHERE id = ?", 
+                        (ConnectionStatus.PAUSED.value, connection_id))
         self.db.commit()
         
         logger.info(f"Paused whisperer for connection {connection_id}")
-
+    
     def resume_whisperer(self, connection_id: int) -> None:
-        """Resume the whisperer for a connection."""
+        """Resume a paused whisperer for a connection."""
+        # Check if the whisperer is running
+        global running_whisperers
+        if connection_id not in running_whisperers:
+            logger.info(f"Whisperer for connection {connection_id} is not running")
+            return
+        
         # Get the connection
-        db_connection = self.db.query(DatabaseConnection).filter(
-            DatabaseConnection.id == connection_id
-        ).first()
-        
+        db_connection = self.db.query_one("SELECT * FROM database_connections WHERE id = ?", (connection_id,))
         if not db_connection:
-            raise ValueError(f"Connection with ID {connection_id} not found")
-        
-        # Check if the whisperer is paused
-        if db_connection.status != ConnectionStatus.PAUSED:
-            logger.info(f"Whisperer for connection {connection_id} is not paused")
+            logger.error(f"Connection with ID {connection_id} not found")
             return
         
         # Update the connection status to running
+        db_connection = DatabaseConnection(**db_connection)
         db_connection.status = ConnectionStatus.RUNNING
+        self.db.execute("UPDATE database_connections SET status = ? WHERE id = ?", 
+                        (ConnectionStatus.RUNNING.value, connection_id))
         self.db.commit()
         
         logger.info(f"Resumed whisperer for connection {connection_id}")
@@ -209,30 +148,26 @@ class WhispererService:
     def _run_whisperer(self, connection_id: int, stop_event: threading.Event) -> None:
         """Run the whisperer for a connection."""
         try:
-            # Create a new session for this thread
-            from database import SessionLocal
-            db = SessionLocal()
+            # Create a new database connection for this thread
+            from database import get_db
+            db = get_db()
             
             # Get the connection
-            stmt = select(DatabaseConnection).where(
-                DatabaseConnection.id == connection_id
-            )
-            db_connection = db.execute(stmt).scalar_one_or_none()
-            
-            if not db_connection:
+            db_connection_data = db.query_one("SELECT * FROM database_connections WHERE id = ?", (connection_id,))
+            if not db_connection_data:
                 logger.error(f"Connection with ID {connection_id} not found")
                 return
             
+            db_connection = DatabaseConnection(**db_connection_data)
+            
             # Get the tables for this connection
-            stmt = select(TableConfig).where(
-                TableConfig.connection_id == connection_id,
-                TableConfig.enabled == True
-            )
-            db_tables = list(db.execute(stmt).scalars().all())
+            tables_data = db.query("SELECT * FROM table_configs WHERE connection_id = ? AND enabled = 1", (connection_id,))
+            db_tables = [TableConfig(**table) for table in tables_data]
             
             if not db_tables:
                 logger.error(f"No enabled tables found for connection {connection_id}")
-                db_connection.status = ConnectionStatus.IDLE
+                db.execute("UPDATE database_connections SET status = ? WHERE id = ?", 
+                           (ConnectionStatus.IDLE.value, connection_id))
                 db.commit()
                 return
             
@@ -244,7 +179,9 @@ class WhispererService:
             # Main loop for the whisperer
             while not stop_event.is_set():
                 # Refresh connection status from database
-                db.refresh(db_connection)
+                db_connection_data = db.query_one("SELECT * FROM database_connections WHERE id = ?", (connection_id,))
+                if db_connection_data:
+                    db_connection = DatabaseConnection(**db_connection_data)
                 
                 # Check if the whisperer is paused
                 if db_connection.status == ConnectionStatus.PAUSED:
@@ -259,7 +196,8 @@ class WhispererService:
                     self._perform_operation(engine, db, table)
                     
                     # Update the last operation time
-                    db_connection.last_operation_at = datetime.datetime.now()
+                    db.execute("UPDATE database_connections SET last_operation_at = ? WHERE id = ?", 
+                               (datetime.datetime.now().isoformat(), connection_id))
                     db.commit()
                     
                     # Sleep for the specified delay
@@ -268,45 +206,41 @@ class WhispererService:
                     logger.error(f"Error performing operation on table {table.table_name}: {str(e)}")
                     
                     # Log the operation failure
-                    operation_log = OperationLog(
-                        table_config_id=table.id,
-                        operation_type=OperationType.ALL,  # Default since the operation failed
-                        status="FAILED",
-                        error_message=str(e)
+                    operation_log = {
+                        "table_config_id": table.id,
+                        "operation_type": OperationType.ALL.value,  # Default since the operation failed
+                        "status": "FAILED",
+                        "error_message": str(e),
+                        "created_at": datetime.datetime.now().isoformat()
+                    }
+                    
+                    db.execute(
+                        "INSERT INTO operation_logs (table_config_id, operation_type, status, error_message, created_at) VALUES (?, ?, ?, ?, ?)",
+                        (operation_log["table_config_id"], operation_log["operation_type"], 
+                         operation_log["status"], operation_log["error_message"], operation_log["created_at"])
                     )
-                    db.add(operation_log)
                     db.commit()
                     
-                    # Sleep a bit before trying again
-                    time.sleep(1)
-        
+                    # Sleep before retrying
+                    time.sleep(5)
+                    
         except Exception as e:
-            logger.error(f"Error running whisperer for connection {connection_id}: {str(e)}")
-            
-            try:
-                # Update the connection status to error
-                stmt = select(DatabaseConnection).where(
-                    DatabaseConnection.id == connection_id
-                )
-                db_connection = db.execute(stmt).scalar_one_or_none()
-                
-                if db_connection:
-                    db_connection.status = ConnectionStatus.ERROR
-                    db.commit()
-            except Exception as inner_e:
-                logger.error(f"Error updating connection status: {str(inner_e)}")
-        
+            logger.error(f"Error in whisperer thread for connection {connection_id}: {str(e)}")
         finally:
-            # Clean up
-            if 'db' in locals():
-                db.close()
+            # Update the connection status to idle
+            try:
+                db.execute("UPDATE database_connections SET status = ? WHERE id = ?", 
+                           (ConnectionStatus.IDLE.value, connection_id))
+                db.commit()
+            except:
+                pass
             
             # Remove from tracking
             global running_whisperers
             if connection_id in running_whisperers:
                 del running_whisperers[connection_id]
 
-    def _perform_operation(self, engine, db: Session, table_config: TableConfig) -> None:
+    def _perform_operation(self, engine, db, table_config: TableConfig) -> None:
         """Perform a random operation on a table."""
         # Determine the operation type
         operation_type = table_config.operation_type
@@ -337,35 +271,42 @@ class WhispererService:
         elif operation_type == OperationType.DELETE:
             self._perform_delete(engine, db, table_config, primary_keys)
 
-    def _perform_insert(self, engine, db: Session, table_config: TableConfig, column_definitions, primary_keys) -> None:
+    def _perform_insert(self, engine, db, table_config: TableConfig, column_definitions, primary_keys) -> None:
         """Perform an insert operation on a table."""
         try:
             # Generate random data for each column
             data = self._generate_random_data(column_definitions, primary_keys)
             
-            # Build the table object using SQLAlchemy core
-            metadata = MetaData()
+            # Build the fully qualified table name
             table_name = table_config.table_name
             if table_config.schema_name:
-                table_name = quoted_name(f"{table_config.schema_name}.{table_name}", True)
+                table_name = f"{table_config.schema_name}.{table_name}"
                 
             # Build the insert statement
-            stmt = text(f"INSERT INTO {table_name} ({', '.join(data.keys())}) VALUES ({', '.join([':' + k for k in data.keys()])})")
+            placeholders = ', '.join(['?' for _ in data.keys()])
+            stmt = f"INSERT INTO {table_name} ({', '.join(data.keys())}) VALUES ({placeholders})"
             
             # Execute the insert
-            with engine.begin() as conn:
-                result = conn.execute(stmt, data)
-                inserted_id = result.lastrowid if result.lastrowid else None
+            with engine.connect() as conn:
+                result = conn.execute(stmt, list(data.values()))
+                inserted_id = result.lastrowid if hasattr(result, 'lastrowid') else None
             
             # Log the operation
-            operation_log = OperationLog(
-                table_config_id=table_config.id,
-                operation_type=OperationType.INSERT,
-                record_id=str(inserted_id) if inserted_id else None,
-                operation_data=data,
-                status="SUCCESS"
+            operation_log = {
+                "table_config_id": table_config.id,
+                "operation_type": OperationType.INSERT.value,
+                "record_id": str(inserted_id) if inserted_id else None,
+                "operation_data": json.dumps(data),
+                "status": "SUCCESS",
+                "created_at": datetime.datetime.now().isoformat()
+            }
+            
+            db.execute(
+                "INSERT INTO operation_logs (table_config_id, operation_type, record_id, operation_data, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (operation_log["table_config_id"], operation_log["operation_type"], 
+                 operation_log["record_id"], operation_log["operation_data"], 
+                 operation_log["status"], operation_log["created_at"])
             )
-            db.add(operation_log)
             db.commit()
             
             logger.info(f"Inserted record into {table_config.table_name}")
@@ -374,7 +315,7 @@ class WhispererService:
             logger.error(f"Error performing insert on {table_config.table_name}: {str(e)}")
             raise
 
-    def _perform_update(self, engine, db: Session, table_config: TableConfig, column_definitions, primary_keys) -> None:
+    def _perform_update(self, engine, db, table_config: TableConfig, column_definitions, primary_keys) -> None:
         """Perform an update operation on a table."""
         try:
             # First, get a random existing record
@@ -398,11 +339,11 @@ class WhispererService:
             
             # Build the where clause for the primary keys
             where_clauses = []
-            where_data = {}
+            where_values = []
             for pk in primary_keys:
                 if pk in existing_record:
-                    where_clauses.append(f"{pk} = :where_{pk}")
-                    where_data[f"where_{pk}"] = existing_record[pk]
+                    where_clauses.append(f"{pk} = ?")
+                    where_values.append(existing_record[pk])
             
             if not where_clauses:
                 logger.error(f"No primary key values found for record in {table_config.table_name}")
@@ -411,32 +352,35 @@ class WhispererService:
             # Build the update statement
             table_name = table_config.table_name
             if table_config.schema_name:
-                table_name = quoted_name(f"{table_config.schema_name}.{table_name}", True)
+                table_name = f"{table_config.schema_name}.{table_name}"
                 
-            set_clauses = [f"{col} = :set_{col}" for col in data.keys()]
-            set_data = {f"set_{col}": value for col, value in data.items()}
+            set_clauses = [f"{col} = ?" for col in data.keys()]
             
-            stmt = text(f"UPDATE {table_name} SET {', '.join(set_clauses)} WHERE {' AND '.join(where_clauses)}")
-            
-            # Combine the set data and where data
-            combined_data = {**set_data, **where_data}
+            stmt = f"UPDATE {table_name} SET {', '.join(set_clauses)} WHERE {' AND '.join(where_clauses)}"
             
             # Execute the update
-            with engine.begin() as conn:
-                result = conn.execute(stmt, combined_data)
+            with engine.connect() as conn:
+                conn.execute(stmt, list(data.values()) + where_values)
             
             # Log the operation
-            operation_log = OperationLog(
-                table_config_id=table_config.id,
-                operation_type=OperationType.UPDATE,
-                record_id=record_id,
-                operation_data={
+            operation_log = {
+                "table_config_id": table_config.id,
+                "operation_type": OperationType.UPDATE.value,
+                "record_id": record_id,
+                "operation_data": json.dumps({
                     "before": existing_record,
                     "after": data
-                },
-                status="SUCCESS"
+                }),
+                "status": "SUCCESS",
+                "created_at": datetime.datetime.now().isoformat()
+            }
+            
+            db.execute(
+                "INSERT INTO operation_logs (table_config_id, operation_type, record_id, operation_data, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (operation_log["table_config_id"], operation_log["operation_type"], 
+                 operation_log["record_id"], operation_log["operation_data"], 
+                 operation_log["status"], operation_log["created_at"])
             )
-            db.add(operation_log)
             db.commit()
             
             logger.info(f"Updated record in {table_config.table_name}")
@@ -445,7 +389,7 @@ class WhispererService:
             logger.error(f"Error performing update on {table_config.table_name}: {str(e)}")
             raise
 
-    def _perform_delete(self, engine, db: Session, table_config: TableConfig, primary_keys) -> None:
+    def _perform_delete(self, engine, db, table_config: TableConfig, primary_keys) -> None:
         """Perform a delete operation on a table."""
         try:
             # First, get a random existing record
@@ -457,11 +401,11 @@ class WhispererService:
             
             # Build the where clause for the primary keys
             where_clauses = []
-            where_data = {}
+            where_values = []
             for pk in primary_keys:
                 if pk in existing_record:
-                    where_clauses.append(f"{pk} = :where_{pk}")
-                    where_data[f"where_{pk}"] = existing_record[pk]
+                    where_clauses.append(f"{pk} = ?")
+                    where_values.append(existing_record[pk])
             
             if not where_clauses:
                 logger.error(f"No primary key values found for record in {table_config.table_name}")
@@ -470,23 +414,30 @@ class WhispererService:
             # Build the delete statement
             table_name = table_config.table_name
             if table_config.schema_name:
-                table_name = quoted_name(f"{table_config.schema_name}.{table_name}", True)
+                table_name = f"{table_config.schema_name}.{table_name}"
                 
-            stmt = text(f"DELETE FROM {table_name} WHERE {' AND '.join(where_clauses)}")
+            stmt = f"DELETE FROM {table_name} WHERE {' AND '.join(where_clauses)}"
             
             # Execute the delete
-            with engine.begin() as conn:
-                conn.execute(stmt, where_data)
+            with engine.connect() as conn:
+                conn.execute(stmt, where_values)
             
             # Log the operation
-            operation_log = OperationLog(
-                table_config_id=table_config.id,
-                operation_type=OperationType.DELETE,
-                record_id=record_id,
-                operation_data=existing_record,
-                status="SUCCESS"
+            operation_log = {
+                "table_config_id": table_config.id,
+                "operation_type": OperationType.DELETE.value,
+                "record_id": record_id,
+                "operation_data": json.dumps(existing_record),
+                "status": "SUCCESS",
+                "created_at": datetime.datetime.now().isoformat()
+            }
+            
+            db.execute(
+                "INSERT INTO operation_logs (table_config_id, operation_type, record_id, operation_data, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (operation_log["table_config_id"], operation_log["operation_type"], 
+                 operation_log["record_id"], operation_log["operation_data"], 
+                 operation_log["status"], operation_log["created_at"])
             )
-            db.add(operation_log)
             db.commit()
             
             logger.info(f"Deleted record from {table_config.table_name}")
@@ -495,15 +446,15 @@ class WhispererService:
             logger.error(f"Error performing delete on {table_config.table_name}: {str(e)}")
             raise
 
-    def _get_random_record(self, engine, table_config: TableConfig, primary_keys) -> Tuple[Dict[str, Any], str]:
+    def _get_random_record(self, engine, table_config: TableConfig, primary_keys) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         """Get a random record from a table."""
         try:
             table_name = table_config.table_name
             if table_config.schema_name:
-                table_name = quoted_name(f"{table_config.schema_name}.{table_name}", True)
+                table_name = f"{table_config.schema_name}.{table_name}"
             
             # First, count the total number of records
-            count_stmt = text(f"SELECT COUNT(*) as cnt FROM {table_name}")
+            count_stmt = f"SELECT COUNT(*) as cnt FROM {table_name}"
             
             with engine.connect() as conn:
                 count_result = conn.execute(count_stmt).scalar()
@@ -515,7 +466,7 @@ class WhispererService:
             offset = random.randint(0, count_result - 1)
             
             # Query a random record
-            select_stmt = text(f"SELECT * FROM {table_name} LIMIT 1 OFFSET {offset}")
+            select_stmt = f"SELECT * FROM {table_name} LIMIT 1 OFFSET {offset}"
             
             with engine.connect() as conn:
                 result = conn.execute(select_stmt).mappings().first()
@@ -556,88 +507,44 @@ class WhispererService:
             if column_info.get('default', '').lower().startswith(('nextval', 'uuid_generate')):
                 continue
             
-            col_type = column_info.get('type', '').lower()
-            nullable = column_info.get('nullable', True)
-            
-            # If column is nullable, sometimes set it to NULL
-            if nullable and random.random() < 0.2:
-                data[column_name] = None
+            # Skip columns with default values
+            if 'default' in column_info and column_info['default'] is not None:
                 continue
             
-            # Generate data based on column type
-            data[column_name] = self._generate_value_for_type(col_type)
+            # Generate random data based on column type
+            column_type = column_info.get('type', '').lower()
+            
+            if 'int' in column_type:
+                data[column_name] = random.randint(1, 1000)
+            elif 'float' in column_type or 'double' in column_type or 'real' in column_type:
+                data[column_name] = round(random.uniform(1, 1000), 2)
+            elif 'bool' in column_type:
+                data[column_name] = random.choice([True, False])
+            elif 'date' in column_type:
+                # Random date in the last 365 days
+                days = random.randint(0, 365)
+                data[column_name] = (datetime.datetime.now() - datetime.timedelta(days=days)).strftime('%Y-%m-%d')
+            elif 'time' in column_type and 'timestamp' not in column_type:
+                # Random time
+                hour = random.randint(0, 23)
+                minute = random.randint(0, 59)
+                second = random.randint(0, 59)
+                data[column_name] = f"{hour:02d}:{minute:02d}:{second:02d}"
+            elif 'timestamp' in column_type or 'datetime' in column_type:
+                # Random timestamp in the last 365 days
+                days = random.randint(0, 365)
+                hours = random.randint(0, 23)
+                minutes = random.randint(0, 59)
+                seconds = random.randint(0, 59)
+                data[column_name] = (datetime.datetime.now() - datetime.timedelta(days=days, hours=hours, minutes=minutes, seconds=seconds)).isoformat()
+            elif 'char' in column_type or 'text' in column_type or 'string' in column_type:
+                # Random string
+                length = min(10, int(column_info.get('length', 10)))
+                data[column_name] = ''.join(random.choices(string.ascii_letters + string.digits, k=length))
+            elif 'uuid' in column_type:
+                data[column_name] = str(uuid.uuid4())
+            else:
+                # Default to string for unknown types
+                data[column_name] = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
         
         return data
-
-    def _generate_value_for_type(self, col_type: str) -> Any:
-        """Generate a random value for a given SQL type."""
-        # Integer types
-        if any(t in col_type for t in ['int', 'serial', 'smallint', 'bigint']):
-            return random.randint(1, 10000)
-        
-        # Decimal/numeric types
-        elif any(t in col_type for t in ['decimal', 'numeric', 'real', 'double', 'float']):
-            return round(random.uniform(1.0, 1000.0), 2)
-        
-        # Boolean type
-        elif 'bool' in col_type:
-            return random.choice([True, False])
-        
-        # Date type
-        elif 'date' in col_type:
-            days = random.randint(0, 365 * 5)  # Random date within past 5 years
-            return (datetime.datetime.now() - datetime.timedelta(days=days)).date()
-        
-        # Time type
-        elif 'time' in col_type and 'timestamp' not in col_type:
-            hours = random.randint(0, 23)
-            minutes = random.randint(0, 59)
-            seconds = random.randint(0, 59)
-            return datetime.time(hours, minutes, seconds)
-        
-        # Timestamp type
-        elif 'timestamp' in col_type:
-            days = random.randint(0, 365 * 5)  # Random date within past 5 years
-            hours = random.randint(0, 23)
-            minutes = random.randint(0, 59)
-            seconds = random.randint(0, 59)
-            return datetime.datetime.now() - datetime.timedelta(days=days, hours=hours, minutes=minutes, seconds=seconds)
-        
-        # UUID type
-        elif 'uuid' in col_type:
-            return str(uuid.uuid4())
-        
-        # Character types
-        elif any(t in col_type for t in ['char', 'text', 'varchar']):
-            # Get the max length if specified
-            max_length = 50  # Default
-            if '(' in col_type and ')' in col_type:
-                length_str = col_type.split('(')[1].split(')')[0]
-                try:
-                    max_length = int(length_str)
-                except ValueError:
-                    pass
-            
-            # For very small char fields
-            if max_length < 5:
-                return ''.join(random.choices(string.ascii_letters, k=max_length))
-            
-            # Generate a random string
-            length = random.randint(5, min(max_length, 50))
-            return ''.join(random.choices(string.ascii_letters + string.digits + ' ', k=length))
-        
-        # JSON type
-        elif 'json' in col_type:
-            # Generate a simple JSON object
-            keys = [''.join(random.choices(string.ascii_lowercase, k=5)) for _ in range(random.randint(1, 3))]
-            values = [random.randint(1, 100) for _ in range(len(keys))]
-            return dict(zip(keys, values))
-        
-        # Binary type
-        elif any(t in col_type for t in ['blob', 'bytea', 'binary']):
-            # Generate a small binary value
-            return bytes([random.randint(0, 255) for _ in range(10)])
-        
-        # Default: return a string
-        else:
-            return ''.join(random.choices(string.ascii_letters, k=10))

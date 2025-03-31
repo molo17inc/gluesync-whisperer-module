@@ -22,12 +22,11 @@
 """
 
 import logging
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
-from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from models import DatabaseConnection, ConnectionStatus
+from schemas import TableSchemaResponse
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -35,90 +34,173 @@ logger = logging.getLogger(__name__)
 class ConnectionService:
     """Service to manage database connections."""
     
-    def __init__(self, db: Session):
+    def __init__(self, db):
         """Initialize the connection service."""
         self.db = db
     
     def get_connections(self) -> List[DatabaseConnection]:
         """Get all database connections."""
-        stmt = select(DatabaseConnection)
-        return list(self.db.execute(stmt).scalars().all())
+        connections_data = self.db.query("SELECT * FROM database_connections")
+        return [DatabaseConnection(**conn) for conn in connections_data]
     
     def get_connection(self, connection_id: int) -> Optional[DatabaseConnection]:
         """Get a database connection by ID."""
-        stmt = select(DatabaseConnection).where(
-            DatabaseConnection.id == connection_id
-        )
-        return self.db.execute(stmt).scalar_one_or_none()
+        connection_data = self.db.query_one("SELECT * FROM database_connections WHERE id = ?", (connection_id,))
+        if connection_data:
+            return DatabaseConnection(**connection_data)
+        return None
     
     def create_connection(self, connection_data: dict) -> DatabaseConnection:
         """Create a new database connection."""
-        connection = DatabaseConnection(**connection_data)
-        connection.status = ConnectionStatus.DISCONNECTED
-        connection.created_at = datetime.now()
-        connection.updated_at = datetime.now()
-        
-        self.db.add(connection)
-        self.db.commit()
-        self.db.refresh(connection)
-        
-        return connection
+        try:
+            # Ensure we have the required fields
+            required_fields = ['name', 'db_type', 'host', 'port', 'username', 'password', 'database']
+            for field in required_fields:
+                if field not in connection_data:
+                    raise ValueError(f"Missing required field: {field}")
+
+            # Create the connection
+            connection = DatabaseConnection(
+                name=connection_data['name'],
+                description=connection_data.get('description'),
+                db_type=connection_data['db_type'],
+                host=connection_data['host'],
+                port=connection_data['port'],
+                username=connection_data['username'],
+                password=connection_data['password'],
+                database=connection_data['database']
+            )
+
+            # Save to database
+            self.db.execute('''
+                INSERT INTO database_connections (
+                    name, description, type, host, port, 
+                    username, password, database, status,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                connection.name,
+                connection.description,
+                connection.db_type,
+                connection.host,
+                connection.port,
+                connection.username,
+                connection.password,
+                connection.database,
+                ConnectionStatus.IDLE.value,
+                datetime.now(),
+                datetime.now()
+            ))
+            self.db.commit()
+
+            # Get the ID of the created connection
+            connection.id = self.db.query_one('SELECT last_insert_rowid()')[0]
+            return connection
+        except Exception as e:
+            logger.error(f"Error creating connection: {str(e)}")
+            raise
     
-    def update_connection(self, connection_id: int, connection_data: dict) -> Optional[DatabaseConnection]:
+    def update_connection(self, connection_id: int, connection: DatabaseConnection) -> Optional[DatabaseConnection]:
         """Update a database connection."""
-        connection = self.get_connection(connection_id)
-        if not connection:
+        # Check if connection exists
+        existing_connection = self.get_connection(connection_id)
+        if not existing_connection:
             return None
         
-        for key, value in connection_data.items():
-            if hasattr(connection, key) and value is not None:
-                setattr(connection, key, value)
-        
+        # Update the connection
         connection.updated_at = datetime.now()
-        self.db.commit()
-        self.db.refresh(connection)
         
-        return connection
+        query = """
+        UPDATE database_connections 
+        SET name = ?, host = ?, port = ?, database = ?, username = ?, password = ?, 
+            type = ?, driver = ?, schema = ?, status = ?, updated_at = ?, last_operation_at = ?
+        WHERE id = ?
+        """
+        params = (
+            connection.name,
+            connection.host,
+            connection.port,
+            connection.database,
+            connection.username,
+            connection.password,
+            connection.type.value if connection.type else None,
+            connection.driver,
+            connection.schema,
+            connection.status.value if connection.status else None,
+            connection.updated_at.isoformat() if connection.updated_at else None,
+            connection.last_operation_at.isoformat() if connection.last_operation_at else None,
+            connection_id
+        )
+        
+        self.db.execute(query, params)
+        self.db.commit()
+        
+        # Get the updated connection
+        return self.get_connection(connection_id)
     
     def delete_connection(self, connection_id: int) -> bool:
         """Delete a database connection."""
-        connection = self.get_connection(connection_id)
-        if not connection:
+        # Check if connection exists
+        existing_connection = self.get_connection(connection_id)
+        if not existing_connection:
             return False
         
-        self.db.delete(connection)
+        # Delete the connection
+        self.db.execute("DELETE FROM database_connections WHERE id = ?", (connection_id,))
         self.db.commit()
         
         return True
     
-    def update_connection_status(self, connection_id: int, status: ConnectionStatus) -> Optional[DatabaseConnection]:
-        """Update a database connection status."""
+    def get_tables(self, connection_id: int, schema: str) -> List[str]:
+        """Get all tables for a connection with the specified schema."""
+        # Get the connection
         connection = self.get_connection(connection_id)
         if not connection:
-            return None
+            return []
         
-        connection.status = status
-        connection.updated_at = datetime.now()
+        # Get the database service
+        from services.database_service import DatabaseService
+        db_service = DatabaseService(self.db)
         
-        if status == ConnectionStatus.CONNECTED:
-            connection.last_operation_at = datetime.now()
-        
-        self.db.commit()
-        self.db.refresh(connection)
-        
-        return connection
+        # Get the tables
+        return db_service.get_tables_for_schema(connection, schema)
     
-    def update_all_busy_connections(self, status: ConnectionStatus) -> int:
-        """Update all busy connections to a new status."""
-        connections = self.db.query(DatabaseConnection).filter(
-            DatabaseConnection.status == ConnectionStatus.BUSY
-        ).all()
+    def get_table_schema(self, connection_id: int, table_name: str) -> TableSchemaResponse:
+        """Get schema for a specific table."""
+        # Get the connection
+        connection = self.get_connection(connection_id)
+        if not connection:
+            return TableSchemaResponse(
+                connection_id=connection_id,
+                table_name=table_name,
+                columns=[],
+                primary_keys=[]
+            )
         
-        count = 0
-        for connection in connections:
-            connection.status = status
-            connection.updated_at = datetime.now()
-            count += 1
+        # Get the database service
+        from services.database_service import DatabaseService
+        db_service = DatabaseService(self.db)
         
-        self.db.commit()
-        return count
+        # Get the table schema
+        schema_info = db_service.get_table_schema(connection, table_name)
+        
+        return TableSchemaResponse(
+            connection_id=connection_id,
+            table_name=table_name,
+            columns=schema_info.get("columns", []),
+            primary_keys=schema_info.get("primary_keys", [])
+        )
+    
+    def table_exists(self, connection_id: int, table_name: str) -> bool:
+        """Check if a table exists for a connection."""
+        # Get the connection
+        connection = self.get_connection(connection_id)
+        if not connection:
+            return False
+        
+        # Get the database service
+        from services.database_service import DatabaseService
+        db_service = DatabaseService(self.db)
+        
+        # Check if the table exists
+        return db_service.table_exists(connection, table_name)
