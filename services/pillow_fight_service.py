@@ -452,8 +452,12 @@ class PillowFightService:
                             data[col_name] = random.randint(10000, 99999)
                     continue
                 
-                # Generate random data based on column type
-                data[col_name] = self._generate_random_data(col_info["type"])
+                # Generate random data based on column type and name
+                column_type = col_info["type"]
+                # Add column name as an attribute to the column_type if it's an object
+                if hasattr(column_type, '__dict__'):
+                    column_type._col_name = col_name
+                data[col_name] = self._generate_random_data(column_type)
             
             logger.info(f"Generated data for insert: {data}")
             
@@ -543,7 +547,12 @@ class PillowFightService:
             data = {}
             for col_name, col_info in columns_dict.items():
                 if col_name not in primary_keys:
-                    data[col_name] = self._generate_random_data(col_info["type"])
+                    # Generate random data based on column type and name
+                    column_type = col_info["type"]
+                    # Add column name as an attribute to the column_type if it's an object
+                    if hasattr(column_type, '__dict__'):
+                        column_type._col_name = col_name
+                    data[col_name] = self._generate_random_data(column_type)
             
             # If no data to update (all columns are primary keys), return
             if not data:
@@ -939,7 +948,13 @@ class PillowFightService:
             return None
     
     def _generate_random_data(self, column_type: Any) -> Any:
-        """Generate random data based on column type."""
+        """Generate random data based on column type using Faker for more realistic data."""
+        # Initialize Faker if not already done
+        if not hasattr(self, '_faker'):
+            from faker import Faker
+            self._faker = Faker()
+            logger.info("Initialized Faker for generating realistic test data")
+        
         # Convert Java String to Python string if needed
         try:
             # Check if it's a Java String or other Java object
@@ -956,6 +971,7 @@ class PillowFightService:
             logger.error(f"Error converting column type {type(column_type)}: {str(e)}")
             column_type = 'varchar'
         
+        # Generate data based on column type
         if 'int' in column_type:
             return random.randint(1, 1000)
         elif 'float' in column_type or 'double' in column_type or 'real' in column_type:
@@ -963,34 +979,66 @@ class PillowFightService:
         elif 'bool' in column_type:
             return random.choice([True, False])
         elif 'date' in column_type:
-            # Random date in the last 365 days
-            days = random.randint(0, 365)
-            from datetime import datetime, timedelta
-            return (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+            # Use Faker for realistic dates in the last 3 years
+            return self._faker.date_between(start_date='-3y', end_date='today').strftime('%Y-%m-%d')
         elif 'time' in column_type and 'timestamp' not in column_type:
-            # Random time
-            hour = random.randint(0, 23)
-            minute = random.randint(0, 59)
-            second = random.randint(0, 59)
-            return f"{hour:02d}:{minute:02d}:{second:02d}"
+            # Use Faker for realistic time
+            return self._faker.time()
         elif 'timestamp' in column_type or 'datetime' in column_type:
-            # Random timestamp in the last 365 days
-            days = random.randint(0, 365)
-            hours = random.randint(0, 23)
-            minutes = random.randint(0, 59)
-            seconds = random.randint(0, 59)
-            from datetime import datetime, timedelta
-            return (datetime.now() - timedelta(days=days, hours=hours, minutes=minutes, seconds=seconds)).isoformat()
+            # Use Faker for realistic datetime in the last 3 years
+            return self._faker.date_time_between(start_date='-3y', end_date='now').isoformat()
         elif 'char' in column_type or 'text' in column_type or 'string' in column_type:
-            # Random string
-            length = 10
+            # Determine max length for the string
+            length = 100
             if 'varchar' in column_type or 'character varying' in column_type:
                 # Extract length from varchar(N)
                 import re
                 match = re.search(r'\((\d+)\)', column_type)
                 if match:
                     length = min(int(match.group(1)), 100)  # Cap at 100 chars
-            return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
+            
+            # Use different Faker providers based on column name hints (if available)
+            col_name = getattr(column_type, '_col_name', '').lower() if hasattr(column_type, '_col_name') else ''
+            
+            # If we don't have column name info, use a generic approach
+            if not col_name:
+                # Generate different types of realistic data based on length
+                if length < 10:
+                    return self._faker.lexify('?' * min(length, 5))
+                elif length < 20:
+                    return self._faker.word()[:length]
+                elif length < 50:
+                    return self._faker.sentence(nb_words=5)[:length]
+                else:
+                    return self._faker.paragraph(nb_sentences=3)[:length]
+            
+            # Use column name hints to generate appropriate data
+            if any(name in col_name for name in ['name', 'customer', 'person', 'user']):
+                return self._faker.name()[:length]
+            elif any(name in col_name for name in ['email', 'mail']):
+                return self._faker.email()[:length]
+            elif any(name in col_name for name in ['phone', 'tel', 'mobile']):
+                return self._faker.phone_number()[:length]
+            elif any(name in col_name for name in ['address', 'addr', 'street']):
+                return self._faker.address()[:length]
+            elif any(name in col_name for name in ['city', 'town']):
+                return self._faker.city()[:length]
+            elif any(name in col_name for name in ['country']):
+                return self._faker.country()[:length]
+            elif any(name in col_name for name in ['company', 'business', 'org']):
+                return self._faker.company()[:length]
+            elif any(name in col_name for name in ['job', 'position', 'title', 'role']):
+                return self._faker.job()[:length]
+            elif any(name in col_name for name in ['desc', 'description', 'comment', 'note']):
+                return self._faker.text(max_nb_chars=length)
+            elif any(name in col_name for name in ['id', 'code', 'number', 'num']):
+                return self._faker.bothify('#' * min(8, length))[:length]
+            else:
+                # Default to a sentence or paragraph based on length
+                if length < 30:
+                    return self._faker.sentence(nb_words=3)[:length]
+                else:
+                    return self._faker.paragraph(nb_sentences=2)[:length]
         else:
-            # Default to string for unknown types
-            return ''.join(random.choices(string.ascii_letters + string.digits, k=10))
+            # Default to a word for unknown types
+            return self._faker.word()[:30]
