@@ -497,11 +497,36 @@ class PillowFightService:
             logger.info(f"Successfully inserted record into {table.table_name}")
         
         except Exception as e:
-            logger.error(f"Error performing insert on {table.table_name}: {str(e)}")
+            error_message = str(e)
+            logger.error(f"Error performing insert on {table.table_name}: {error_message}")
             logger.error(f"Exception type: {type(e).__name__}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
-            # Continue despite errors
+            
+            # Check for foreign key constraint violations
+            if any(keyword in error_message.lower() for keyword in ["foreign key constraint", "constraint", "reference", "fk"]):
+                # Extract table and column information from the error message if possible
+                import re
+                table_match = re.search(r"table \"([^\"]+)\"", error_message) or re.search(r"table ([^,]+),", error_message)
+                column_match = re.search(r"column \"([^\"]+)\"", error_message) or re.search(r"column '([^']+)'", error_message)
+                
+                referenced_table = table_match.group(1) if table_match else "referenced table"
+                referenced_column = column_match.group(1) if column_match else "referenced column"
+                
+                # Provide helpful guidance about enabling cascade deletes
+                logger.warning(f"Foreign key constraint violation detected on {table.table_name}")
+                logger.warning(f"The operation failed because a foreign key constraint prevents the action.")
+                logger.warning(f"Referenced table: {referenced_table}, Column: {referenced_column}")
+                logger.warning(f"To fix this issue, you can:")
+                logger.warning(f"1. Enable cascade_delete for the {table.table_name} table in your configuration")
+                logger.warning(f"2. Ensure the referenced records in {referenced_table} exist before inserting into {table.table_name}")
+                logger.warning(f"3. Use the update_cascade_delete.py script to update your configuration")
+                
+                # If we have a table_id, we can provide more specific guidance
+                if hasattr(table, 'id'):
+                    logger.warning(f"You can run: python update_cascade_delete.py --table_id {table.id} --enable True")
+            
+            # Continue despite errors - we've logged the issue and provided guidance
             pass
     
     def _perform_update(self, engine, connection: DatabaseConnection, table: TableConfig) -> None:
