@@ -140,6 +140,7 @@ class Database:
         with self._connect() as conn:
             cursor = conn.cursor()
             cursor.execute(query, params or ())
+            conn.commit()  # Explicitly commit the transaction
             return cursor.lastrowid
     
     def commit(self):
@@ -152,6 +153,7 @@ class Database:
         with self._connect() as conn:
             cursor = conn.cursor()
             cursor.execute(query, params or ())
+            conn.commit()  # Explicitly commit the transaction
             columns = [col[0] for col in cursor.description]
             return [dict(zip(columns, row)) for row in cursor.fetchall()]
     
@@ -162,6 +164,7 @@ class Database:
             with self._connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute(query, params or ())
+                conn.commit()  # Explicitly commit the transaction
                 row = cursor.fetchone()
                 logger.info(f"Query result: {row}")
                 if row:

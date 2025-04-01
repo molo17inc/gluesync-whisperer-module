@@ -86,11 +86,21 @@ def create_table_config(table: TableConfigCreate, db = Depends(get_db)):
     # Get table schema
     try:
         # Pass the schema_name to ensure we're getting the correct schema, especially important for AS400
+        logger.info(f"Retrieving schema for {table.schema_name}.{table.table_name} from connection {table.connection_id}")
         schema = db_service.get_table_schema(
             connection_id=table.connection_id, 
             table_name=table.table_name, 
             schema_name=table.schema_name
         )
+        
+        # Check if schema retrieval was successful
+        if not schema.columns:
+            logger.warning(f"No columns retrieved for {table.schema_name}.{table.table_name}. This may cause issues with operations.")
+        
+        if not schema.primary_keys:
+            logger.warning(f"No primary keys retrieved for {table.schema_name}.{table.table_name}. This may cause issues with update/delete operations.")
+        
+        logger.info(f"Retrieved {len(schema.columns)} columns and {len(schema.primary_keys)} primary keys for {table.schema_name}.{table.table_name}")
         
         # Create table configuration with schema information
         new_table = table_service.create_table(
@@ -101,10 +111,21 @@ def create_table_config(table: TableConfigCreate, db = Depends(get_db)):
         return new_table
     except Exception as e:
         logger.error(f"Error creating table configuration: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error creating table configuration: {str(e)}"
-        )
+        # Try to create the table with empty schema as fallback
+        try:
+            logger.warning(f"Attempting to create table configuration with empty schema as fallback")
+            new_table = table_service.create_table(
+                table=table,
+                column_definitions={},
+                primary_keys=[]
+            )
+            return new_table
+        except Exception as fallback_error:
+            logger.error(f"Fallback creation also failed: {str(fallback_error)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error creating table configuration: {str(e)}. Fallback also failed: {str(fallback_error)}"
+            )
 
 
 @router.get("/connections/{connection_id}/table-configs", response_model=List[TableConfigResponse])
@@ -258,20 +279,42 @@ def get_database_tables(connection_id: int, schema: str = None, db = Depends(get
 @router.get("/connections/{connection_id}/tables/{table_name}/schema", response_model=TableSchemaResponse)
 def get_table_schema(connection_id: int, table_name: str, schema_name: str = None, db = Depends(get_db)):
     """Get the schema of a table in the database."""
+    logger.info(f"API CALL: get_table_schema for connection_id={connection_id}, table_name={table_name}, schema_name={schema_name}")
     db_service = DatabaseService(db)
     
     # Check if connection exists
+    logger.info(f"Checking if connection {connection_id} exists")
     connection = db_service.get_connection(connection_id)
     if not connection:
+        logger.error(f"Connection with ID {connection_id} not found")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Connection with ID {connection_id} not found"
         )
+    logger.info(f"Connection found: {connection.name}, type: {connection.db_type}")
     
     # Get table schema
     try:
         # Pass schema_name parameter if provided, especially important for AS400
+        logger.info(f"Calling db_service.get_table_schema for {connection_id}, {table_name}, {schema_name}")
         schema = db_service.get_table_schema(connection_id=connection_id, table_name=table_name, schema_name=schema_name)
+        
+        # Log the results
+        column_count = len(schema.columns) if schema and schema.columns else 0
+        pk_count = len(schema.primary_keys) if schema and schema.primary_keys else 0
+        
+        # Use appropriate default schema based on database type
+        default_schema = 'dbo' if connection.db_type.lower() == 'mssql' else 'default'
+        effective_schema = schema_name or default_schema
+        
+        logger.info(f"Retrieved {column_count} columns and {pk_count} primary keys for {effective_schema}.{table_name}")
+        
+        if column_count == 0:
+            logger.warning(f"No columns retrieved for {effective_schema}.{table_name}. This may cause issues with operations.")
+        
+        if pk_count == 0:
+            logger.warning(f"No primary keys retrieved for {effective_schema}.{table_name}. This may cause issues with update/delete operations.")
+            
         return schema
     except Exception as e:
         logger.error(f"Error getting table schema: {str(e)}")

@@ -175,6 +175,8 @@ class DatabaseConnector:
                 def __init__(self, connection):
                     self.connection = connection
                     self.cursor = None
+                    # Store direct reference to the JDBC connection for metadata access
+                    self.jconn = connection.jconn if hasattr(connection, 'jconn') else None
                 
                 def connect(self):
                     """Return a connection context manager."""
@@ -214,6 +216,9 @@ class DatabaseConnector:
             
             # Create a wrapper for the JDBC connection
             self.engine = JdbcConnectionWrapper(self.connection)
+            
+            # Store direct reference to JDBC connection for easier access
+            self.jconn = self.connection.jconn if hasattr(self.connection, 'jconn') else None
             
             # Get database version
             self.version = self.get_database_version()
@@ -1301,6 +1306,14 @@ class DatabaseConnector:
             logger.error(f"Error executing query: {str(e)}")
             raise
     
+    def getMetaData(self):
+        """Get database metadata, delegating to the JDBC connection."""
+        if hasattr(self, 'jconn') and self.jconn:
+            return self.jconn.getMetaData()
+        elif hasattr(self, 'connection') and hasattr(self.connection, 'jconn'):
+            return self.connection.jconn.getMetaData()
+        raise RuntimeError("No JDBC connection available for metadata access")
+    
     def execute_batch(self, queries):
         """Execute multiple queries in a batch using JDBC."""
         if not self.connection:
@@ -1417,11 +1430,11 @@ def main():
                     unique = "UNIQUE " if idx['unique'] else ""
                     print(f"  {unique}INDEX {idx['name']} on ({', '.join(idx['columns'])})")
         
-        # Execute query
-        if args.query:
-            results = connector.execute_query(args.query)
-            print(f"\nQuery results:")
-            print(json.dumps(results, indent=2, default=str))
+        # # Execute query
+        # if args.query:
+        #     results = connector.execute_query(args.query)
+        #     print(f"\nQuery results:")
+        #     print(json.dumps(results, indent=2, default=str))
     
     finally:
         # Disconnect

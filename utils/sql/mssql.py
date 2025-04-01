@@ -54,70 +54,69 @@ class MsSqlSqlStatements(BaseSqlStatements):
     def get_columns_statement(self, schema=None, table=None):
         if schema:
             return """
-            SELECT 
-                c.column_name,
-                c.ordinal_position,
-                c.data_type,
-                c.character_maximum_length,
-                c.numeric_precision,
-                c.numeric_scale,
-                c.datetime_precision,
-                c.is_nullable,
-                COLUMNPROPERTY(OBJECT_ID(c.table_schema + '.' + c.table_name), c.column_name, 'IsIdentity') AS is_identity,
-                c.column_default,
-                CASE WHEN pk.column_name IS NOT NULL THEN 1 ELSE 0 END AS is_primary_key
-            FROM information_schema.columns c
+            SELECT
+                C.COLUMN_NAME,
+                C.ORDINAL_POSITION,
+                C.DATA_TYPE,
+                C.CHARACTER_MAXIMUM_LENGTH,
+                C.CHARACTER_OCTET_LENGTH,
+                C.CHARACTER_SET_NAME,
+                C.NUMERIC_PRECISION,
+                C.NUMERIC_PRECISION_RADIX,
+                C.NUMERIC_SCALE,
+                C.DATETIME_PRECISION,
+                C.IS_NULLABLE,
+                C.COLUMN_DEFAULT,
+                COLUMNPROPERTY(OBJECT_ID(C.TABLE_SCHEMA + '.' + C.TABLE_NAME), C.COLUMN_NAME, 'IsIdentity') AS IS_IDENTITY,
+                IIF(K.COLUMN_NAME IS NOT NULL, 1, 0) AS IS_PRIMARY_KEY
+            FROM INFORMATION_SCHEMA.COLUMNS AS C
             LEFT JOIN (
-                SELECT 
-                    ku.table_schema,
-                    ku.table_name,
-                    ku.column_name
-                FROM
-                    information_schema.table_constraints AS tc
-                    JOIN information_schema.key_column_usage AS ku
-                        ON tc.constraint_name = ku.constraint_name
-                        AND tc.table_schema = ku.table_schema
-                        AND tc.table_name = ku.table_name
-                WHERE tc.constraint_type = 'PRIMARY KEY'
-            ) pk ON c.table_schema = pk.table_schema
-                AND c.table_name = pk.table_name
-                AND c.column_name = pk.column_name
-            WHERE c.table_schema = ?
-                AND c.table_name = ?
-            ORDER BY c.ordinal_position
+                SELECT KCU.COLUMN_NAME
+                FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE KCU
+                INNER JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS TC
+                    ON TC.TABLE_SCHEMA = KCU.TABLE_SCHEMA
+                       AND TC.TABLE_NAME = KCU.TABLE_NAME
+                       AND TC.CONSTRAINT_NAME = KCU.CONSTRAINT_NAME
+                WHERE KCU.TABLE_SCHEMA = ?
+                    AND KCU.TABLE_NAME = ?
+                    AND TC.CONSTRAINT_TYPE = 'PRIMARY KEY'
+                GROUP BY KCU.COLUMN_NAME
+            ) AS K ON K.COLUMN_NAME = C.COLUMN_NAME
+            WHERE C.TABLE_SCHEMA = ?
+               AND C.TABLE_NAME = ?
+            ORDER BY C.ORDINAL_POSITION
             """
         else:
             return """
-            SELECT 
-                c.column_name,
-                c.ordinal_position,
-                c.data_type,
-                c.character_maximum_length,
-                c.numeric_precision,
-                c.numeric_scale,
-                c.datetime_precision,
-                c.is_nullable,
-                COLUMNPROPERTY(OBJECT_ID(c.table_schema + '.' + c.table_name), c.column_name, 'IsIdentity') AS is_identity,
-                c.column_default,
-                CASE WHEN pk.column_name IS NOT NULL THEN 1 ELSE 0 END AS is_primary_key
-            FROM information_schema.columns c
+            SELECT
+                C.COLUMN_NAME,
+                C.ORDINAL_POSITION,
+                C.DATA_TYPE,
+                C.CHARACTER_MAXIMUM_LENGTH,
+                C.CHARACTER_OCTET_LENGTH,
+                C.CHARACTER_SET_NAME,
+                C.NUMERIC_PRECISION,
+                C.NUMERIC_PRECISION_RADIX,
+                C.NUMERIC_SCALE,
+                C.DATETIME_PRECISION,
+                C.IS_NULLABLE,
+                C.COLUMN_DEFAULT,
+                COLUMNPROPERTY(OBJECT_ID(C.TABLE_SCHEMA + '.' + C.TABLE_NAME), C.COLUMN_NAME, 'IsIdentity') AS IS_IDENTITY,
+                IIF(K.COLUMN_NAME IS NOT NULL, 1, 0) AS IS_PRIMARY_KEY
+            FROM INFORMATION_SCHEMA.COLUMNS AS C
             LEFT JOIN (
-                SELECT 
-                    ku.table_schema,
-                    ku.table_name,
-                    ku.column_name
-                FROM
-                    information_schema.table_constraints AS tc
-                    JOIN information_schema.key_column_usage AS ku
-                        ON tc.constraint_name = ku.constraint_name
-                        AND tc.table_schema = ku.table_schema
-                        AND tc.table_name = ku.table_name
-                WHERE tc.constraint_type = 'PRIMARY KEY'
-            ) pk ON c.table_schema = pk.table_schema
-                AND c.table_name = pk.table_name
-                AND c.column_name = pk.column_name
-            WHERE c.table_name = ?
-            ORDER BY c.ordinal_position
+                SELECT KCU.COLUMN_NAME
+                FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE KCU
+                INNER JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS TC
+                    ON TC.TABLE_SCHEMA = KCU.TABLE_SCHEMA
+                       AND TC.TABLE_NAME = KCU.TABLE_NAME
+                       AND TC.CONSTRAINT_NAME = KCU.CONSTRAINT_NAME
+                WHERE KCU.TABLE_NAME = ?
+                    AND TC.CONSTRAINT_TYPE = 'PRIMARY KEY'
+                GROUP BY KCU.COLUMN_NAME
+            ) AS K ON K.COLUMN_NAME = C.COLUMN_NAME
+            WHERE C.TABLE_NAME = ?
+            ORDER BY C.ORDINAL_POSITION
             """
     
     def get_table_schema_statement(self, schema=None):
@@ -227,6 +226,32 @@ class MsSqlSqlStatements(BaseSqlStatements):
             ORDER BY ku.ordinal_position
             """
     
+    def get_primary_keys_statement_sys(self, schema=None, table=None):
+        """Get primary keys using sys catalog views for better compatibility with MS SQL Server.
+        
+        This is an alternative method to get primary keys when the information_schema approach fails.
+        """
+        return """
+        SELECT 
+            c.name AS column_name
+        FROM 
+            sys.indexes i
+        INNER JOIN 
+            sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
+        INNER JOIN 
+            sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+        INNER JOIN 
+            sys.tables t ON i.object_id = t.object_id
+        INNER JOIN 
+            sys.schemas s ON t.schema_id = s.schema_id
+        WHERE 
+            i.is_primary_key = 1
+            AND t.name = ?
+            AND s.name = ?
+        ORDER BY 
+            ic.key_ordinal
+        """
+    
     def get_foreign_keys_statement(self, schema=None, table=None):
         if schema:
             return """
@@ -274,9 +299,10 @@ class MsSqlSqlStatements(BaseSqlStatements):
     def get_version_statement(self):
         return "SELECT @@VERSION AS version"
         
-    def get_primary_keys_statement(self, schema, table_name):
-        """Return a SQL statement to get primary keys for a table."""
-        return f"""
+    # This is a fallback method for systems where INFORMATION_SCHEMA doesn't work properly
+    def get_primary_keys_statement_sys(self, schema, table_name):
+        """Return a SQL statement to get primary keys for a table using sys catalog views."""
+        return """
         SELECT c.name as COLUMN_NAME
         FROM sys.indexes i
         JOIN sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
@@ -284,8 +310,8 @@ class MsSqlSqlStatements(BaseSqlStatements):
         JOIN sys.tables t ON i.object_id = t.object_id
         JOIN sys.schemas s ON t.schema_id = s.schema_id
         WHERE i.is_primary_key = 1
-        AND t.name = '{table_name}'
-        AND s.name = '{schema}'
+        AND t.name = ?
+        AND s.name = ?
         ORDER BY ic.key_ordinal
         """
 

@@ -87,7 +87,7 @@ class DatabaseConnection:
             port=row['port'],
             username=row['username'],
             password=row['password'],
-            database=row['database'],
+            database_name=row['database_name'],
             connection_string=row['connection_string'],
             status=ConnectionStatus(row['status']),
             created_at=row['created_at'],
@@ -107,7 +107,7 @@ class DatabaseConnection:
             'port': self.port,
             'username': self.username,
             'password': self.password,
-            'database': self.database,
+            'database_name': self.database,
             'connection_string': self.connection_string,
             'status': self.status.value if self.status else 'idle',
             'last_operation_at': self.last_operation_at

@@ -4,3 +4,4 @@ no mocks
 test using docker
 modify codebase if needed
 iterate over tests until all pass
+do not attempt using sqlalchemy

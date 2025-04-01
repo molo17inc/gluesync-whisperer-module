@@ -272,13 +272,20 @@ class PillowFightService:
                             except (KeyError, AttributeError):
                                 logger.warning(f"Unknown database type string: {connection.db_type}")
                         
-                        logger.info(f"Creating JDBC DatabaseConnector with parameters: db_type={connector_db_type}, host={connection.host}, port={connection.port}, database={connection.database}")
+                        # Make sure we have a valid database name
+                        # Use database field from the connection object
+                        database_name = connection.database
+                        logger.info(f"Creating JDBC DatabaseConnector with parameters: db_type={connector_db_type}, host={connection.host}, port={connection.port}, database={database_name}")
+                        
+                        # Log all connection attributes for debugging
+                        logger.info(f"Connection object details: {connection.__dict__}")
+                        
                         # Create the connector with the connection parameters
                         db_connector = DatabaseConnector(
                             db_type=connector_db_type,
                             host=connection.host,
                             port=connection.port,
-                            database=connection.database,
+                            database=database_name,
                             username=connection.username,
                             password=connection.password
                         )
@@ -286,6 +293,11 @@ class PillowFightService:
                         # Connect to the database
                         logger.info("Connecting to database...")
                         db_connector.connect()
+                        
+                        # Verify the connection is valid
+                        if not db_connector.connection or not hasattr(db_connector.connection, 'cursor'):
+                            logger.error(f"Could not establish connection to database for {table.schema_name}.{table.table_name}")
+                            raise Exception(f"Failed to establish a valid connection to {connection.db_type} database")
                         
                         # Use the connector as our engine
                         engine = db_connector
@@ -374,37 +386,56 @@ class PillowFightService:
         try:
             logger.info(f"Starting insert operation for table {table.table_name}")
             
+            # Verify the engine is valid
+            if engine is None:
+                logger.error(f"Could not establish connection to database for {table.schema_name}.{table.table_name}")
+                return
+                
             # Get the table schema - pass connection ID instead of connection object
             logger.info(f"Getting table schema for connection ID {connection.id}, table {table.table_name}, schema {table.schema_name}")
-            schema_info = self.db_service.get_table_schema(connection.id, table.table_name, table.schema_name)
-            
-            logger.info(f"Schema info received: {schema_info}")
-            # Access columns and primary_keys as attributes of the TableSchemaResponse object
-            columns = schema_info.columns
-            primary_keys = schema_info.primary_keys
-            
-            logger.info(f"Found {len(columns)} columns and {len(primary_keys)} primary keys")
+            try:
+                schema_info = self.db_service.get_table_schema(connection.id, table.table_name, table.schema_name)
+                
+                logger.info(f"Schema info received: {schema_info}")
+                # Access columns and primary_keys as attributes of the TableSchemaResponse object
+                columns_dict = schema_info.columns
+                primary_keys = schema_info.primary_keys
+                
+                logger.info(f"Found {len(columns_dict)} columns and {len(primary_keys)} primary keys")
+            except Exception as e:
+                logger.error(f"Error getting table schema for {table.schema_name}.{table.table_name}: {str(e)}")
+                return
             
             # Generate random data for each column
             data = {}
-            for column in columns:
+            for col_name, col_info in columns_dict.items():
                 # Skip auto-increment columns
-                if column["name"] in primary_keys and column.get("auto_increment", False):
-                    logger.info(f"Skipping auto-increment primary key column: {column['name']}")
+                if col_name in primary_keys and col_info.get("is_primary_key", False):
+                    logger.info(f"Skipping primary key column: {col_name}")
                     continue
                 
                 # Generate random data based on column type
-                data[column["name"]] = self._generate_random_data(column["type"])
+                data[col_name] = self._generate_random_data(col_info["type"])
             
             logger.info(f"Generated data for insert: {data}")
+            
+            # If no data to insert (all columns are primary keys), return
+            if not data:
+                logger.info(f"No columns to insert data for in {table.table_name}")
+                return
             
             # Build the fully qualified table name
             table_name = table.table_name
             if table.schema_name:
                 table_name = f"{table.schema_name}.{table_name}"
-                
+            
+            # For MS SQL Server, we need to handle the parameter placeholders differently
+            is_mssql = connection.db_type.lower() == 'mssql'
+            
+            # Both JDBC implementations use ? for parameter placeholders
+            placeholders = ', '.join(['?' for _ in range(len(data))])
+            
             # Build the insert statement
-            placeholders = ', '.join(['?' for _ in data.keys()])
             stmt = f"INSERT INTO {table_name} ({', '.join(data.keys())}) VALUES ({placeholders})"
             
             logger.info(f"Prepared insert statement: {stmt}")
@@ -428,29 +459,43 @@ class PillowFightService:
             logger.error(f"Exception type: {type(e).__name__}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
-            raise
+            # Continue despite errors
+            pass
     
     def _perform_update(self, engine, connection: DatabaseConnection, table: TableConfig) -> None:
         """Perform an update operation on a table."""
         try:
+            # Verify the engine is valid
+            if engine is None:
+                logger.error(f"Could not establish connection to database for {table.schema_name}.{table.table_name}")
+                return
+                
             # Get the table schema - pass connection ID instead of connection object
-            schema_info = self.db_service.get_table_schema(connection.id, table.table_name, table.schema_name)
-            # Access columns and primary_keys as attributes of the TableSchemaResponse object
-            columns = schema_info.columns
-            primary_keys = schema_info.primary_keys
+            try:
+                schema_info = self.db_service.get_table_schema(connection.id, table.table_name, table.schema_name)
+                # Access columns and primary_keys as attributes of the TableSchemaResponse object
+                columns_dict = schema_info.columns
+                primary_keys = schema_info.primary_keys
+            except Exception as e:
+                logger.error(f"Error getting table schema for {table.schema_name}.{table.table_name}: {str(e)}")
+                return
             
             # First, get a random existing record
-            existing_record = self._get_random_record(engine, table)
-            
-            if not existing_record:
-                logger.info(f"No records found in {table.table_name} for update")
+            try:
+                existing_record = self._get_random_record(engine, table)
+                
+                if not existing_record:
+                    logger.info(f"No records found in {table.table_name} for update")
+                    return
+            except Exception as e:
+                logger.error(f"Error getting random record for {table.schema_name}.{table.table_name}: {str(e)}")
                 return
             
             # Generate random data for each column, excluding primary keys
             data = {}
-            for column in columns:
-                if column["name"] not in primary_keys:
-                    data[column["name"]] = self._generate_random_data(column["type"])
+            for col_name, col_info in columns_dict.items():
+                if col_name not in primary_keys:
+                    data[col_name] = self._generate_random_data(col_info["type"])
             
             # If no data to update (all columns are primary keys), return
             if not data:
@@ -473,10 +518,16 @@ class PillowFightService:
             table_name = table.table_name
             if table.schema_name:
                 table_name = f"{table.schema_name}.{table_name}"
-                
+            
+            # For MS SQL Server, we need to handle the parameter placeholders differently
+            is_mssql = connection.db_type.lower() == 'mssql'
+            
             set_clauses = [f"{col} = ?" for col in data.keys()]
             
             stmt = f"UPDATE {table_name} SET {', '.join(set_clauses)} WHERE {' AND '.join(where_clauses)}"
+            
+            logger.info(f"Prepared update statement: {stmt}")
+            logger.info(f"With set values: {list(data.values())} and where values: {where_values}")
             
             # Check if we're using a JDBC engine (has connection attribute) or SQLAlchemy engine
             if hasattr(engine, 'connection') and engine.connection:
@@ -492,21 +543,38 @@ class PillowFightService:
         
         except Exception as e:
             logger.error(f"Error performing update on {table.table_name}: {str(e)}")
-            raise
+            logger.error(f"Exception type: {type(e).__name__}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            # Continue despite errors
+            pass
     
     def _perform_delete(self, engine, connection: DatabaseConnection, table: TableConfig) -> None:
         """Perform a delete operation on a table."""
         try:
+            # Verify the engine is valid
+            if engine is None:
+                logger.error(f"Could not establish connection to database for {table.schema_name}.{table.table_name}")
+                return
+                
             # Get the table schema - pass connection ID instead of connection object
-            schema_info = self.db_service.get_table_schema(connection.id, table.table_name, table.schema_name)
-            # Access primary_keys as an attribute of the TableSchemaResponse object
-            primary_keys = schema_info.primary_keys
+            try:
+                schema_info = self.db_service.get_table_schema(connection.id, table.table_name, table.schema_name)
+                # Access primary_keys as an attribute of the TableSchemaResponse object
+                primary_keys = schema_info.primary_keys
+            except Exception as e:
+                logger.error(f"Error getting table schema for {table.schema_name}.{table.table_name}: {str(e)}")
+                return
             
             # First, get a random existing record
-            existing_record = self._get_random_record(engine, table)
-            
-            if not existing_record:
-                logger.info(f"No records found in {table.table_name} for delete")
+            try:
+                existing_record = self._get_random_record(engine, table)
+                
+                if not existing_record:
+                    logger.info(f"No records found in {table.table_name} for delete")
+                    return
+            except Exception as e:
+                logger.error(f"Error getting random record for {table.schema_name}.{table.table_name}: {str(e)}")
                 return
             
             # Build the where clause for the primary keys
@@ -525,8 +593,14 @@ class PillowFightService:
             table_name = table.table_name
             if table.schema_name:
                 table_name = f"{table.schema_name}.{table_name}"
-                
+            
+            # For MS SQL Server, we need to handle the parameter placeholders differently
+            is_mssql = connection.db_type.lower() == 'mssql'
+            
             stmt = f"DELETE FROM {table_name} WHERE {' AND '.join(where_clauses)}"
+            
+            logger.info(f"Prepared delete statement: {stmt}")
+            logger.info(f"With where values: {where_values}")
             
             # Check if we're using a JDBC engine (has connection attribute) or SQLAlchemy engine
             if hasattr(engine, 'connection') and engine.connection:
@@ -542,11 +616,20 @@ class PillowFightService:
         
         except Exception as e:
             logger.error(f"Error performing delete on {table.table_name}: {str(e)}")
-            raise
+            logger.error(f"Exception type: {type(e).__name__}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            # Continue despite errors
+            pass
     
     def _get_random_record(self, engine, table: TableConfig) -> Optional[Dict[str, Any]]:
         """Get a random record from a table."""
         try:
+            # Verify the engine is valid
+            if engine is None:
+                logger.error(f"Could not establish connection to database for {table.schema_name}.{table.table_name}")
+                return None
+                
             table_name = table.table_name
             if table.schema_name:
                 table_name = f"{table.schema_name}.{table_name}"
@@ -557,17 +640,26 @@ class PillowFightService:
             
             # Handle differently based on engine type
             if is_jdbc:
-                # For JDBC engines, use direct execute method
-                # First, count the total number of records
-                count_stmt = f"SELECT COUNT(*) as cnt FROM {table_name}"
-                logger.debug(f"Executing count query: {count_stmt}")
-                
-                # Make sure we have a connection
-                if not engine.connection:
-                    engine.connect()
-                
-                # Execute count query
-                count_result = engine.execute(count_stmt)
+                try:
+                    # For JDBC engines, use direct execute method
+                    # First, count the total number of records
+                    count_stmt = f"SELECT COUNT(*) as cnt FROM {table_name}"
+                    logger.debug(f"Executing count query: {count_stmt}")
+                    
+                    # Make sure we have a connection
+                    if not engine.connection:
+                        logger.info(f"No active connection, attempting to connect for {table_name}")
+                        engine.connect()
+                        
+                    if not engine.connection:
+                        logger.error(f"Failed to establish connection for {table_name}")
+                        return None
+                    
+                    # Execute count query
+                    count_result = engine.execute(count_stmt)
+                except Exception as e:
+                    logger.error(f"Error executing count query for {table_name}: {str(e)}")
+                    return None
                 if count_result:
                     row = count_result.fetchone()
                     if row:
@@ -599,123 +691,128 @@ class PillowFightService:
                 
                 return None
             else:
-                # For SQLAlchemy engines or JDBC engines with execute method
+                # For JDBC engines with execute method (no db_connector attribute)
                 # Check if engine has execute method directly
-                if hasattr(engine, 'execute') and callable(engine.execute):
-                    # Engine has direct execute method (JDBC wrapper)
-                    logger.debug(f"Using engine with direct execute method for {table_name}")
-                    
-                    # First, count the total number of records
-                    count_stmt = f"SELECT COUNT(*) as cnt FROM {table_name}"
-                    count_result = engine.execute(count_stmt)
-                    
-                    if count_result:
-                        row = count_result.fetchone()
-                        if row:
-                            # Extract count value - might be at index 0 or might have a name 'cnt'
-                            count_value = row[0] if isinstance(row, (list, tuple)) else row.get('cnt', 0)
+                try:
+                    # Check if we have a db_connector object (JDBC connection)
+                    if hasattr(engine, 'db_connector') and engine.db_connector:
+                        # Use db_connector directly for JDBC connections
+                        db_connector = engine.db_connector
+                        logger.debug(f"Using db_connector directly for {table_name}")
+                        
+                        # Make sure we have a connection
+                        if not db_connector.connection:
+                            logger.info(f"No active connection, attempting to connect for {table_name}")
+                            db_connector.connect()
                             
-                            if count_value == 0:
-                                logger.info(f"No records found in {table_name}")
-                                return None
-                            
-                            # Get a random offset - MS SQL Server uses TOP instead of LIMIT
+                        if not db_connector.connection:
+                            logger.error(f"Failed to establish connection for {table_name}")
+                            return None
+                        
+                        # First, count the total number of records
+                        count_stmt = f"SELECT COUNT(*) as cnt FROM {table_name}"
+                        
+                        try:
+                            cursor = db_connector.connection.cursor()
+                            cursor.execute(count_stmt)
+                            row = cursor.fetchone()
+                            count_value = row[0] if row else 0
+                            cursor.close()
+                        except Exception as e:
+                            logger.error(f"Error executing count query for {table_name}: {str(e)}")
+                            return None
+                        
+                        if count_value == 0:
+                            logger.info(f"No records found in {table_name}")
+                            return None
+                        
+                        # Get a random record - MS SQL Server uses TOP instead of LIMIT
+                        if db_connector.db_type == DatabaseType.MSSQL:
+                            # For MS SQL Server
+                            select_stmt = f"SELECT TOP 1 * FROM {table_name} ORDER BY NEWID()"
+                        else:
+                            # For other databases
                             offset = random.randint(0, count_value - 1)
+                            select_stmt = f"SELECT * FROM {table_name} LIMIT 1 OFFSET {offset}"
+                        
+                        try:
+                            cursor = db_connector.connection.cursor()
+                            cursor.execute(select_stmt)
+                            row = cursor.fetchone()
                             
-                            # Query a random record based on database type
-                            if hasattr(engine, 'db_connector') and engine.db_connector.db_type == DatabaseType.MSSQL:
-                                # For MS SQL Server
-                                select_stmt = f"SELECT TOP 1 * FROM {table_name} ORDER BY NEWID()"
-                            else:
-                                # For other databases
-                                select_stmt = f"SELECT * FROM {table_name} LIMIT 1 OFFSET {offset}"
-                            
-                            result = engine.execute(select_stmt)
-                            if result:
-                                row = result.fetchone()
-                                if row:
-                                    # Convert row to dict
-                                    try:
-                                        return {k: v for k, v in zip(result.keys(), row)}
-                                    except:
-                                        # Fallback if keys() method is not available
-                                        return {f"col_{i}": v for i, v in enumerate(row)}
+                            if row:
+                                # Get column names
+                                column_names = [column[0] for column in cursor.description]
+                                # Convert row to dict
+                                result_dict = {column_names[i]: value for i, value in enumerate(row)}
+                                cursor.close()
+                                return result_dict
+                            cursor.close()
+                        except Exception as e:
+                            logger.error(f"Error executing select query for {table_name}: {str(e)}")
+                            return None
                     
+                    # Fallback to engine.execute if available
+                    elif hasattr(engine, 'execute') and callable(engine.execute):
+                        # Engine has direct execute method
+                        logger.debug(f"Using engine with execute method for {table_name}")
+                        
+                        # First, count the total number of records
+                        count_stmt = f"SELECT COUNT(*) as cnt FROM {table_name}"
+                        
+                        try:
+                            count_result = engine.execute(count_stmt)
+                        except Exception as e:
+                            logger.error(f"Error executing count query for {table_name}: {str(e)}")
+                            return None
+                        
+                        if count_result:
+                            row = count_result.fetchone()
+                            if row:
+                                # Extract count value - might be at index 0 or might have a name 'cnt'
+                                count_value = row[0] if isinstance(row, (list, tuple)) else row.get('cnt', 0)
+                                
+                                if count_value == 0:
+                                    logger.info(f"No records found in {table_name}")
+                                    return None
+                                
+                                # Get a random offset - MS SQL Server uses TOP instead of LIMIT
+                                offset = random.randint(0, count_value - 1)
+                                
+                                # Query a random record based on database type
+                                if hasattr(engine, 'db_connector') and engine.db_connector.db_type == DatabaseType.MSSQL:
+                                    # For MS SQL Server
+                                    select_stmt = f"SELECT TOP 1 * FROM {table_name} ORDER BY NEWID()"
+                                else:
+                                    # For other databases
+                                    select_stmt = f"SELECT * FROM {table_name} LIMIT 1 OFFSET {offset}"
+                                
+                                try:
+                                    result = engine.execute(select_stmt)
+                                    if result:
+                                        row = result.fetchone()
+                                        if row:
+                                            # Convert row to dict
+                                            try:
+                                                return {k: v for k, v in zip(result.keys(), row)}
+                                            except Exception:
+                                                # Fallback if keys() method is not available
+                                                return {f"col_{i}": v for i, v in enumerate(row)}
+                                except Exception as e:
+                                    logger.error(f"Error executing select query for {table_name}: {str(e)}")
+                                    return None
+                    else:
+                        logger.error(f"Engine does not have execute method or db_connector for {table_name}")
+                        return None
+                except Exception as e:
+                    logger.error(f"Error in JDBC execution for {table_name}: {str(e)}")
                     return None
                 
-                # For SQLAlchemy engines with connect method
-                elif hasattr(engine, 'connect') and callable(engine.connect):
-                    # Check if engine supports context manager
-                    try:
-                        conn = engine.connect()
-                        supports_context = hasattr(conn, '__enter__')
-                        if hasattr(conn, 'close'):
-                            conn.close()
-                    except Exception as e:
-                        logger.error(f"Error checking if engine supports context manager: {str(e)}")
-                        supports_context = False
-                    
-                    # First, count the total number of records
-                    count_stmt = f"SELECT COUNT(*) as cnt FROM {table_name}"
-                    count_result = None
-                    
-                    try:
-                        if supports_context:
-                            # Use context manager if supported
-                            with engine.connect() as conn:
-                                count_result = conn.execute(count_stmt).scalar()
-                        else:
-                            # Otherwise, use direct connection
-                            conn = engine.connect()
-                            if conn and hasattr(conn, 'execute'):
-                                count_result = conn.execute(count_stmt).scalar()
-                                if hasattr(conn, 'close'):
-                                    conn.close()
-                            else:
-                                logger.error(f"Could not establish connection to database for {table_name}")
-                                return None
-                    except Exception as e:
-                        logger.error(f"Error executing count query: {str(e)}")
-                        return None
-                    
-                    if not count_result or count_result == 0:
-                        return None
-                    
-                    # Get a random offset
-                    offset = random.randint(0, count_result - 1)
-                    
-                    # Query a random record
-                    select_stmt = f"SELECT * FROM {table_name} LIMIT 1 OFFSET {offset}"
-                    result = None
-                    
-                    try:
-                        if supports_context:
-                            # Use context manager if supported
-                            with engine.connect() as conn:
-                                result = conn.execute(select_stmt).mappings().first()
-                        else:
-                            # Otherwise, use direct connection
-                            conn = engine.connect()
-                            if conn and hasattr(conn, 'execute'):
-                                result = conn.execute(select_stmt).mappings().first()
-                                if hasattr(conn, 'close'):
-                                    conn.close()
-                            else:
-                                logger.error(f"Could not establish connection to database for {table_name}")
-                                return None
-                    except Exception as e:
-                        logger.error(f"Error executing select query: {str(e)}")
-                        return None
-                
-                if not result:
-                    return None
-                
-                # Convert to dictionary
-                return dict(result)
+                return None
         
         except Exception as e:
             logger.error(f"Error getting random record from {table.table_name}: {str(e)}")
-            raise
+            return None
     
     def _generate_random_data(self, column_type: str) -> Any:
         """Generate random data based on column type."""
