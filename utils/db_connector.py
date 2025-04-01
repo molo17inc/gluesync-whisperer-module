@@ -1306,15 +1306,21 @@ class DatabaseConnector:
                         # Fetch results (limited by max_rows)
                         result_set = cursor.fetchmany(max_rows) if max_rows else cursor.fetchall()
                         
-                        # Get column names from cursor description
-                        column_names = [desc[0] for desc in cursor.description] if cursor.description else []
+                        # Get column names from cursor description and ensure they are Python strings
+                        column_names = []
+                        if cursor.description:
+                            for desc in cursor.description:
+                                # Convert Java String to Python string or use a default name
+                                col_name = str(desc[0]) if desc[0] else f'column_{len(column_names)}'
+                                column_names.append(col_name)
                         
                         # Convert results to dictionaries
                         results = []
                         for row in result_set:
                             row_dict = {}
                             for i, col_name in enumerate(column_names):
-                                row_dict[col_name] = row[i]
+                                # Convert Java objects to Python types
+                                row_dict[col_name] = str(row[i]) if row[i] is not None else None
                             results.append(row_dict)
                         
                         return results
