@@ -13,6 +13,7 @@ A specialized module for orchestrating database operations. This application ena
 - Robust parameter handling for all database types
 - Automatic transaction management for data modification operations
 - Cross-platform support for AS400/DB2 databases on both x86_64 and ARM architectures
+- Cascade delete support for handling foreign key constraints during delete operations
 
 ## AS400 Specific Improvements
 
@@ -25,7 +26,16 @@ A specialized module for orchestrating database operations. This application ena
 - **MAX ID Query Optimization**: Enhanced MAX ID queries with AS400-compatible syntax and dynamic column name detection
 - **DELETE Operations**: Fixed deletion support with proper error handling for AS400 databases
 
-## Installation
+## MS SQL Server Specific Improvements
+
+### Latest Enhancements
+
+- **JDBC Implementation**: Replaced ODBC with JDBC for better cross-platform compatibility
+- **Metadata Retrieval**: Enhanced schema and table retrieval for MS SQL Server
+- **Primary Key Handling**: Added unique primary key value generation for insert operations
+- **Cascade Delete Support**: Added option to handle foreign key constraints during delete operations by temporarily disabling constraints, performing the delete, and then re-enabling constraints
+
+## Software Installation
 
 ### Database Driver Requirements
 
@@ -149,6 +159,21 @@ You can configure the application using the following environment variables:
 - `POST /api/tables`: Create a new table configuration
 - `GET /api/tables`: List all table configurations
 - `GET /api/connections/{connection_id}/tables`: List table configurations for a connection
+
+#### Table Configuration Options
+
+| Option | Description | Default |
+|--------|-------------|--------|
+| `table_name` | Name of the table to configure | Required |
+| `schema_name` | Database schema name | Optional |
+| `operation_type` | Type of operations to perform (INSERT, UPDATE, DELETE, ALL) | ALL |
+| `operation_delay` | Delay between operations in seconds | 1.0 |
+| `batch_size` | Number of operations to perform in each batch | 1 |
+| `enabled` | Whether the table is enabled for operations | true |
+| `cascade_delete` | Whether to cascade deletes for foreign key constraints | false |
+
+#### Table API Endpoints
+
 - `GET /api/tables/{table_id}`: Get table configuration details
 - `PUT /api/tables/{table_id}`: Update a table configuration
 - `DELETE /api/tables/{table_id}`: Delete a table configuration

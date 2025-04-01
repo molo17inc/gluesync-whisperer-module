@@ -119,7 +119,8 @@ class TableConfig:
     
     def __init__(self, id=None, connection_id=None, table_name=None, schema_name=None,
                  operation_type=OperationType.ALL, operation_delay=1.0, batch_size=1, enabled=True,
-                 created_at=None, updated_at=None, column_definitions=None, primary_keys=None):
+                 created_at=None, updated_at=None, column_definitions=None, primary_keys=None,
+                 cascade_delete=False):
         self.id = id
         self.connection_id = connection_id
         self.table_name = table_name
@@ -132,6 +133,7 @@ class TableConfig:
         self.updated_at = updated_at or datetime.now()
         self.column_definitions = column_definitions or {}
         self.primary_keys = primary_keys or []
+        self.cascade_delete = cascade_delete  # Whether to cascade deletes for foreign key constraints
         self.operations = []
         self.connection = None  # Will be populated by service layer
     
@@ -142,6 +144,11 @@ class TableConfig:
         column_defs = json.loads(row['column_definitions']) if row['column_definitions'] else {}
         primary_keys = json.loads(row['primary_keys']) if row['primary_keys'] else []
         
+        # Check if cascade_delete column exists in the row
+        cascade_delete = False
+        if 'cascade_delete' in row:
+            cascade_delete = bool(row['cascade_delete'])
+            
         config = cls(
             id=row['id'],
             connection_id=row['connection_id'],
@@ -154,7 +161,8 @@ class TableConfig:
             created_at=row['created_at'],
             updated_at=row['updated_at'],
             column_definitions=column_defs,
-            primary_keys=primary_keys
+            primary_keys=primary_keys,
+            cascade_delete=cascade_delete
         )
         return config
     
@@ -170,7 +178,8 @@ class TableConfig:
             'batch_size': self.batch_size,
             'enabled': self.enabled,
             'column_definitions': json.dumps(self.column_definitions) if self.column_definitions else None,
-            'primary_keys': json.dumps(self.primary_keys) if self.primary_keys else None
+            'primary_keys': json.dumps(self.primary_keys) if self.primary_keys else None,
+            'cascade_delete': self.cascade_delete
         }
 
 

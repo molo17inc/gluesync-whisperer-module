@@ -100,6 +100,7 @@ class Database:
                     updated_at TEXT,
                     column_definitions TEXT,
                     primary_keys TEXT,
+                    cascade_delete INTEGER NOT NULL DEFAULT 0,
                     FOREIGN KEY (connection_id) REFERENCES database_connections (id) ON DELETE CASCADE
                 )
                 ''')
@@ -119,6 +120,21 @@ class Database:
                     FOREIGN KEY (table_config_id) REFERENCES table_configs (id) ON DELETE CASCADE
                 )
                 ''')
+                
+                # Add cascade_delete column to table_configs if it doesn't exist
+                try:
+                    # Check if the column exists
+                    cursor.execute("PRAGMA table_info(table_configs)")
+                    columns = [column[1] for column in cursor.fetchall()]
+                    
+                    if 'cascade_delete' not in columns:
+                        logger.info("Adding cascade_delete column to table_configs table")
+                        cursor.execute('''
+                        ALTER TABLE table_configs ADD COLUMN cascade_delete INTEGER NOT NULL DEFAULT 0
+                        ''')
+                        logger.info("Added cascade_delete column to table_configs table")
+                except Exception as e:
+                    logger.error(f"Error adding cascade_delete column: {str(e)}")
                 
                 conn.commit()
                 logger.info("All tables created successfully")

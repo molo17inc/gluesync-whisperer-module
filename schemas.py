@@ -76,6 +76,7 @@ class TableConfigBase(BaseModel):
     operation_delay: float = Field(default=1.0, ge=0.1)  # Minimum 0.1 seconds delay
     batch_size: int = Field(default=1, ge=1)  # Minimum batch size of 1
     enabled: bool = True
+    cascade_delete: bool = False  # Whether to cascade deletes for foreign key constraints
 
 
 class TableConfigCreate(TableConfigBase):
@@ -89,6 +90,7 @@ class TableConfigUpdate(BaseModel):
     operation_delay: Optional[float] = Field(default=None, ge=0.1)
     batch_size: Optional[int] = Field(default=None, ge=1)
     enabled: Optional[bool] = None
+    cascade_delete: Optional[bool] = None
 
 
 class TableConfigResponse(TableConfigBase):

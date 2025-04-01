@@ -59,8 +59,8 @@ class TableService:
         query = """
         INSERT INTO table_configs 
         (connection_id, table_name, schema_name, operation_type, operation_delay, 
-         batch_size, enabled, column_definitions, primary_keys, created_at, updated_at) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+         batch_size, enabled, column_definitions, primary_keys, cascade_delete, created_at, updated_at) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """
         
         # Execute the query with parameters
@@ -75,7 +75,8 @@ class TableService:
                 table.batch_size,
                 1 if table.enabled else 0,  # SQLite uses 1/0 for boolean
                 column_defs_json,
-                primary_keys_json
+                primary_keys_json,
+                1 if table.cascade_delete else 0  # SQLite uses 1/0 for boolean
             ]
             logger.info(f"Executing query with parameters: {params}")
             cursor.execute(query, params)
@@ -109,7 +110,8 @@ class TableService:
             batch_size=table.batch_size,
             enabled=table.enabled,
             column_definitions=column_definitions,
-            primary_keys=primary_keys
+            primary_keys=primary_keys,
+            cascade_delete=table.cascade_delete
         )
         
         return db_table

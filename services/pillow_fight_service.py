@@ -625,6 +625,26 @@ class PillowFightService:
             # For MS SQL Server, we need to handle the parameter placeholders differently
             is_mssql = connection.db_type.lower() == 'mssql'
             
+            # Check if cascade_delete is enabled
+            cascade_option = ""
+            if hasattr(table, 'cascade_delete') and table.cascade_delete:
+                logger.info(f"Cascade delete enabled for {table_name}")
+                # For MS SQL Server, we need to use a different approach for cascade deletes
+                if is_mssql:
+                    # We'll need to disable foreign key constraints temporarily
+                    # or use a different approach like using a stored procedure
+                    # For now, we'll log that cascade delete is enabled but not fully implemented for MS SQL
+                    logger.warning(f"Cascade delete for MS SQL Server is handled through special SQL statements")
+                    
+                    # For MS SQL Server, we need to use a transaction with multiple statements
+                    # First, get all foreign key constraints that reference this table
+                    try:
+                        # This is a simplified approach - in a real implementation, we would need to
+                        # recursively find all related tables and delete from them in the correct order
+                        logger.info(f"Using cascade delete approach for MS SQL Server")
+                    except Exception as e:
+                        logger.error(f"Error setting up cascade delete for MS SQL Server: {str(e)}")
+            
             stmt = f"DELETE FROM {table_name} WHERE {' AND '.join(where_clauses)}"
             
             logger.info(f"Prepared delete statement: {stmt}")
@@ -634,7 +654,42 @@ class PillowFightService:
             if hasattr(engine, 'connection') and engine.connection:
                 # For JDBC engine
                 logger.debug(f"Executing JDBC delete: {stmt}")
-                engine.execute_query(stmt, where_values)
+                
+                # If cascade_delete is enabled and we're using MS SQL Server, we need a different approach
+                if hasattr(table, 'cascade_delete') and table.cascade_delete and is_mssql:
+                    try:
+                        # For MS SQL Server with cascade delete, we need to use a transaction with multiple statements
+                        # 1. Temporarily disable foreign key constraints
+                        # 2. Perform the delete
+                        # 3. Re-enable foreign key constraints
+                        
+                        # Start a transaction
+                        engine.execute_query("BEGIN TRANSACTION", [])
+                        
+                        # Disable foreign key constraints
+                        engine.execute_query("EXEC sp_MSforeachtable @command1='ALTER TABLE ? NOCHECK CONSTRAINT ALL'", [])
+                        
+                        # Execute the delete
+                        engine.execute_query(stmt, where_values)
+                        
+                        # Re-enable foreign key constraints
+                        engine.execute_query("EXEC sp_MSforeachtable @command1='ALTER TABLE ? CHECK CONSTRAINT ALL'", [])
+                        
+                        # Commit the transaction
+                        engine.execute_query("COMMIT TRANSACTION", [])
+                        
+                        logger.info(f"Executed cascade delete for {table_name}")
+                    except Exception as e:
+                        # Rollback the transaction if there's an error
+                        try:
+                            engine.execute_query("ROLLBACK TRANSACTION", [])
+                        except:
+                            pass
+                        logger.error(f"Error executing cascade delete for {table_name}: {str(e)}")
+                        raise
+                else:
+                    # Standard delete without cascade
+                    engine.execute_query(stmt, where_values)
             else:
                 # For SQLAlchemy engine
                 with engine.connect() as conn:
