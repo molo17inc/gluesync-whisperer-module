@@ -141,6 +141,21 @@ class DatabaseConnector:
         # Initialize database-specific SQL statements based on type
         self.sql_statements = get_sql_statements(db_type)
     
+    def is_connected(self):
+        """Check if the connection is still valid and open."""
+        if self.connection is None:
+            return False
+            
+        try:
+            # Try a simple query to check if the connection is still valid
+            cursor = self.connection.cursor()
+            cursor.execute("SELECT 1")
+            cursor.close()
+            return True
+        except Exception as e:
+            logger.warning(f"Connection check failed: {str(e)}")
+            return False
+    
     def connect(self):
         """Connect to the database using direct JDBC."""
         try:

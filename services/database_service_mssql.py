@@ -40,6 +40,11 @@ logger = logging.getLogger(__name__)
 class MSSQLDatabaseService(DatabaseServiceBase):
     """MS SQL Server specific database service implementation"""
     
+    def __init__(self, db):
+        """Initialize the MS SQL Server database service."""
+        super().__init__(db)
+        self._connection_pool = {}  # Dictionary to store active connections by connection_id
+    
     def get_schemas(self, connection_id: int) -> List[str]:
         """Get all schemas for a database connection."""
         db_connection = self.get_connection(connection_id)
@@ -100,35 +105,46 @@ class MSSQLDatabaseService(DatabaseServiceBase):
         schema = schema_name or 'dbo'
         logger.info(f"Using direct JDBC metadata approach for {schema}.{table_name}")
         
-        # Create a database connector
-        connector_db_type = db_connection.db_type
-        if isinstance(connector_db_type, str):
+        # Check if we already have a connection for this connection_id in our pool
+        connection_id = db_connection.id
+        if connection_id in self._connection_pool and self._connection_pool[connection_id].is_connected():
+            logger.info(f"Using existing connection from pool for connection_id {connection_id}")
+            engine = self._connection_pool[connection_id]
+        else:
+            # Create a new database connector
+            connector_db_type = db_connection.db_type
+            if isinstance(connector_db_type, str):
+                try:
+                    connector_db_type = DatabaseType[connector_db_type.upper()]
+                except (KeyError, AttributeError):
+                    logger.warning(f"Unknown database type string: {connector_db_type}")
+                    
+            # Map database field from database_name to database if needed
+            database = getattr(db_connection, 'database', None)
+            if not database and hasattr(db_connection, 'database_name'):
+                database = db_connection.database_name
+                logger.info(f"Using database_name field: {database}")
+            
+            db_connector = DatabaseConnector(
+                db_type=connector_db_type,
+                host=db_connection.host,
+                port=db_connection.port,
+                database=database,
+                username=db_connection.username,
+                password=db_connection.password
+            )
+            logger.info(f"Created DatabaseConnector for {connector_db_type} connection to {db_connection.host}:{db_connection.port}/{database}")
+            
+            # Connect to the database
             try:
-                connector_db_type = DatabaseType[connector_db_type.upper()]
-            except (KeyError, AttributeError):
-                logger.warning(f"Unknown database type string: {connector_db_type}")
-                
-        # Map database field from database_name to database if needed
-        database = getattr(db_connection, 'database', None)
-        if not database and hasattr(db_connection, 'database_name'):
-            database = db_connection.database_name
-            logger.info(f"Using database_name field: {database}")
-        
-        db_connector = DatabaseConnector(
-            db_type=connector_db_type,
-            host=db_connection.host,
-            port=db_connection.port,
-            database=database,
-            username=db_connection.username,
-            password=db_connection.password
-        )
-        logger.info(f"Created DatabaseConnector for {connector_db_type} connection to {db_connection.host}:{db_connection.port}/{database}")
-        
-        # Connect to the database
-        try:
-            # Use the engine we already have instead of creating a new connection
-            engine = self._get_engine(db_connection)
-            logger.info(f"Connected to MS SQL Server database for direct schema retrieval")
+                # Create a new connection and store it in the pool
+                db_connector.connect()
+                self._connection_pool[connection_id] = db_connector
+                engine = db_connector
+                logger.info(f"Connected to MS SQL Server database for direct schema retrieval")
+            except Exception as e:
+                logger.error(f"Error connecting to MS SQL Server database: {str(e)}")
+                return TableSchemaResponse(table_name=table_name, columns={}, primary_keys=[])
             
             # Ensure we have a valid JDBC connection
             if not hasattr(engine, 'jconn') or not engine.jconn:
@@ -508,7 +524,7 @@ class MSSQLDatabaseService(DatabaseServiceBase):
                 # Convert any Java String keys to Python strings
                 python_key = str(key) if key is not None else ""
                 sanitized_columns[python_key] = value
-                
+            
             # Ensure all primary keys are Python strings
             sanitized_primary_keys = [str(pk) if pk is not None else "" for pk in primary_keys]
             
@@ -531,9 +547,10 @@ class MSSQLDatabaseService(DatabaseServiceBase):
         """Get or create a database engine for a connection."""
         connection_id = connection.id
         
-        # Return cached engine if it exists
-        if connection_id in self.engines:
-            return self.engines[connection_id]
+        # Check if we have a valid connection in the pool
+        if connection_id in self._connection_pool and self._connection_pool[connection_id].is_connected():
+            logger.info(f"Using existing connection from pool for connection_id {connection_id}")
+            return self._connection_pool[connection_id]
         
         # Create a new DatabaseConnector instance
         connector_db_type = connection.db_type
@@ -563,6 +580,9 @@ class MSSQLDatabaseService(DatabaseServiceBase):
         try:
             # Connect to the database and get the JDBC connection
             db_connector.connect()
+            
+            # Store in connection pool
+            self._connection_pool[connection_id] = db_connector
             
             # Ensure we have a valid JDBC connection
             if hasattr(db_connector, 'engine') and hasattr(db_connector.engine, 'jconn'):
