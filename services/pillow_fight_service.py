@@ -409,9 +409,37 @@ class PillowFightService:
             # Generate random data for each column
             data = {}
             for col_name, col_info in columns_dict.items():
-                # Skip auto-increment columns
-                if col_name in primary_keys and col_info.get("is_primary_key", False):
+                # Skip auto-increment columns or primary keys
+                if col_name in primary_keys or col_info.get("primary_key", False):
                     logger.info(f"Skipping primary key column: {col_name}")
+                    # For MSSQL, we need to generate a unique value for primary keys
+                    # instead of skipping them, as they might not be auto-increment
+                    if connection.db_type.lower() == 'mssql':
+                        import random
+                        
+                        # Get the max ID from the table to ensure we generate a unique ID
+                        table_name = table.table_name
+                        if table.schema_name:
+                            table_name = f"{table.schema_name}.{table_name}"
+                        
+                        try:
+                            # Query to get the max ID
+                            max_id_query = f"SELECT MAX({col_name}) as max_id FROM {table_name}"
+                            max_id_result = engine.execute_query(max_id_query)
+                            
+                            # Extract the max ID
+                            max_id = 0
+                            if max_id_result and len(max_id_result) > 0 and max_id_result[0].get('max_id') is not None:
+                                max_id = int(max_id_result[0].get('max_id', 0))
+                                
+                            # Generate a unique ID that's higher than the max ID
+                            new_id = max_id + random.randint(1, 100)
+                            logger.info(f"Generated unique ID {new_id} for primary key {col_name} (max existing ID: {max_id})")
+                            data[col_name] = new_id
+                        except Exception as e:
+                            logger.warning(f"Error getting max ID for {col_name}: {str(e)}")
+                            # Fallback to a large random number if we can't get the max ID
+                            data[col_name] = random.randint(10000, 99999)
                     continue
                 
                 # Generate random data based on column type
@@ -634,14 +662,14 @@ class PillowFightService:
             if table.schema_name:
                 table_name = f"{table.schema_name}.{table_name}"
             
-            # Check if we're using JDBC engine (has db_connector attribute)
-            is_jdbc = hasattr(engine, 'db_connector')
+            # Check if we're using JDBC engine (has execute_query method)
+            is_jdbc = hasattr(engine, 'execute_query')
             logger.debug(f"Using JDBC engine: {is_jdbc} for table {table_name}")
             
             # Handle differently based on engine type
             if is_jdbc:
                 try:
-                    # For JDBC engines, use direct execute method
+                    # For JDBC engines, use execute_query method
                     # First, count the total number of records
                     count_stmt = f"SELECT COUNT(*) as cnt FROM {table_name}"
                     logger.debug(f"Executing count query: {count_stmt}")
@@ -655,39 +683,38 @@ class PillowFightService:
                         logger.error(f"Failed to establish connection for {table_name}")
                         return None
                     
-                    # Execute count query
-                    count_result = engine.execute(count_stmt)
+                    # Execute count query using execute_query method
+                    count_result = engine.execute_query(count_stmt)
                 except Exception as e:
                     logger.error(f"Error executing count query for {table_name}: {str(e)}")
                     return None
                 if count_result:
-                    row = count_result.fetchone()
-                    if row:
-                        # Extract count value - might be at index 0 or might have a name 'cnt'
-                        count_value = row[0] if isinstance(row, (list, tuple)) else row.get('cnt', 0)
-                    
-                    if count_value == 0:
+                    # For JDBC, count_result is already a list of dictionaries
+                    if len(count_result) > 0:
+                        # Extract count value from the first row
+                        count_value = count_result[0].get('cnt', 0)
+                        
+                        if count_value == 0:
+                            logger.info(f"No records found in {table_name}")
+                            return None
+                        
+                        # Get a random record - MS SQL Server uses TOP instead of LIMIT
+                        if hasattr(engine, 'db_type') and engine.db_type == DatabaseType.MSSQL:
+                            select_stmt = f"SELECT TOP 1 * FROM {table_name} ORDER BY NEWID()"
+                        else:
+                            # For other databases
+                            offset = random.randint(0, count_value - 1)
+                            select_stmt = f"SELECT * FROM {table_name} LIMIT 1 OFFSET {offset}"
+                        
+                        logger.debug(f"Executing select query: {select_stmt}")
+                        result = engine.execute_query(select_stmt)
+                        
+                        if result and len(result) > 0:
+                            # Result is already a list of dictionaries
+                            return result[0]
+                    else:
                         logger.info(f"No records found in {table_name}")
                         return None
-                    
-                    # Get a random record - MS SQL Server uses TOP instead of LIMIT
-                    if engine.db_connector.db_type == DatabaseType.MSSQL:
-                        select_stmt = f"SELECT TOP 1 * FROM {table_name}"
-                    else:
-                        select_stmt = f"SELECT * FROM {table_name} LIMIT 1"
-                    
-                    logger.debug(f"Executing select query: {select_stmt}")
-                    result = engine.execute(select_stmt)
-                    
-                    if result:
-                        row = result.fetchone()
-                        if row:
-                            # Convert row to dict - handle case where keys() method might not be available
-                            try:
-                                return {k: v for k, v in zip(result.keys(), row)}
-                            except:
-                                # Fallback if keys() method is not available
-                                return {f"col_{i}": v for i, v in enumerate(row)}
                 
                 return None
             else:

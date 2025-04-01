@@ -1281,22 +1281,34 @@ class DatabaseConnector:
                 # Execute the query with parameters
                 cursor.execute(query, jdbc_params)
                 
-                # Fetch results (limited by max_rows)
-                result_set = cursor.fetchmany(max_rows) if max_rows else cursor.fetchall()
+                # Check if this is a SELECT query or a DML query (INSERT, UPDATE, DELETE)
+                is_select_query = query.strip().upper().startswith("SELECT")
                 
-                # Get column names from cursor description
-                column_names = [desc[0] for desc in cursor.description] if cursor.description else []
-                
-                # Convert results to dictionaries
-                results = []
-                for row in result_set:
-                    row_dict = {}
-                    for i, col_name in enumerate(column_names):
-                        row_dict[col_name] = row[i]
-                    results.append(row_dict)
-                
-                cursor.close()
-                return results
+                if is_select_query and cursor.description:
+                    try:
+                        # Fetch results (limited by max_rows)
+                        result_set = cursor.fetchmany(max_rows) if max_rows else cursor.fetchall()
+                        
+                        # Get column names from cursor description
+                        column_names = [desc[0] for desc in cursor.description] if cursor.description else []
+                        
+                        # Convert results to dictionaries
+                        results = []
+                        for row in result_set:
+                            row_dict = {}
+                            for i, col_name in enumerate(column_names):
+                                row_dict[col_name] = row[i]
+                            results.append(row_dict)
+                        
+                        return results
+                    except Exception as e:
+                        logger.warning(f"Error fetching results: {str(e)}")
+                        # Return empty results if fetching fails
+                        return []
+                else:
+                    # For INSERT, UPDATE, DELETE queries, just return an empty list
+                    # No need to fetch results for these operations
+                    return []
             except Exception as e:
                 logger.error(f"Error executing query: {str(e)}")
                 if cursor:
