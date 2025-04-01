@@ -123,7 +123,7 @@ class ConnectionService:
             connection.database,
             connection.username,
             connection.password,
-            connection.type.value if connection.type else None,
+            connection.db_type.value if connection.db_type else None,
             connection.driver,
             connection.schema,
             connection.status.value if connection.status else None,
