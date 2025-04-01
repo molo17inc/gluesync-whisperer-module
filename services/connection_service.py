@@ -126,7 +126,7 @@ class ConnectionService:
             connection.db_type.value if connection.db_type else None,
             connection.driver,
             connection.schema,
-            connection.status.value if connection.status else None,
+            connection.status.value if hasattr(connection.status, 'value') else connection.status,
             connection.updated_at.isoformat() if connection.updated_at else None,
             connection.last_operation_at.isoformat() if connection.last_operation_at else None,
             connection_id

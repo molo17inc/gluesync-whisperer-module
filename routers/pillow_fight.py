@@ -212,7 +212,8 @@ def stop_pillow_fight(
         connection_service = ConnectionService(db)
         connection = connection_service.get_connection(connection_id)
         if connection:
-            connection.status = ConnectionStatus.IDLE
+            # Use string value 'idle' instead of enum to avoid 'str' object has no attribute 'value' error
+            connection.status = "idle"
             connection_service.update_connection(connection_id, connection)
         
         return {
@@ -246,7 +247,8 @@ def stop_all_pillow_fights(db = Depends(get_db)):
                     connection_service = ConnectionService(db)
                     connection = connection_service.get_connection(connection_id)
                     if connection:
-                        connection.status = ConnectionStatus.IDLE
+                        # Use string value 'idle' instead of enum to avoid 'str' object has no attribute 'value' error
+                        connection.status = "idle"
                         connection_service.update_connection(connection_id, connection)
             except Exception as e:
                 logger.error(f"Error stopping pillow fight {fight_id}: {str(e)}")
@@ -334,7 +336,7 @@ def pillow_fight_complete(fight_id: str, connection_id: int):
         connection = connection_service.get_connection(connection_id)
         
         # Only stop the pillow fight if the connection is explicitly stopped or deleted
-        if not connection or connection.status == ConnectionStatus.STOPPED:
+        if not connection or connection.status == "stopped":
             # Stop the pillow fight
             parts = fight_id.split('_')
             if len(parts) >= 2:
