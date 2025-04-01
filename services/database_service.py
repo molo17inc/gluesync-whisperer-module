@@ -74,7 +74,7 @@ class DatabaseService:
         
         if not result:
             logger.error(f"Connection with ID {connection_id} not found")
-            raise ValueError(f"Connection with ID {connection_id} not found")
+            return None
         
         # Create a connection object
         connection = DatabaseConnection(

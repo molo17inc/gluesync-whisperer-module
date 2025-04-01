@@ -124,7 +124,7 @@ class DatabaseServiceBase(ABC):
         
         if not result:
             logger.error(f"Connection with ID {connection_id} not found")
-            raise ValueError(f"Connection with ID {connection_id} not found")
+            return None
             
         return self._map_db_to_model(result)
     

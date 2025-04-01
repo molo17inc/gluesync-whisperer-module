@@ -34,7 +34,9 @@ from schemas import (
     TableConfigResponse,
     ConnectionTestResponse,
     TableListResponse,
-    TableSchemaResponse
+    TableSchemaResponse,
+    SqlQueryRequest,
+    SqlQueryResponse
 )
 from services.whisperer_service import WhispererService
 from services.connection_service import ConnectionService
@@ -294,3 +296,153 @@ def automation_complete(automation_id: str, connection_id: int):
             logger.info(f"Automation {automation_id} completed")
     except Exception as e:
         logger.error(f"Error in automation complete callback: {str(e)}")
+
+
+@router.post("/connections/{connection_id}/query", response_model=SqlQueryResponse)
+async def execute_query(connection_id: int, request: SqlQueryRequest, db = Depends(get_db)):
+    """Execute a SQL query against a database connection."""
+    try:
+        # Get database connection
+        db_service = ConnectionService(db)
+        connection = db_service.get_connection(connection_id)
+        
+        if not connection:
+            return SqlQueryResponse(
+                success=False,
+                message=f"Connection with ID {connection_id} not found",
+                results=[],
+                column_names=[],
+                row_count=0
+            )
+        
+        if connection.status != "running":
+            return SqlQueryResponse(
+                success=False,
+                message=f"Connection with ID {connection_id} is not running",
+                results=[],
+                column_names=[],
+                row_count=0
+            )
+        
+        # Create a database connector
+        connector_db_type = connection.db_type
+        if isinstance(connector_db_type, str):
+            try:
+                connector_db_type = DatabaseType[connector_db_type.upper()]
+            except (KeyError, AttributeError):
+                logger.warning(f"Unknown database type string: {connector_db_type}")
+                
+        # Map database field from database_name to database if needed
+        database = getattr(connection, 'database', None)
+        if not database and hasattr(connection, 'database_name'):
+            database = connection.database_name
+            logger.info(f"Using database_name field: {database}")
+        
+        from utils.db_connector import DatabaseConnector
+        db_connector = DatabaseConnector(
+            db_type=connector_db_type,
+            host=connection.host,
+            port=connection.port,
+            database=database,
+            username=connection.username,
+            password=connection.password
+        )
+        
+        # Connect to the database
+        connected = db_connector.connect()
+        if not connected:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to connect to database for connection ID {connection_id}"
+            )
+        
+        try:
+            # Log query information
+            logger.info(f"Executing query on connection {connection_id}: {request.query}")
+            
+            # Execute the query
+            params = request.params if request.params else []
+            
+            # For SQLite, ensure we explicitly commit transactions
+            if connector_db_type == DatabaseType.SQLITE:
+                # Execute and commit explicitly for SQLite
+                cursor = db_connector.connection.cursor()
+                try:
+                    cursor.execute(request.query, params)
+                    db_connector.connection.commit()
+                    
+                    # Check if this is a SELECT query to get results
+                    is_select = request.query.strip().upper().startswith("SELECT")
+                    if is_select and cursor.description:
+                        # Get column names and ensure they are Python strings
+                        column_names = []
+                        for desc in cursor.description:
+                            col_name = str(desc[0]) if desc[0] else 'column_' + str(len(column_names))
+                            column_names.append(col_name)
+                        
+                        # Fetch results (limited by max_rows)
+                        result_set = cursor.fetchmany(request.max_rows) if request.max_rows else cursor.fetchall()
+                        
+                        # Convert results to dictionaries
+                        results = []
+                        for row in result_set:
+                            row_dict = {}
+                            for i, col_name in enumerate(column_names):
+                                # Convert Java objects to Python types
+                                row_dict[col_name] = str(row[i]) if row[i] is not None else None
+                            results.append(row_dict)
+                    else:
+                        # For non-SELECT queries, return empty results
+                        results = []
+                finally:
+                    cursor.close()
+            else:
+                # Use the standard execute_query method for other database types
+                results = db_connector.execute_query(request.query, params=params, max_rows=request.max_rows)
+            
+            # Get column names if results are available
+            column_names = []
+            if results and len(results) > 0:
+                column_names = list(results[0].keys())
+            
+            # Disconnect from the database
+            db_connector.disconnect()
+            
+            # Return the results
+            return SqlQueryResponse(
+                success=True,
+                message=f"Query executed successfully. Retrieved {len(results)} rows.",
+                results=results,
+                column_names=column_names,
+                row_count=len(results)
+            )
+        except Exception as e:
+            # Disconnect from the database in case of error
+            db_connector.disconnect()
+            
+            # Log the error and return an error response
+            logger.error(f"Error executing query: {str(e)}")
+            return SqlQueryResponse(
+                success=False,
+                message=f"Error executing query: {str(e)}",
+                results=[],
+                column_names=[],
+                row_count=0
+            )
+        finally:
+            # Disconnect from the database
+            try:
+                db_connector.disconnect()
+                logger.info("Disconnected from database")
+            except Exception as e:
+                logger.error(f"Error disconnecting from database: {str(e)}")
+    except HTTPException as e:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        # Log the error and return a 500 response
+        logger.error(f"Error executing query: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error executing query: {str(e)}"
+        )

@@ -93,7 +93,8 @@ class MSSQLDatabaseService(DatabaseServiceBase):
                 schemas = []
                 while rs.next():
                     schema_name = rs.getString("TABLE_SCHEM")
-                    schemas.append(schema_name)
+                    # Convert Java String to Python string
+                    schemas.append(str(schema_name))
                 
                 rs.close()
                 return schemas
@@ -157,7 +158,8 @@ class MSSQLDatabaseService(DatabaseServiceBase):
                 tables = []
                 while rs.next():
                     table_name = rs.getString("TABLE_NAME")
-                    tables.append(table_name)
+                    # Convert Java String to Python string
+                    tables.append(str(table_name))
                 
                 rs.close()
                 return tables
@@ -243,8 +245,8 @@ class MSSQLDatabaseService(DatabaseServiceBase):
                 logger.info(f"Getting tables for schema '{schema}' using JDBC metadata")
                 rs_tables = metadata.getTables(None, schema, "%", ["TABLE"])
                 while rs_tables.next():
-                    table_schema = rs_tables.getString("TABLE_SCHEM")
-                    table_name_found = rs_tables.getString("TABLE_NAME")
+                    table_schema = str(rs_tables.getString("TABLE_SCHEM"))
+                    table_name_found = str(rs_tables.getString("TABLE_NAME"))
                     all_tables.append(f"{table_schema}.{table_name_found}")
                 rs_tables.close()
                 logger.info(f"Found {len(all_tables)} tables in database: {', '.join(all_tables)}")
@@ -257,8 +259,8 @@ class MSSQLDatabaseService(DatabaseServiceBase):
                     logger.info(f"No tables found with schema '{schema}', trying with uppercase: '{schema.upper()}'")
                     rs_tables = metadata.getTables(None, schema.upper(), "%", ["TABLE"])
                     while rs_tables.next():
-                        table_schema = rs_tables.getString("TABLE_SCHEM")
-                        table_name_found = rs_tables.getString("TABLE_NAME")
+                        table_schema = str(rs_tables.getString("TABLE_SCHEM"))
+                        table_name_found = str(rs_tables.getString("TABLE_NAME"))
                         all_tables.append(f"{table_schema}.{table_name_found}")
                     rs_tables.close()
                     logger.info(f"Found {len(all_tables)} tables with uppercase schema: {', '.join(all_tables)}")
@@ -271,8 +273,8 @@ class MSSQLDatabaseService(DatabaseServiceBase):
                     logger.info(f"No tables found with uppercase schema, trying with lowercase: '{schema.lower()}'")
                     rs_tables = metadata.getTables(None, schema.lower(), "%", ["TABLE"])
                     while rs_tables.next():
-                        table_schema = rs_tables.getString("TABLE_SCHEM")
-                        table_name_found = rs_tables.getString("TABLE_NAME")
+                        table_schema = str(rs_tables.getString("TABLE_SCHEM"))
+                        table_name_found = str(rs_tables.getString("TABLE_NAME"))
                         all_tables.append(f"{table_schema}.{table_name_found}")
                     rs_tables.close()
                     logger.info(f"Found {len(all_tables)} tables with lowercase schema: {', '.join(all_tables)}")
@@ -285,8 +287,8 @@ class MSSQLDatabaseService(DatabaseServiceBase):
                     logger.info("No tables found with any schema variation, trying with null schema to get all tables")
                     rs_tables = metadata.getTables(None, None, "%", ["TABLE"])
                     while rs_tables.next():
-                        table_schema = rs_tables.getString("TABLE_SCHEM")
-                        table_name_found = rs_tables.getString("TABLE_NAME")
+                        table_schema = str(rs_tables.getString("TABLE_SCHEM"))
+                        table_name_found = str(rs_tables.getString("TABLE_NAME"))
                         all_tables.append(f"{table_schema}.{table_name_found}")
                     rs_tables.close()
                     logger.info(f"Found {len(all_tables)} tables with null schema: {', '.join(all_tables)}")
@@ -344,8 +346,8 @@ class MSSQLDatabaseService(DatabaseServiceBase):
                     
                     while rs_columns.next():
                         column_count += 1
-                        column_name = rs_columns.getString("COLUMN_NAME")
-                        column_type = rs_columns.getString("TYPE_NAME")
+                        column_name = str(rs_columns.getString("COLUMN_NAME"))
+                        column_type = str(rs_columns.getString("TYPE_NAME"))
                         column_size = rs_columns.getInt("COLUMN_SIZE")
                         decimal_digits = rs_columns.getInt("DECIMAL_DIGITS")
                         nullable = rs_columns.getInt("NULLABLE") == 1
@@ -371,7 +373,7 @@ class MSSQLDatabaseService(DatabaseServiceBase):
                     
                     while rs_pk.next():
                         pk_count += 1
-                        pk_name = rs_pk.getString("COLUMN_NAME")
+                        pk_name = str(rs_pk.getString("COLUMN_NAME"))
                         primary_keys.append(pk_name)
                         
                         # Mark as primary key in columns dictionary

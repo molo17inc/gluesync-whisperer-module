@@ -1205,8 +1205,10 @@ class DatabaseConnector:
                 rs = metadata.getSchemas()
                 while rs.next():
                     schema = rs.getString("TABLE_SCHEM")
-                    if schema and schema not in ["QSYS", "QSYS2", "SYSIBM", "SYSCAT", "SYSFUN", "SYSPROC", "SYSTOOLS"]:
-                        schemas.append(schema)
+                    # Convert Java String to Python string
+                    schema_str = str(schema) if schema else None
+                    if schema_str and schema_str not in ["QSYS", "QSYS2", "SYSIBM", "SYSCAT", "SYSFUN", "SYSPROC", "SYSTOOLS"]:
+                        schemas.append(schema_str)
                 rs.close()
                 
                 # If no schemas found, use the database name or username as default

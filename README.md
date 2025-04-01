@@ -10,6 +10,7 @@ A specialized module for orchestrating database operations. This application ena
 - Set delay between operations and batch sizes
 - View operation logs and connection status
 - REST API for configuration and control
+- Execute custom SQL queries against configured database connections
 - Robust parameter handling for all database types
 - Automatic transaction management for data modification operations
 - Cross-platform support for AS400/DB2 databases on both x86_64 and ARM architectures
@@ -153,6 +154,12 @@ You can configure the application using the following environment variables:
 - `POST /api/connections/{connection_id}/test`: Test a connection
 - `GET /api/connections/{connection_id}/tables?schema={schema}`: List tables in the database (schema parameter required)
 - `PUT /api/connections/{connection_id}/status`: Update connection status (start/stop/pause)
+
+### SQL Query Execution
+
+- `POST /api/v1/automation/connections/{connection_id}/query`: Execute a SQL query against a database connection
+  - Request body: `{"query": "SELECT * FROM your_table", "schema_name": "optional_schema", "params": ["optional_parameters"], "max_rows": 100}`
+  - Returns: Query results with column names and row data
 
 ### Table Configuration
 

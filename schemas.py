@@ -153,3 +153,18 @@ class TableOperationRequest(BaseModel):
     operation_type: OperationType = OperationType.ALL
     operation_delay: float = 1.0
     batch_size: int = 1
+
+
+class SqlQueryRequest(BaseModel):
+    query: str
+    schema_name: Optional[str] = None
+    params: Optional[List[Any]] = None
+    max_rows: int = Field(default=100, ge=1)  # Maximum number of rows to return
+
+
+class SqlQueryResponse(BaseModel):
+    success: bool
+    message: str
+    results: Optional[List[Dict[str, Any]]] = None
+    column_names: Optional[List[str]] = None
+    row_count: Optional[int] = None
