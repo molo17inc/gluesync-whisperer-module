@@ -174,7 +174,7 @@ class WhispererService:
             # Get the database engine
             from services.database_service import DatabaseService
             db_service = DatabaseService(db)
-            engine = db_service._get_engine(db_connection)
+            engine = db_service.get_engine(db_connection)
             
             # Main loop for the whisperer
             while not stop_event.is_set():
