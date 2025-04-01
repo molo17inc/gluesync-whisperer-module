@@ -935,7 +935,8 @@ class PillowFightService:
         elif 'date' in column_type:
             # Random date in the last 365 days
             days = random.randint(0, 365)
-            return (datetime.now() - datetime.timedelta(days=days)).strftime('%Y-%m-%d')
+            from datetime import datetime, timedelta
+            return (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
         elif 'time' in column_type and 'timestamp' not in column_type:
             # Random time
             hour = random.randint(0, 23)
@@ -948,7 +949,8 @@ class PillowFightService:
             hours = random.randint(0, 23)
             minutes = random.randint(0, 59)
             seconds = random.randint(0, 59)
-            return (datetime.now() - datetime.timedelta(days=days, hours=hours, minutes=minutes, seconds=seconds)).isoformat()
+            from datetime import datetime, timedelta
+            return (datetime.now() - timedelta(days=days, hours=hours, minutes=minutes, seconds=seconds)).isoformat()
         elif 'char' in column_type or 'text' in column_type or 'string' in column_type:
             # Random string
             length = 10
