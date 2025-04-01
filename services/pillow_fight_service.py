@@ -689,7 +689,19 @@ class PillowFightService:
                         raise
                 else:
                     # Standard delete without cascade
-                    engine.execute_query(stmt, where_values)
+                    try:
+                        engine.execute_query(stmt, where_values)
+                    except Exception as e:
+                        # Check if it's a foreign key constraint error
+                        error_str = str(e).lower()
+                        if 'foreign key' in error_str or 'reference constraint' in error_str or 'constraint' in error_str:
+                            logger.warning(f"Foreign key constraint error detected for {table_name}. Consider enabling cascade_delete for this table.")
+                            # Try to continue with the operation despite the error
+                            # This allows the pillow fight to continue even if some deletes fail
+                            return
+                        else:
+                            # Re-raise if it's not a foreign key constraint error
+                            raise
             else:
                 # For SQLAlchemy engine
                 with engine.connect() as conn:
@@ -896,9 +908,23 @@ class PillowFightService:
             logger.error(f"Error getting random record from {table.table_name}: {str(e)}")
             return None
     
-    def _generate_random_data(self, column_type: str) -> Any:
+    def _generate_random_data(self, column_type: Any) -> Any:
         """Generate random data based on column type."""
-        column_type = column_type.lower()
+        # Convert Java String to Python string if needed
+        try:
+            # Check if it's a Java String or other Java object
+            if hasattr(column_type, 'toString'):
+                column_type = str(column_type)
+            # Check if it's some other non-string type
+            elif not isinstance(column_type, str):
+                column_type = str(column_type)
+                
+            # Now we should have a Python string
+            column_type = column_type.lower()
+        except Exception as e:
+            # If anything goes wrong, log it and default to a string type
+            logger.error(f"Error converting column type {type(column_type)}: {str(e)}")
+            column_type = 'varchar'
         
         if 'int' in column_type:
             return random.randint(1, 1000)
