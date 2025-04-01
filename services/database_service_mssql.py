@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
  * This file is part of Gluesync Whisperer.
  *
@@ -49,64 +48,7 @@ class MSSQLDatabaseService(DatabaseServiceBase):
         """Get all schemas for a database connection."""
         db_connection = self.get_connection(connection_id)
         
-        # Create a database connector
-        engine = self._get_engine(db_connection)
-        
-        try:
-            # Use JDBC connector to get schemas
-            if hasattr(engine, 'get_schemas') and callable(engine.get_schemas):
-                logger.info("Using JDBC metadata to get schemas")
-                return engine.get_schemas()
-            
-            # Fallback for direct SQL query
-            logger.info("Using direct SQL query to get schemas")
-            cursor = engine.execute("SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA")
-            return [row[0] for row in cursor.fetchall()]
-        except Exception as e:
-            logger.error(f"Error getting schemas: {str(e)}")
-            raise Exception(f"Not connected to database: {str(e)}")
-    
-    def get_tables(self, connection_id: int, schema: str = None) -> List[str]:
-        """Get all tables for a database connection."""
-        db_connection = self.get_connection(connection_id)
-        
-        # Create a database connector
-        engine = self._get_engine(db_connection)
-        
-        try:
-            # For MS SQL Server, schema is required
-            if not schema:
-                # Default to dbo schema if not provided
-                schema = "dbo"
-                logger.info(f"No schema provided, defaulting to 'dbo'")
-            
-            # Use JDBC connector to get tables for the specified schema
-            if hasattr(engine, 'get_tables') and callable(engine.get_tables):
-                logger.info(f"Using JDBC metadata to get tables for schema '{schema}'")
-                return engine.get_tables(schema)
-            
-            # Fallback for direct SQL query
-            logger.info(f"Using direct SQL query to get tables for schema '{schema}'")
-            cursor = engine.execute(
-                "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ?", 
-                (schema,)
-            )
-            return [row[0] for row in cursor.fetchall()]
-        except Exception as e:
-            logger.error(f"Error getting tables: {str(e)}")
-            raise Exception(f"Not connected to database: {str(e)}")
-    
-    def get_table_schema(self, connection_id: int, table_name: str, schema_name: str = None) -> TableSchemaResponse:
-        """Get the schema of a table."""
-        logger.info(f"DATABASE_SERVICE: get_table_schema called for table {table_name} in connection {connection_id} with schema {schema_name}")
-        db_connection = self.get_connection(connection_id)
-        
-        # Default schema to 'dbo' if not provided
-        schema = schema_name or 'dbo'
-        logger.info(f"Using direct JDBC metadata approach for {schema}.{table_name}")
-        
-        # Check if we already have a connection for this connection_id in our pool
-        connection_id = db_connection.id
+        # Check if we have a valid connection in the pool
         if connection_id in self._connection_pool and self._connection_pool[connection_id].is_connected():
             logger.info(f"Using existing connection from pool for connection_id {connection_id}")
             engine = self._connection_pool[connection_id]
@@ -118,12 +60,11 @@ class MSSQLDatabaseService(DatabaseServiceBase):
                     connector_db_type = DatabaseType[connector_db_type.upper()]
                 except (KeyError, AttributeError):
                     logger.warning(f"Unknown database type string: {connector_db_type}")
-                    
-            # Map database field from database_name to database if needed
+            
+            # Map database_name to database if needed
             database = getattr(db_connection, 'database', None)
             if not database and hasattr(db_connection, 'database_name'):
                 database = db_connection.database_name
-                logger.info(f"Using database_name field: {database}")
             
             db_connector = DatabaseConnector(
                 db_type=connector_db_type,
@@ -133,18 +74,150 @@ class MSSQLDatabaseService(DatabaseServiceBase):
                 username=db_connection.username,
                 password=db_connection.password
             )
-            logger.info(f"Created DatabaseConnector for {connector_db_type} connection to {db_connection.host}:{db_connection.port}/{database}")
             
             # Connect to the database
             try:
-                # Create a new connection and store it in the pool
                 db_connector.connect()
                 self._connection_pool[connection_id] = db_connector
                 engine = db_connector
-                logger.info(f"Connected to MS SQL Server database for direct schema retrieval")
             except Exception as e:
-                logger.error(f"Error connecting to MS SQL Server database: {str(e)}")
-                return TableSchemaResponse(table_name=table_name, columns={}, primary_keys=[])
+                logger.error(f"Error connecting to database: {str(e)}")
+                return []
+        
+        try:
+            # Get JDBC metadata
+            if hasattr(engine, 'jconn') and engine.jconn:
+                metadata = engine.jconn.getMetaData()
+                rs = metadata.getSchemas()
+                
+                schemas = []
+                while rs.next():
+                    schema_name = rs.getString("TABLE_SCHEM")
+                    schemas.append(schema_name)
+                
+                rs.close()
+                return schemas
+            else:
+                logger.error("No JDBC connection available")
+                return []
+        except Exception as e:
+            logger.error(f"Error getting schemas: {str(e)}")
+            return []
+    
+    def get_tables(self, connection_id: int, schema: str = None) -> List[str]:
+        """Get all tables for a database connection."""
+        db_connection = self.get_connection(connection_id)
+        
+        # Check if we have a valid connection in the pool
+        if connection_id in self._connection_pool and self._connection_pool[connection_id].is_connected():
+            logger.info(f"Using existing connection from pool for connection_id {connection_id}")
+            engine = self._connection_pool[connection_id]
+        else:
+            # Create a new database connector
+            connector_db_type = db_connection.db_type
+            if isinstance(connector_db_type, str):
+                try:
+                    connector_db_type = DatabaseType[connector_db_type.upper()]
+                except (KeyError, AttributeError):
+                    logger.warning(f"Unknown database type string: {connector_db_type}")
+            
+            # Map database_name to database if needed
+            database = getattr(db_connection, 'database', None)
+            if not database and hasattr(db_connection, 'database_name'):
+                database = db_connection.database_name
+            
+            db_connector = DatabaseConnector(
+                db_type=connector_db_type,
+                host=db_connection.host,
+                port=db_connection.port,
+                database=database,
+                username=db_connection.username,
+                password=db_connection.password
+            )
+            
+            # Connect to the database
+            try:
+                db_connector.connect()
+                self._connection_pool[connection_id] = db_connector
+                engine = db_connector
+            except Exception as e:
+                logger.error(f"Error connecting to database: {str(e)}")
+                return []
+        
+        try:
+            # Get JDBC metadata
+            if hasattr(engine, 'jconn') and engine.jconn:
+                metadata = engine.jconn.getMetaData()
+                
+                # Default schema to 'dbo' if not provided
+                schema_to_use = schema or 'dbo'
+                
+                rs = metadata.getTables(None, schema_to_use, "%", ["TABLE"])
+                
+                tables = []
+                while rs.next():
+                    table_name = rs.getString("TABLE_NAME")
+                    tables.append(table_name)
+                
+                rs.close()
+                return tables
+            else:
+                logger.error("No JDBC connection available")
+                return []
+        except Exception as e:
+            logger.error(f"Error getting tables: {str(e)}")
+            return []
+    
+    def get_table_schema(self, connection_id: int, table_name: str, schema_name: str = None) -> TableSchemaResponse:
+        """Get the schema of a table."""
+        try:
+            logger.info(f"DATABASE_SERVICE: get_table_schema called for table {table_name} in connection {connection_id} with schema {schema_name}")
+            db_connection = self.get_connection(connection_id)
+            
+            # Default schema to 'dbo' if not provided
+            schema = schema_name or 'dbo'
+            logger.info(f"Using direct JDBC metadata approach for {schema}.{table_name}")
+            
+            # Check if we already have a connection for this connection_id in our pool
+            connection_id = db_connection.id
+            if connection_id in self._connection_pool and self._connection_pool[connection_id].is_connected():
+                logger.info(f"Using existing connection from pool for connection_id {connection_id}")
+                engine = self._connection_pool[connection_id]
+            else:
+                # Create a new database connector
+                connector_db_type = db_connection.db_type
+                if isinstance(connector_db_type, str):
+                    try:
+                        connector_db_type = DatabaseType[connector_db_type.upper()]
+                    except (KeyError, AttributeError):
+                        logger.warning(f"Unknown database type string: {connector_db_type}")
+                
+                # Map database field from database_name to database if needed
+                database = getattr(db_connection, 'database', None)
+                if not database and hasattr(db_connection, 'database_name'):
+                    database = db_connection.database_name
+                    logger.info(f"Using database_name field: {database}")
+                
+                db_connector = DatabaseConnector(
+                    db_type=connector_db_type,
+                    host=db_connection.host,
+                    port=db_connection.port,
+                    database=database,
+                    username=db_connection.username,
+                    password=db_connection.password
+                )
+                logger.info(f"Created DatabaseConnector for {connector_db_type} connection to {db_connection.host}:{db_connection.port}/{database}")
+                
+                # Connect to the database
+                try:
+                    # Create a new connection and store it in the pool
+                    db_connector.connect()
+                    self._connection_pool[connection_id] = db_connector
+                    engine = db_connector
+                    logger.info(f"Connected to MS SQL Server database for direct schema retrieval")
+                except Exception as e:
+                    logger.error(f"Error connecting to MS SQL Server database: {str(e)}")
+                    return TableSchemaResponse(table_name=table_name, columns={}, primary_keys=[])
             
             # Ensure we have a valid JDBC connection
             if not hasattr(engine, 'jconn') or not engine.jconn:
@@ -273,56 +346,17 @@ class MSSQLDatabaseService(DatabaseServiceBase):
                         column_count += 1
                         column_name = rs_columns.getString("COLUMN_NAME")
                         column_type = rs_columns.getString("TYPE_NAME")
+                        column_size = rs_columns.getInt("COLUMN_SIZE")
+                        decimal_digits = rs_columns.getInt("DECIMAL_DIGITS")
+                        nullable = rs_columns.getInt("NULLABLE") == 1
                         
-                        # Handle nullable attribute safely
-                        try:
-                            nullable_str = rs_columns.getString("IS_NULLABLE")
-                            if isinstance(nullable_str, str):
-                                nullable = nullable_str.upper() == "YES"
-                            else:
-                                # If it's a Java string or other object, convert to Python string first
-                                nullable = str(nullable_str).upper() == "YES"
-                        except Exception as e:
-                            logger.warning(f"Error getting nullable attribute: {str(e)}")
-                            nullable = True  # Default to nullable if we can't determine
-                        
-                        try:
-                            column_size = rs_columns.getInt("COLUMN_SIZE")
-                        except Exception as e:
-                            logger.warning(f"Error getting column size: {str(e)}")
-                            column_size = 0
-                            
-                        try:
-                            decimal_digits = rs_columns.getInt("DECIMAL_DIGITS")
-                        except Exception as e:
-                            logger.warning(f"Error getting decimal digits: {str(e)}")
-                            decimal_digits = 0
-                        
-                        # Convert Java String objects to Python strings for use as dictionary keys
-                        column_name_str = str(column_name) if column_name is not None else ""
-                        column_type_str = str(column_type) if column_type is not None else ""
-                        
-                        # Add to columns dictionary using Python string as key
-                        columns[column_name_str] = {
-                            "name": column_name_str,
-                            "type": column_type_str,
+                        columns[column_name] = {
+                            "type": column_type,
+                            "length": column_size,
+                            "scale": decimal_digits,
                             "nullable": nullable,
-                            "default": None,  # Will be updated if available
                             "primary_key": False  # Will be updated later
                         }
-                        
-                        # Try to get default value
-                        try:
-                            default_val = rs_columns.getString("COLUMN_DEF")
-                            if default_val is not None:
-                                columns[column_name_str]["default"] = str(default_val)
-                            else:
-                                columns[column_name_str]["default"] = None
-                        except Exception as e:
-                            logger.warning(f"Error getting default value: {str(e)}")
-                            columns[column_name_str]["default"] = None
-                        
-                        logger.info(f"Found column: {column_name} ({column_type})")
                     
                     rs_columns.close()
                     logger.info(f"Retrieved {column_count} columns for {found_schema}.{found_table}")
@@ -338,19 +372,11 @@ class MSSQLDatabaseService(DatabaseServiceBase):
                     while rs_pk.next():
                         pk_count += 1
                         pk_name = rs_pk.getString("COLUMN_NAME")
+                        primary_keys.append(pk_name)
                         
-                        # Convert Java String to Python string
-                        if pk_name is not None:
-                            pk_name_str = str(pk_name)
-                            primary_keys.append(pk_name_str)
-                            
-                            # Mark as primary key in columns dictionary
-                            if pk_name_str in columns:
-                                columns[pk_name_str]["primary_key"] = True
-                            else:
-                                logger.warning(f"Primary key {pk_name_str} not found in columns dictionary")
-                            
-                            logger.info(f"Found primary key: {pk_name}")
+                        # Mark as primary key in columns dictionary
+                        if pk_name in columns:
+                            columns[pk_name]["primary_key"] = True
                     
                     rs_pk.close()
                     logger.info(f"Retrieved {pk_count} primary keys for {found_schema}.{found_table}")
@@ -467,53 +493,47 @@ class MSSQLDatabaseService(DatabaseServiceBase):
                         for column_row in column_rows:
                             column_name = column_row[0]
                             data_type = column_row[2]
-                            is_nullable = column_row[5] == 1
-                            default_value = column_row[6]
+                            length = column_row[3]
+                            scale = column_row[4]
+                            is_nullable = column_row[5]
                             is_primary_key = column_row[7] == 1
                             
+                            # Ensure we have Python strings
+                            if column_name is not None:
+                                column_name = str(column_name)
+                                
                             columns[column_name] = {
-                                "name": column_name,
-                                "type": data_type,
-                                "nullable": is_nullable,
-                                "default": default_value,
+                                "type": str(data_type) if data_type is not None else "",
+                                "length": length,
+                                "scale": scale,
+                                "nullable": is_nullable == 1,
                                 "primary_key": is_primary_key
                             }
                             
                             if is_primary_key and column_name not in primary_keys:
                                 primary_keys.append(column_name)
-                            
-                            logger.info(f"Found column from SQL query: {column_name} ({data_type})")
                         
                         cursor.close()
+                        logger.info(f"Retrieved {len(columns)} columns via SQL query")
                     except Exception as e:
                         logger.error(f"Error getting columns via SQL: {str(e)}")
-            else:
-                logger.error(f"Table {table_name} not found in any schema")
                 
-                # Try a more general approach - list all tables and columns
-                try:
-                    cursor = engine.cursor() if hasattr(engine, 'cursor') else None
-                    if not cursor:
-                        logger.error("Cannot create cursor for SQL query")
-                        return TableSchemaResponse(table_name=table_name, columns=columns, primary_keys=primary_keys)
-                        
-                    all_tables_query = """
-                    SELECT 
-                        t.name AS table_name,
-                        s.name AS schema_name
-                    FROM 
-                        sys.tables t
-                    INNER JOIN 
-                        sys.schemas s ON t.schema_id = s.schema_id
-                    ORDER BY 
-                        s.name, t.name
-                    """
-                    cursor.execute(all_tables_query)
-                    all_tables_result = cursor.fetchall()
-                    logger.info(f"All tables in database: {all_tables_result}")
-                    cursor.close()
-                except Exception as e:
-                    logger.error(f"Error listing all tables: {str(e)}")
+                # If still no columns, try listing all tables to help with debugging
+                if not columns:
+                    try:
+                        logger.info("No columns retrieved, listing all tables for debugging")
+                        all_tables_query = "SELECT SCHEMA_NAME(schema_id) as schema_name, name FROM sys.tables ORDER BY schema_name, name"
+                        cursor = engine.cursor() if hasattr(engine, 'cursor') else None
+                        if not cursor:
+                            logger.error("Cannot create cursor for SQL query")
+                            return TableSchemaResponse(table_name=table_name, columns={}, primary_keys=[])
+                            
+                        cursor.execute(all_tables_query)
+                        all_tables_result = cursor.fetchall()
+                        logger.info(f"All tables in database: {all_tables_result}")
+                        cursor.close()
+                    except Exception as e:
+                        logger.error(f"Error listing all tables: {str(e)}")
             
             # Don't close the connection as it's managed by the engine and will be reused
             # The connection will be closed when the application shuts down or when the engine is explicitly closed
@@ -588,14 +608,8 @@ class MSSQLDatabaseService(DatabaseServiceBase):
             if hasattr(db_connector, 'engine') and hasattr(db_connector.engine, 'jconn'):
                 # Copy the JDBC connection to the connector for easier access
                 db_connector.jconn = db_connector.engine.jconn
-                logger.info("Successfully retrieved JDBC connection from engine")
-            elif not hasattr(db_connector, 'jconn') or not db_connector.jconn:
-                logger.warning("No JDBC connection available in the connector")
-            
-            # Cache the engine
-            self.engines[connection_id] = db_connector
             
             return db_connector
         except Exception as e:
-            logger.error(f"Error creating engine for connection {connection_id}: {str(e)}")
+            logger.error(f"Error creating engine: {str(e)}")
             raise
