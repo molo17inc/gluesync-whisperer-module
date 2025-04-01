@@ -53,6 +53,7 @@ class PillowFightService:
         self.stop_events = {}  # {(connection_id, table_id): threading.Event}
         self.threads = {}  # {(connection_id, table_id): threading.Thread}
         self.status = {}  # {(connection_id, table_id): status_dict}
+        self._schema_cache = {}  # {(connection_id, table_name, schema_name): TableSchemaResponse}
     
     def start_pillow_fight(
         self,
@@ -391,10 +392,19 @@ class PillowFightService:
                 logger.error(f"Could not establish connection to database for {table.schema_name}.{table.table_name}")
                 return
                 
-            # Get the table schema - pass connection ID instead of connection object
+            # Get the table schema with caching
             logger.info(f"Getting table schema for connection ID {connection.id}, table {table.table_name}, schema {table.schema_name}")
             try:
-                schema_info = self.db_service.get_table_schema(connection.id, table.table_name, table.schema_name)
+                # Check if schema is in cache
+                cache_key = (connection.id, table.table_name, table.schema_name)
+                if cache_key in self._schema_cache:
+                    logger.info(f"Using cached schema for {table.schema_name}.{table.table_name}")
+                    schema_info = self._schema_cache[cache_key]
+                else:
+                    logger.info(f"Schema cache miss for {table.schema_name}.{table.table_name}, retrieving from database")
+                    schema_info = self.db_service.get_table_schema(connection.id, table.table_name, table.schema_name)
+                    # Cache the schema
+                    self._schema_cache[cache_key] = schema_info
                 
                 logger.info(f"Schema info received: {schema_info}")
                 # Access columns and primary_keys as attributes of the TableSchemaResponse object
@@ -498,9 +508,19 @@ class PillowFightService:
                 logger.error(f"Could not establish connection to database for {table.schema_name}.{table.table_name}")
                 return
                 
-            # Get the table schema - pass connection ID instead of connection object
+            # Get the table schema with caching
             try:
-                schema_info = self.db_service.get_table_schema(connection.id, table.table_name, table.schema_name)
+                # Check if schema is in cache
+                cache_key = (connection.id, table.table_name, table.schema_name)
+                if cache_key in self._schema_cache:
+                    logger.info(f"Using cached schema for {table.schema_name}.{table.table_name}")
+                    schema_info = self._schema_cache[cache_key]
+                else:
+                    logger.info(f"Schema cache miss for {table.schema_name}.{table.table_name}, retrieving from database")
+                    schema_info = self.db_service.get_table_schema(connection.id, table.table_name, table.schema_name)
+                    # Cache the schema
+                    self._schema_cache[cache_key] = schema_info
+                
                 # Access columns and primary_keys as attributes of the TableSchemaResponse object
                 columns_dict = schema_info.columns
                 primary_keys = schema_info.primary_keys
@@ -585,9 +605,19 @@ class PillowFightService:
                 logger.error(f"Could not establish connection to database for {table.schema_name}.{table.table_name}")
                 return
                 
-            # Get the table schema - pass connection ID instead of connection object
+            # Get the table schema with caching
             try:
-                schema_info = self.db_service.get_table_schema(connection.id, table.table_name, table.schema_name)
+                # Check if schema is in cache
+                cache_key = (connection.id, table.table_name, table.schema_name)
+                if cache_key in self._schema_cache:
+                    logger.info(f"Using cached schema for {table.schema_name}.{table.table_name}")
+                    schema_info = self._schema_cache[cache_key]
+                else:
+                    logger.info(f"Schema cache miss for {table.schema_name}.{table.table_name}, retrieving from database")
+                    schema_info = self.db_service.get_table_schema(connection.id, table.table_name, table.schema_name)
+                    # Cache the schema
+                    self._schema_cache[cache_key] = schema_info
+                
                 # Access primary_keys as an attribute of the TableSchemaResponse object
                 primary_keys = schema_info.primary_keys
             except Exception as e:
