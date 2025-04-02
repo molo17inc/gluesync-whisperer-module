@@ -212,9 +212,27 @@ def stop_pillow_fight(
         connection_service = ConnectionService(db)
         connection = connection_service.get_connection(connection_id)
         if connection:
-            # Use string value 'idle' instead of enum to avoid 'str' object has no attribute 'value' error
-            connection.status = "idle"
-            connection_service.update_connection(connection_id, connection)
+            # Add detailed logging
+            logger.info(f"Connection status before update: {connection.status}")
+            logger.info(f"Connection status type: {type(connection.status)}")
+            
+            try:
+                # Use ConnectionStatus enum as expected by the DatabaseConnection model
+                connection.status = ConnectionStatus.IDLE
+                logger.info(f"Connection status after setting to IDLE: {connection.status}")
+                logger.info(f"Connection status type after update: {type(connection.status)}")
+                
+                # Try to update the connection
+                connection_service.update_connection(connection_id, connection)
+            except Exception as e:
+                logger.error(f"Error updating connection status: {str(e)}")
+                logger.error(f"Error type: {type(e)}")
+                # Fallback to string value as a last resort
+                try:
+                    connection.status = "idle"
+                    connection_service.update_connection(connection_id, connection)
+                except Exception as e2:
+                    logger.error(f"Fallback also failed: {str(e2)}")
         
         return {
             "status": "stopped",
@@ -247,9 +265,27 @@ def stop_all_pillow_fights(db = Depends(get_db)):
                     connection_service = ConnectionService(db)
                     connection = connection_service.get_connection(connection_id)
                     if connection:
-                        # Use string value 'idle' instead of enum to avoid 'str' object has no attribute 'value' error
-                        connection.status = "idle"
-                        connection_service.update_connection(connection_id, connection)
+                        # Add detailed logging
+                        logger.info(f"Connection status before update (stop all): {connection.status}")
+                        logger.info(f"Connection status type (stop all): {type(connection.status)}")
+                        
+                        try:
+                            # Use ConnectionStatus enum as expected by the DatabaseConnection model
+                            connection.status = ConnectionStatus.IDLE
+                            logger.info(f"Connection status after setting to IDLE (stop all): {connection.status}")
+                            logger.info(f"Connection status type after update (stop all): {type(connection.status)}")
+                            
+                            # Try to update the connection
+                            connection_service.update_connection(connection_id, connection)
+                        except Exception as e:
+                            logger.error(f"Error updating connection status (stop all): {str(e)}")
+                            logger.error(f"Error type (stop all): {type(e)}")
+                            # Fallback to string value as a last resort
+                            try:
+                                connection.status = "idle"
+                                connection_service.update_connection(connection_id, connection)
+                            except Exception as e2:
+                                logger.error(f"Fallback also failed (stop all): {str(e2)}")
             except Exception as e:
                 logger.error(f"Error stopping pillow fight {fight_id}: {str(e)}")
         

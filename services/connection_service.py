@@ -116,6 +116,15 @@ class ConnectionService:
             type = ?, driver = ?, schema = ?, status = ?, updated_at = ?, last_operation_at = ?
         WHERE id = ?
         """
+        # Properly handle the status field
+        if hasattr(connection, 'status'):
+            if hasattr(connection.status, 'value'):
+                status_value = connection.status.value
+            else:
+                status_value = connection.status
+        else:
+            status_value = 'idle'  # Default to idle if no status
+            
         params = (
             connection.name,
             connection.host,
@@ -123,10 +132,10 @@ class ConnectionService:
             connection.database,
             connection.username,
             connection.password,
-            connection.db_type.value if connection.db_type else None,
+            connection.db_type.value if hasattr(connection.db_type, 'value') else connection.db_type,
             connection.driver,
             connection.schema,
-            connection.status.value if hasattr(connection.status, 'value') else connection.status,
+            status_value,
             connection.updated_at.isoformat() if connection.updated_at else None,
             connection.last_operation_at.isoformat() if connection.last_operation_at else None,
             connection_id

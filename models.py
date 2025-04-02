@@ -69,7 +69,15 @@ class DatabaseConnection:
         # Use database_name if provided, otherwise use database
         self.database = database_name if database_name is not None else database
         self.connection_string = connection_string
-        self.status = status
+        # Handle both enum and string values for status
+        if isinstance(status, str):
+            try:
+                self.status = ConnectionStatus(status)
+            except ValueError:
+                # If the string doesn't match any enum value, use IDLE as default
+                self.status = ConnectionStatus.IDLE
+        else:
+            self.status = status
         self.created_at = created_at or datetime.now()
         self.updated_at = updated_at or datetime.now()
         self.last_operation_at = last_operation_at
@@ -89,7 +97,8 @@ class DatabaseConnection:
             password=row['password'],
             database_name=row['database_name'],
             connection_string=row['connection_string'],
-            status=ConnectionStatus(row['status']),
+            # Handle status conversion with error handling
+            status=row['status'],
             created_at=row['created_at'],
             updated_at=row['updated_at'],
             last_operation_at=row['last_operation_at']
