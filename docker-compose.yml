@@ -18,7 +18,6 @@ services:
       - DB_URL=sqlite:///./data/whisperer.db
       - PORT=8000
       - DEBUG=true
-      - JAVA_HOME=/usr/lib/jvm/zulu21-ca-amd64
       
   # jdbc-test:
   #   image: gluesync-whisperer:latest
