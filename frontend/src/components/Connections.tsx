@@ -101,6 +101,7 @@ const Connections: React.FC = () => {
   };
 
   const handleSubmit = async () => {
+    console.log("Form data being sent:", formData);
     try {
       await connectionApi.create(formData as Connection);
       showSnackbar('Connection created successfully', 'success');
@@ -307,6 +308,7 @@ const Connections: React.FC = () => {
             />
             <TextField
               label="Database"
+              required
               value={formData.database}
               onChange={(e) => handleInputChange('database', e.target.value)}
               fullWidth
@@ -319,7 +321,7 @@ const Connections: React.FC = () => {
           <Button
             onClick={handleSubmit}
             variant="contained"
-            disabled={!formData.name || !formData.host || !formData.username || !formData.password}
+            disabled={!formData.name || !formData.host || !formData.username || !formData.password || !formData.database}
           >
             Create
           </Button>
