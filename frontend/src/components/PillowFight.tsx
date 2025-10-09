@@ -61,14 +61,12 @@ const PillowFight: React.FC = () => {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [connectionsData, tablesData, statusData] = await Promise.all([
+      const [connectionsData, tablesData] = await Promise.all([
         connectionApi.list(),
         tableApi.list(),
-        pillowFightApi.getStatus().catch(() => null),
       ]);
       setConnections(connectionsData);
       setTableConfigs(tablesData);
-      setPillowFightStatus(statusData);
     } catch (error) {
       console.error('Failed to load data:', error);
     } finally {
@@ -78,10 +76,22 @@ const PillowFight: React.FC = () => {
 
   const loadStatus = async () => {
     try {
-      const status = await pillowFightApi.getStatus().catch(() => null);
-      setPillowFightStatus(status);
+      const response = await pillowFightApi.getStatus().catch(() => null);
+      if (response && response.pillow_fights && response.pillow_fights.length > 0) {
+        // Use the first pillow fight status for now
+        const firstFight = response.pillow_fights[0];
+        setPillowFightStatus({
+          status: firstFight.status as 'idle' | 'running' | 'stopped' | 'error',
+          message: firstFight.operations ? `Operations: ${Object.keys(firstFight.operations).length}` : undefined,
+          connection_id: firstFight.connection_id,
+          table_id: firstFight.table_id,
+        });
+      } else {
+        setPillowFightStatus(null);
+      }
     } catch (error) {
       console.error('Status update error:', error);
+      setPillowFightStatus(null);
     }
   };
 
@@ -126,9 +136,15 @@ const PillowFight: React.FC = () => {
         batch_size: batchSize,
       };
 
-      await pillowFightApi.start(request);
-      setStartDialogOpen(false);
-      loadStatus(); // Refresh status immediately
+      const response = await pillowFightApi.start(request);
+
+      // Check if the response indicates success or already running
+      if (response.status === 'started' || response.status === 'already_running') {
+        setStartDialogOpen(false);
+        loadStatus(); // Refresh status immediately
+      } else {
+        throw new Error(`Unexpected status: ${response.status}`);
+      }
     } catch (error) {
       console.error('Failed to start pillow fight:', error);
       alert('Failed to start pillow fight. Please check your configuration.');
@@ -136,13 +152,8 @@ const PillowFight: React.FC = () => {
   };
 
   const handleStopPillowFight = async () => {
-    if (!pillowFightStatus?.connection_id || !pillowFightStatus?.table_id) {
-      alert('No active pillow fight to stop.');
-      return;
-    }
-
     try {
-      await pillowFightApi.stop(pillowFightStatus.connection_id, pillowFightStatus.table_id);
+      await pillowFightApi.stopAll();
       loadStatus(); // Refresh status immediately
     } catch (error) {
       console.error('Failed to stop pillow fight:', error);

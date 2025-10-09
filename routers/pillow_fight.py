@@ -256,10 +256,16 @@ def stop_all_pillow_fights(db = Depends(get_db)):
                 parts = fight_id.split('_')
                 if len(parts) >= 2:
                     connection_id = int(parts[0])
-                    table_id = int(parts[1])
-                    
-                    # Stop the pillow fight
-                    pillow_fight_service.stop_pillow_fight(connection_id, table_id)
+                    # Handle multiple table IDs (e.g., "1_3-4" -> table_ids = [3, 4])
+                    table_id_str = parts[1]
+                    if '-' in table_id_str:
+                        table_ids = [int(tid) for tid in table_id_str.split('-')]
+                        # Stop all tables in the pillow fight
+                        for tid in table_ids:
+                            pillow_fight_service.stop_pillow_fight(connection_id, tid)
+                    else:
+                        table_id = int(table_id_str)
+                        pillow_fight_service.stop_pillow_fight(connection_id, table_id)
                     
                     # Update the connection status
                     connection_service = ConnectionService(db)
@@ -317,9 +323,16 @@ def get_pillow_fight_status(db = Depends(get_db)):
                 parts = fight_id.split('_')
                 if len(parts) >= 2:
                     connection_id = int(parts[0])
-                    table_id = int(parts[1])
+                    # Handle multiple table IDs (e.g., "1_3-4" -> table_ids = [3, 4])
+                    table_id_str = parts[1]
+                    if '-' in table_id_str:
+                        table_ids = [int(tid) for tid in table_id_str.split('-')]
+                        # For now, use the first table ID for status (this needs improvement)
+                        table_id = table_ids[0]
+                    else:
+                        table_id = int(table_id_str)
                     
-                    # Get the table
+                    # Get the table (use first table for status display)
                     table = table_service.get_table(table_id)
                     if not table:
                         continue
@@ -376,8 +389,15 @@ def pillow_fight_complete(fight_id: str, connection_id: int):
             # Stop the pillow fight
             parts = fight_id.split('_')
             if len(parts) >= 2:
-                table_id = int(parts[1])
-                pillow_fight_service.stop_pillow_fight(connection_id, table_id)
+                table_id_str = parts[1]
+                if '-' in table_id_str:
+                    table_ids = [int(tid) for tid in table_id_str.split('-')]
+                    # Stop all tables in the pillow fight
+                    for tid in table_ids:
+                        pillow_fight_service.stop_pillow_fight(connection_id, tid)
+                else:
+                    table_id = int(table_id_str)
+                    pillow_fight_service.stop_pillow_fight(connection_id, table_id)
             
             # Remove from active pillow fights
             del active_pillow_fights[fight_id]

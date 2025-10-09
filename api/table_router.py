@@ -61,13 +61,18 @@ def create_table_config(table: TableConfigCreate, db = Depends(get_db)):
     try:
         # Use the schema_name provided in the request
         tables = db_service.get_tables(table.connection_id, schema=table.schema_name)
+        logger.info(f"DEBUG: Retrieved tables for validation: {tables}")
+        logger.info(f"DEBUG: Table name to check: {table.table_name}")
         # Handle both string array and object array formats
         table_names = [t['name'] if isinstance(t, dict) else t for t in tables]
+        logger.info(f"DEBUG: Extracted table names: {table_names}")
         if table.table_name not in table_names:
+            logger.error(f"DEBUG: Table '{table.table_name}' not found in {table_names}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Table '{table.table_name}' not found in the database"
             )
+        logger.info(f"DEBUG: Table '{table.table_name}' found in database")
     except Exception as e:
         logger.error(f"Error checking table existence: {str(e)}")
         raise HTTPException(

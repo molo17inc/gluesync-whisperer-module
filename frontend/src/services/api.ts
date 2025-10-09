@@ -63,6 +63,23 @@ export interface PillowFightStatus {
   table_id?: number;
 }
 
+export interface PillowFightStatusResponse {
+  pillow_fights: Array<{
+    fight_id: string;
+    connection_id: number;
+    table_id: number;
+    table_name: string;
+    operation_types: string[];
+    operation_delay: number;
+    batch_size: number;
+    start_time?: string;
+    last_operation_time?: string;
+    status: string;
+    operations: Record<string, any>;
+    duration?: number;
+  }>;
+}
+
 export interface QueryRequest {
   connection_id: number;
   query: string;
@@ -125,21 +142,37 @@ export const tableApi = {
   },
 };
 
+export interface PillowFightStartResponse {
+  connection_id: number;
+  table_ids: number[];
+  operation_types: string[];
+  operation_delay: number;
+  batch_size: number;
+  status: string;
+  fight_id: string;
+}
+
 export const pillowFightApi = {
   // Start pillow fight
-  start: async (request: PillowFightRequest): Promise<void> => {
-    await api.post('/v1/pillow-fight/start', request);
+  start: async (request: PillowFightRequest): Promise<PillowFightStartResponse> => {
+    const response = await api.post('/v1/pillow-fight/start', request);
+    return response.data;
   },
 
   // Get status
-  getStatus: async (): Promise<PillowFightStatus> => {
+  getStatus: async (): Promise<PillowFightStatusResponse> => {
     const response = await api.get('/v1/pillow-fight/status');
     return response.data;
   },
 
   // Stop pillow fight
   stop: async (connectionId: number, tableId: number): Promise<void> => {
-    await api.post(`/v1/pillow-fight/stop/${connectionId}/${tableId}/`);
+    await api.post(`/v1/pillow-fight/stop/${connectionId}/${tableId}`);
+  },
+
+  // Stop all pillow fights
+  stopAll: async (): Promise<void> => {
+    await api.post('/v1/pillow-fight/stop-all');
   },
 };
 
