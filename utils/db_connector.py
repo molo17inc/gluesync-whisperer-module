@@ -59,6 +59,17 @@ def build_jdbc_connection_info(db_type, host, port, username, password, database
     elif db_type == DatabaseType.POSTGRESQL:
         jdbc_url = f"jdbc:postgresql://{host}:{port}/{database}"
         driver_class = "org.postgresql.Driver"
+        # PostgreSQL-specific connection properties for better performance and reliability
+        properties.update({
+            "loginTimeout": "30",
+            "connectTimeout": "10",
+            "socketTimeout": "30",
+            "tcpKeepAlive": "true",
+            "prepareThreshold": "5",
+            "preparedStatementCacheQueries": "256",
+            "preparedStatementCacheSizeMiB": "5",
+            "logUnclosedConnections": "true"
+        })
         
     elif db_type == DatabaseType.SQLITE:
         jdbc_url = f"jdbc:sqlite:{database}"
@@ -274,6 +285,9 @@ class DatabaseConnector:
                     version = row_dict['VERSION']
                 elif 'BANNER' in row_dict: # Oracle specific
                     version = row_dict['BANNER']
+                elif 'version' in row_dict and self.db_type == DatabaseType.POSTGRESQL:
+                    # PostgreSQL version() returns "PostgreSQL 15.3 on x86_64-pc-linux-gnu, compiled by gcc..."
+                    version = str(row_dict['version']).split(' ')[1]  # Extract version number
                 else:
                     # Return first column's value if we can't identify a specific version column
                     version = result[0][0]
@@ -534,9 +548,21 @@ class DatabaseConnector:
                             is_primary = True
                         extra = col_dict.get('extra', '')
                     
-                    # For PostgreSQL, check for identity columns
-                    if self.db_type == DatabaseType.POSTGRESQL and 'identity' in str(default_val).lower():
-                        extra = 'auto_increment'
+                    # For PostgreSQL, check for identity columns and specific data types
+                    if self.db_type == DatabaseType.POSTGRESQL:
+                        if 'identity' in str(default_val).lower():
+                            extra = 'auto_increment'
+                        # Handle PostgreSQL-specific data types
+                        if data_type.lower() in ['json', 'jsonb']:
+                            extra = 'json_type'
+                        elif data_type.lower() in ['array', 'text[]', 'integer[]', 'varchar[]']:
+                            extra = 'array_type'
+                        elif data_type.lower() in ['uuid']:
+                            extra = 'uuid_type'
+                        elif data_type.lower() in ['timestamp with time zone', 'timestamptz']:
+                            extra = 'timestamp_with_timezone'
+                        elif data_type.lower() in ['timestamp without time zone', 'timestamp']:
+                            extra = 'timestamp_without_timezone'
                         
                     # For MS SQL Server, check for identity property
                     if self.db_type == DatabaseType.MSSQL and col_dict.get('is_identity', 0) in (1, True):
