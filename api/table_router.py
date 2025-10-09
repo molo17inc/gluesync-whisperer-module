@@ -32,6 +32,7 @@ from schemas import (
     TableConfigResponse,
     TableSchemaResponse,
     TableOperationRequest,
+    TableResponse  # Add this import
 )
 from services.table_service import TableService
 from services.database_service import DatabaseService
@@ -60,7 +61,9 @@ def create_table_config(table: TableConfigCreate, db = Depends(get_db)):
     try:
         # Use the schema_name provided in the request
         tables = db_service.get_tables(table.connection_id, schema=table.schema_name)
-        if table.table_name not in tables:
+        # Handle both string array and object array formats
+        table_names = [t['name'] if isinstance(t, dict) else t for t in tables]
+        if table.table_name not in table_names:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Table '{table.table_name}' not found in the database"
@@ -251,7 +254,7 @@ def get_schemas(connection_id: int, db = Depends(get_db)):
         )
 
 
-@router.get("/connections/{connection_id}/tables", response_model=List[str])
+@router.get("/connections/{connection_id}/tables", response_model=List[TableResponse])
 def get_database_tables(connection_id: int, schema: str = None, db = Depends(get_db)):
     """Get all tables from the database for a connection. Optionally specify a schema."""
     db_service = DatabaseService(db)
@@ -341,7 +344,9 @@ def start_operations(operation_request: TableOperationRequest, db = Depends(get_
     # Check if tables exist in the database
     try:
         available_tables = db_service.get_tables(operation_request.connection_id)
-        invalid_tables = [table for table in operation_request.table_names if table not in available_tables]
+        # Handle both string array and object array formats
+        available_table_names = [t['name'] if isinstance(t, dict) else t for t in available_tables]
+        invalid_tables = [table for table in operation_request.table_names if table not in available_table_names]
         if invalid_tables:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

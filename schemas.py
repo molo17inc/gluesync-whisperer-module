@@ -141,6 +141,11 @@ class TableListResponse(BaseModel):
     tables: List[str]
 
 
+class TableResponse(BaseModel):
+    name: str
+    schema: str
+
+
 class TableSchemaResponse(BaseModel):
     table_name: str
     columns: Dict[str, Any]

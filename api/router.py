@@ -28,11 +28,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from database import get_db
 from models import DatabaseConnection, ConnectionStatus
 from schemas import (
-    DatabaseConnectionCreate, 
-    DatabaseConnectionUpdate, 
+    DatabaseConnectionCreate,
+    DatabaseConnectionUpdate,
     DatabaseConnectionResponse,
     ConnectionStatusUpdate,
-    ConnectionTestResponse
+    ConnectionTestResponse,
+    TableResponse
 )
 from services.database_service import DatabaseService
 
@@ -210,7 +211,7 @@ def get_schemas(connection_id: int, db = Depends(get_db)):
             detail=f"Error getting schemas: {str(e)}"
         )
 
-@router.get("/connections/{connection_id}/tables", response_model=List[str])
+@router.get("/connections/{connection_id}/tables", response_model=List[TableResponse])
 def get_tables(connection_id: int, schema: Optional[str] = None, db = Depends(get_db)):
     """Get all tables for a database connection. Optionally specify a schema."""
     db_service = DatabaseService(db)

@@ -30,7 +30,7 @@ import logging
 from typing import List, Dict, Any, Optional
 
 from models import DatabaseConnection
-from schemas import TableSchemaResponse
+from schemas import TableSchemaResponse, TableResponse
 from utils.db_connector import DatabaseConnector, DatabaseType
 from services.database_service_base import DatabaseServiceBase
 
@@ -87,16 +87,26 @@ class MSSQLDatabaseService(DatabaseServiceBase):
         try:
             # Get JDBC metadata
             if hasattr(engine, 'jconn') and engine.jconn:
+                logger.info(f"Fetching schemas for connection {connection_id}")
                 metadata = engine.jconn.getMetaData()
                 rs = metadata.getSchemas()
-                
+
                 schemas = []
                 while rs.next():
                     schema_name = rs.getString("TABLE_SCHEM")
                     # Convert Java String to Python string
-                    schemas.append(str(schema_name))
-                
+                    schema_name_str = str(schema_name)
+                    schemas.append(schema_name_str)
+                    logger.debug(f"Found schema: {schema_name_str}")
+
                 rs.close()
+                logger.info(f"Retrieved {len(schemas)} schemas for connection {connection_id}")
+
+                # If no schemas found, this is an error condition
+                if not schemas:
+                    logger.warning(f"No schemas found in database for connection {connection_id}")
+                    raise Exception(f"No schemas found in database. The database may be empty or inaccessible.")
+
                 return schemas
             else:
                 logger.error("No JDBC connection available")
@@ -148,20 +158,29 @@ class MSSQLDatabaseService(DatabaseServiceBase):
         try:
             # Get JDBC metadata
             if hasattr(engine, 'jconn') and engine.jconn:
-                metadata = engine.jconn.getMetaData()
-                
                 # Default schema to 'dbo' if not provided
                 schema_to_use = schema or 'dbo'
-                
+                logger.info(f"Fetching tables for connection {connection_id}, schema: {schema_to_use}")
+
+                metadata = engine.jconn.getMetaData()
                 rs = metadata.getTables(None, schema_to_use, "%", ["TABLE"])
-                
+
                 tables = []
                 while rs.next():
                     table_name = rs.getString("TABLE_NAME")
+                    table_schema = rs.getString("TABLE_SCHEM")
                     # Convert Java String to Python string
-                    tables.append(str(table_name))
-                
+                    table_name_str = str(table_name)
+                    table_schema_str = str(table_schema)
+                    tables.append({
+                        "name": table_name_str,
+                        "schema": table_schema_str
+                    })
+                    logger.debug(f"Found table: {table_schema_str}.{table_name_str}")
+
                 rs.close()
+                logger.info(f"Retrieved {len(tables)} tables for connection {connection_id}, schema: {schema_to_use}")
+                logger.info(f"Sample table data: {tables[:3] if tables else 'No tables'}")
                 return tables
             else:
                 logger.error("No JDBC connection available")

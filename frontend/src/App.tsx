@@ -45,10 +45,10 @@ const GluesyncLogo = () => (
 const theme = createTheme({
   palette: {
     primary: {
-      main: '#0f62fe',
+      main: '#000000',
     },
     secondary: {
-      main: '#6f42c1',
+      main: '#393939',
     },
   },
   typography: {
@@ -200,6 +200,7 @@ const App: React.FC = () => {
               <Route path="/pillowfight" element={<PillowFight />} />
               <Route path="/query" element={<Query />} />
             </Routes>
+            {console.log('🔄 Routes rendered, current path:', location.pathname)}
           </Container>
         </Box>
       </Box>

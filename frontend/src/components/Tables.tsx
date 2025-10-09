@@ -41,10 +41,13 @@ import {
 } from '../services/api';
 
 const Tables: React.FC = () => {
+  console.log('🚀 Tables component mounted');
   const [connections, setConnections] = useState<Connection[]>([]);
   const [tableConfigs, setTableConfigs] = useState<TableConfig[]>([]);
   const [schemas, setSchemas] = useState<Schema[]>([]);
   const [tables, setTables] = useState<DBTable[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [loadingSchemas, setLoadingSchemas] = useState(false);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
@@ -64,22 +67,31 @@ const Tables: React.FC = () => {
   const [selectedConnection, setSelectedConnection] = useState<Connection | null>(null);
 
   useEffect(() => {
+    console.log('🔄 useEffect triggered, calling loadData');
     loadData();
   }, []);
 
   const loadData = async () => {
+    console.log('🔄 Starting initial data load...');
     try {
       setLoading(true);
+      console.log('📡 Fetching connections and table configs...');
       const [connectionsData, tablesData] = await Promise.all([
         connectionApi.list(),
         tableApi.list(),
       ]);
+      console.log('✅ Initial data loaded:', {
+        connectionsCount: connectionsData?.length || 0,
+        tableConfigsCount: tablesData?.length || 0
+      });
       setConnections(connectionsData);
       setTableConfigs(tablesData);
     } catch (error) {
+      console.error('❌ Failed to load initial data:', error);
       showSnackbar('Failed to load data', 'error');
     } finally {
       setLoading(false);
+      console.log('🏁 Initial data loading completed');
     }
   };
 
@@ -118,12 +130,22 @@ const Tables: React.FC = () => {
     setSelectedConnection(connection);
     setFormData(prev => ({ ...prev, connection_id: connectionId }));
 
+    console.log('🔄 Starting to load schemas for connection:', connectionId);
+    setLoadingSchemas(true);
     try {
       const schemasData = await connectionApi.getSchemas(connectionId);
-      setSchemas(schemasData);
+      console.log('✅ Schemas loaded successfully:', schemasData?.length || 0, 'schemas found');
+      console.log('📋 Raw schemas data:', schemasData);
+      // Convert string array to Schema objects for frontend compatibility
+      const schemaObjects = schemasData.map((schema: string) => ({ name: schema }));
+      console.log('🔄 Converted schemas:', schemaObjects);
+      setSchemas(schemaObjects);
     } catch (error) {
-      console.error('Failed to load schemas:', error);
+      console.error('❌ Failed to load schemas:', error);
       showSnackbar('Failed to load schemas', 'error');
+    } finally {
+      setLoadingSchemas(false);
+      console.log('🏁 Schema loading completed for connection:', connectionId);
     }
   };
 
@@ -134,6 +156,8 @@ const Tables: React.FC = () => {
 
     try {
       const tablesData = await connectionApi.getTables(selectedConnection.id!, schemaName);
+      console.log('✅ Tables loaded successfully:', tablesData?.length || 0, 'tables found');
+      console.log('📋 Raw tables data:', tablesData);
       setTables(tablesData);
     } catch (error) {
       console.error('Failed to load tables:', error);
@@ -285,10 +309,13 @@ const Tables: React.FC = () => {
               <Select
                 value={formData.connection_id || ''}
                 label="Connection"
-                onChange={(e) => handleConnectionChange(parseInt(e.target.value))}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  handleConnectionChange(typeof value === 'string' ? parseInt(value, 10) : value);
+                }}
               >
                 {(Array.isArray(connections) ? connections : []).map((connection) => (
-                  <MenuItem key={connection.id} value={connection.id?.toString() || ''}>
+                  <MenuItem key={`connection-${connection.id || connection.name}`} value={connection.id?.toString() || ''}>
                     {connection.name} ({connection.db_type})
                   </MenuItem>
                 ))}
@@ -303,9 +330,9 @@ const Tables: React.FC = () => {
                   label="Schema"
                   onChange={(e) => handleSchemaChange(e.target.value)}
                 >
-                  {(Array.isArray(schemas) ? schemas : []).map((schema) => (
-                    <MenuItem key={schema.name} value={schema.name}>
-                      {schema.name}
+                  {(Array.isArray(schemas) ? schemas : []).map((schema, index) => (
+                    <MenuItem key={`schema-${typeof schema === 'string' ? schema : schema.name || `unnamed-${index}`}`} value={typeof schema === 'string' ? schema : schema.name}>
+                      {typeof schema === 'string' ? schema : schema.name}
                     </MenuItem>
                   ))}
                 </Select>
@@ -320,8 +347,8 @@ const Tables: React.FC = () => {
                   label="Table"
                   onChange={(e) => handleInputChange('table_name', e.target.value)}
                 >
-                  {(Array.isArray(tables) ? tables : []).map((table) => (
-                    <MenuItem key={table.name} value={table.name}>
+                  {(Array.isArray(tables) ? tables : []).map((table, index) => (
+                    <MenuItem key={`table-${table.name || `unnamed-${index}`}`} value={table.name}>
                       {table.name}
                     </MenuItem>
                   ))}

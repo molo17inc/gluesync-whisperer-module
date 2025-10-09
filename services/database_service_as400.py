@@ -78,14 +78,17 @@ class AS400DatabaseService(DatabaseServiceBase):
             
             # Use JDBC connector to get tables for the specified schema
             if hasattr(engine, 'get_tables'):
-                return engine.get_tables(schema)
+                tables_result = engine.get_tables(schema)
+                # Convert string list to object format for consistency
+                return [{"name": table, "schema": schema} for table in tables_result]
             
             # Fallback for direct SQL query
             cursor = engine.execute(
                 "SELECT TABLE_NAME FROM QSYS2.SYSTABLES WHERE TABLE_SCHEMA = ?", 
                 (schema,)
             )
-            return [row[0] for row in cursor.fetchall()]
+            table_names = [row[0] for row in cursor.fetchall()]
+            return [{"name": table, "schema": schema} for table in table_names]
         except Exception as e:
             logger.error(f"Error getting tables: {str(e)}")
             raise

@@ -92,11 +92,14 @@ class SQLiteDatabaseService(DatabaseServiceBase):
         try:
             # Use the engine to get tables
             if hasattr(engine, 'get_tables'):
-                return engine.get_tables(schema)
+                table_names = engine.get_tables(schema)
+                # Convert string list to object format for consistency
+                return [{"name": table, "schema": schema or "main"} for table in table_names]
             
             # Fallback for direct SQL query
             cursor = engine.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            return [row[0] for row in cursor.fetchall()]
+            table_names = [row[0] for row in cursor.fetchall()]
+            return [{"name": table, "schema": "main"} for table in table_names]
         except Exception as e:
             logger.error(f"Error getting tables: {str(e)}")
             raise

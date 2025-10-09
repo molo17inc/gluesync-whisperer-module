@@ -26,6 +26,8 @@ export interface Connection {
   status?: string;
 }
 
+// Backend returns string[] for schemas, not Schema objects
+// Frontend needs to handle this by converting strings to objects
 export interface Schema {
   name: string;
 }
@@ -91,7 +93,7 @@ export const connectionApi = {
   },
 
   // Get schemas for a connection
-  getSchemas: async (id: number): Promise<Schema[]> => {
+  getSchemas: async (id: number): Promise<string[]> => {
     const response = await api.get(`/connections/${id}/schemas`);
     return response.data;
   },
