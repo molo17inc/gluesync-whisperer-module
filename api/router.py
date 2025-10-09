@@ -158,6 +158,12 @@ def delete_connection(connection_id: int, db = Depends(get_db)):
         )
 
 
+@router.delete("/connections/{connection_id}/", status_code=status.HTTP_204_NO_CONTENT)
+def delete_connection_trailing_slash(connection_id: int, db = Depends(get_db)):
+    """Delete a database connection (with trailing slash)."""
+    return delete_connection(connection_id, db)
+
+
 @router.post("/connections/{connection_id}/test", response_model=ConnectionTestResponse)
 def test_connection(connection_id: int, db = Depends(get_db)):
     """Test a database connection."""
