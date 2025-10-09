@@ -564,9 +564,24 @@ class DatabaseConnector:
                         elif data_type.lower() in ['timestamp without time zone', 'timestamp']:
                             extra = 'timestamp_without_timezone'
                         
-                    # For MS SQL Server, check for identity property
-                    if self.db_type == DatabaseType.MSSQL and col_dict.get('is_identity', 0) in (1, True):
-                        extra = 'auto_increment'
+                    # For Oracle, check for identity columns and specific data types
+                    if self.db_type == DatabaseType.ORACLE:
+                        if col_dict.get('is_identity', 0) in (1, True, 'YES', 'yes', 'Y', 'y'):
+                            extra = 'auto_increment'
+                        # Handle Oracle-specific data types
+                        if data_type.lower() in ['number', 'numeric']:
+                            if col_dict.get('data_scale', 0) == 0:
+                                extra = 'integer_type'
+                        elif data_type.lower() in ['varchar2', 'nvarchar2']:
+                            extra = 'varchar2_type'
+                        elif data_type.lower() in ['timestamp', 'timestamp with time zone', 'timestamp with local time zone']:
+                            extra = 'oracle_timestamp'
+                        elif data_type.lower() in ['clob', 'nclob']:
+                            extra = 'oracle_clob'
+                        elif data_type.lower() in ['blob']:
+                            extra = 'oracle_blob'
+                        elif data_type.lower() in ['raw', 'long raw']:
+                            extra = 'oracle_raw'
                     
                     # Store normalized column info
                     columns[name] = {

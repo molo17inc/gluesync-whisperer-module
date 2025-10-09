@@ -125,7 +125,7 @@ COPY ./utils ./utils
 COPY ./api ./api
 COPY ./routers ./routers
 COPY ./services ./services
-# Copy JDBC drivers for AS400, MS SQL Server, PostgreSQL, and MySQL support
+# Copy JDBC drivers for AS400, MS SQL Server, PostgreSQL, MySQL, and Oracle support
 COPY ./jdbc_drivers ./jdbc_drivers
 COPY ./run_auto_operations.py .
 
