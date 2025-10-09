@@ -59,6 +59,7 @@ const Connections: React.FC = () => {
   }, []);
 
   const loadConnections = async () => {
+    console.log("Loading connections...");
     try {
       setLoading(true);
       const data = await connectionApi.list();
@@ -101,13 +102,14 @@ const Connections: React.FC = () => {
   };
 
   const handleSubmit = async () => {
-    console.log("Form data being sent:", formData);
     try {
       await connectionApi.create(formData as Connection);
       showSnackbar('Connection created successfully', 'success');
       handleCloseDialog();
       loadConnections();
     } catch (error) {
+      const errorMessage = error?.response?.data?.detail || 'Failed to create connection';
+      showSnackbar(errorMessage, 'error');
       showSnackbar('Failed to create connection', 'error');
     }
   };
