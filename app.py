@@ -32,6 +32,8 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from api.router import router
@@ -83,27 +85,72 @@ async def catch_exceptions_middleware(request: Request, call_next):
 
 app.middleware("http")(catch_exceptions_middleware)
 
-# Include routers
+# Don't mount static files at all - serve everything through routes
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+
+# Include routers (API routes)
 app.include_router(router)
 app.include_router(table_router)
 app.include_router(automation_router)
 app.include_router(pillow_fight_router)
 
+# Serve assets directly from the assets route
+@app.get("/assets/{path:path}", include_in_schema=False)
+async def serve_assets(path: str):
+    """Serve asset files directly."""
+    if not os.path.exists(static_dir):
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=404, content={"error": "Static directory not found"})
+    
+    asset_path = os.path.join(static_dir, "assets", path)
+    if os.path.exists(asset_path) and os.path.isfile(asset_path):
+        return FileResponse(asset_path, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+    else:
+        # Return 404 if asset not found
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=404, content={"error": "Asset not found"})
+
+# Serve other static files (like vite.svg)
+@app.get("/vite.svg", include_in_schema=False)
+async def serve_vite_svg():
+    """Serve vite.svg file."""
+    if not os.path.exists(static_dir):
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=404, content={"error": "Static directory not found"})
+        
+    svg_path = os.path.join(static_dir, "vite.svg")
+    if os.path.exists(svg_path):
+        return FileResponse(svg_path)
+    else:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=404, content={"error": "File not found"})
+
 @app.get("/", include_in_schema=False)
-def read_root():
-    """Root endpoint that redirects to the API documentation."""
-    return RedirectResponse(url="/docs")
+async def serve_frontend():
+    """Serve the React frontend."""
+    if not os.path.exists(static_dir):
+        return RedirectResponse(url="/docs")
+        
+    index_path = os.path.join(static_dir, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    else:
+        # Fallback to API docs if frontend not built
+        return RedirectResponse(url="/docs")
 
-@app.get("/api/docs", include_in_schema=False)
-def api_docs():
-    """Redirect to API documentation to match the scheduler module."""
-    return RedirectResponse(url="/docs")
+# Catch-all route for SPA routing (must be last)
+@app.get("/{full_path:path}", include_in_schema=False)
+async def catch_all(full_path: str):
+    """Handle SPA routing by serving index.html for non-API routes."""
+    # Let API routes be handled by their respective routers
+    index_path = os.path.join(static_dir, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    else:
+        # Fallback to API docs if frontend not built
+        return RedirectResponse(url="/docs")
 
-@app.get("/api/v1/docs", include_in_schema=False)
-def docs_v1():
-    """Redirect to API documentation - alternative path."""
-    return RedirectResponse(url="/docs")
-
+# Health check
 @app.get("/health", include_in_schema=False)
 def health_check():
     """Health check endpoint."""
