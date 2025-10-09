@@ -31,6 +31,18 @@ RUN pip install wheel && \
         pip wheel -w /wheels .; \
     fi
 
+# Frontend build stage
+FROM node:18-alpine AS frontend-builder
+
+WORKDIR /frontend
+
+# Copy frontend source
+COPY ./frontend/package*.json ./
+COPY ./frontend/ ./
+
+# Install dependencies and build
+RUN npm ci && npm run build
+
 # Final stage
 FROM python:3.11-slim
 
@@ -75,7 +87,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Dependencies for IBM DB2/AS400 driver
     wget \
     unzip \
-    libaio1 \
     apt-transport-https \
     gnupg \
     ca-certificates \
@@ -118,6 +129,9 @@ COPY ./services ./services
 COPY ./jdbc_drivers ./jdbc_drivers
 COPY ./run_auto_operations.py .
 
+# Copy built frontend files to static directory
+COPY --from=frontend-builder /frontend/dist ./static
+
 # Create logs directory
 RUN mkdir -p /app/logs
 
@@ -137,7 +151,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # JDBC drivers are already copied in the jdbc_drivers directory
 
 # Expose port
-EXPOSE 8000
+EXPOSE 1717
 
 # Command to run the application
 CMD ["python3", "app.py"]

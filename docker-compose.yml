@@ -27,20 +27,20 @@ services:
       - DELETE_WEIGHT=0.34
       - JAVA_HOME=/usr/lib/jvm/zulu21-ca-amd64
       
-  jdbc-test:
-    image: gluesync-whisperer:latest
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: jdbc-test
-    volumes:
-      - ./data:/app/data
-      - ./logs:/app/logs
-      - ./:/app  # Mount the entire project for testing
-    environment:
-      - DB_URL=sqlite:///./data/whisperer.db
-      - DEBUG=true
-      - JAVA_HOME=/usr/lib/jvm/zulu21-ca-amd64
-      - PYTHONUNBUFFERED=1
-    command: >  # Override the default command to keep the container running
-      bash -c "tail -f /dev/null"
+  # jdbc-test:
+  #   image: gluesync-whisperer:latest
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: jdbc-test
+  #   volumes:
+  #     - ./data:/app/data
+  #     - ./logs:/app/logs
+  #     - ./:/app  # Mount the entire project for testing
+  #   environment:
+  #     - DB_URL=sqlite:///./data/whisperer.db
+  #     - DEBUG=true
+  #     - JAVA_HOME=/usr/lib/jvm/zulu21-ca-amd64
+  #     - PYTHONUNBUFFERED=1
+  #   command: >  # Override the default command to keep the container running
+  #     bash -c "tail -f /dev/null"

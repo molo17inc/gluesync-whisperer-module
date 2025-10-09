@@ -1,0 +1,729 @@
+{
+	"info": {
+		"_postman_id": "ce2afa70-7015-4d6a-8c65-b5efc4feb8e3",
+		"name": "Whisperer",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "12247911",
+		"_collection_link": "https://molo17inc.postman.co/workspace/My-Workspace~1da8ef68-65f5-4a7d-8db6-5afaa7fb3762/collection/12247911-ce2afa70-7015-4d6a-8c65-b5efc4feb8e3?action=share&source=collection_link&creator=12247911"
+	},
+	"item": [
+		{
+			"name": "Create connection",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"name\": \"MS SQL Demo\",\n    \"description\": \"MS SQL connection for testing pillow fight\",\n    \"db_type\": \"mssql\",\n    \"host\": \"10.17.3.169\",\n    \"port\": 1433,\n    \"username\": \"sa\",\n    \"password\": \"GecYTBtXQxHe-mD7ePmdC\",\n    \"database\": \"demo\"\n  }",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://10.17.3.132:1718/api/connections/",
+					"protocol": "http",
+					"host": [
+						"10",
+						"17",
+						"3",
+						"132"
+					],
+					"port": "1718",
+					"path": [
+						"api",
+						"connections",
+						""
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Create connection (local)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"name\": \"MS SQL Demo\",\n    \"description\": \"MS SQL connection for testing pillow fight\",\n    \"db_type\": \"mssql\",\n    \"host\": \"10.17.3.169\",\n    \"port\": 1433,\n    \"username\": \"sa\",\n    \"password\": \"GecYTBtXQxHe-mD7ePmdC\",\n    \"database\": \"demo\"\n  }",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:8000/api/connections/",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8000",
+					"path": [
+						"api",
+						"connections",
+						""
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Create connection (AS400)",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"name\": \"AS400 MyO PROD\",\n    \"description\": \"AS400 connection for testing pillow fight\",\n    \"db_type\": \"as400\",\n    \"host\": \"172.16.0.14\",\n    \"port\": 0,\n    \"username\": \"GLUESYNC01\",\n    \"password\": \"GLUESYNC01\",\n    \"database_name\": \"\"\n  }",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:1717/api/connections/",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "1717",
+					"path": [
+						"api",
+						"connections",
+						""
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "List schemas in connection",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "GET",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"url": {
+					"raw": "http://localhost:1717/api/connections/1/schemas",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "1717",
+					"path": [
+						"api",
+						"connections",
+						"1",
+						"schemas"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "List tables in connection filtered by schema",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "GET",
+				"header": [
+					{
+						"key": "accept",
+						"value": "application/json"
+					}
+				],
+				"url": {
+					"raw": "http://localhost:1717/api/connections/1/tables?schema=demo",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "1717",
+					"path": [
+						"api",
+						"connections",
+						"1",
+						"tables"
+					],
+					"query": [
+						{
+							"key": "schema",
+							"value": "demo"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "List tables in connection filtered by schema (AS400)",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "GET",
+				"header": [
+					{
+						"key": "accept",
+						"value": "application/json"
+					}
+				],
+				"url": {
+					"raw": "http://localhost:1717/api/connections/1/tables?schema=SWDIP",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "1717",
+					"path": [
+						"api",
+						"connections",
+						"1",
+						"tables"
+					],
+					"query": [
+						{
+							"key": "schema",
+							"value": "SWDIP"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Create table configuration",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "accept",
+						"value": "application/json"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"table_name\": \"DRIVERS\",\n  \"schema_name\": \"demo\",\n  \"operation_type\": \"all\",\n  \"operation_delay\": 1,\n  \"batch_size\": 1,\n  \"enabled\": true,\n  \"connection_id\": 1\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:1717/api/tables",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "1717",
+					"path": [
+						"api",
+						"tables"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Create table configuration (local)",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "accept",
+						"value": "application/json"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"table_name\": \"DRIVERS\",\n  \"schema_name\": \"dbo\",\n  \"operation_type\": \"all\",\n  \"operation_delay\": 1,\n  \"batch_size\": 1,\n  \"enabled\": true,\n  \"connection_id\": 1\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:1717/api/tables",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "1717",
+					"path": [
+						"api",
+						"tables"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Create table configuration (AS400)",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "accept",
+						"value": "application/json"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"table_name\": \"DRIVERS\",\n  \"schema_name\": \"SWDIP\",\n  \"operation_type\": \"all\",\n  \"operation_delay\": 1,\n  \"batch_size\": 1,\n  \"enabled\": true,\n  \"connection_id\": 1\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:1717/api/tables",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "1717",
+					"path": [
+						"api",
+						"tables"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "DELETE table configuration (AS400)",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "DELETE",
+				"header": [
+					{
+						"key": "accept",
+						"value": "application/json"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"table_name\": \"DRIVERS\",\n  \"schema_name\": \"SWDIP\",\n  \"operation_type\": \"all\",\n  \"operation_delay\": 1,\n  \"batch_size\": 1,\n  \"enabled\": true,\n  \"connection_id\": 1\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:1717/api/tables/1",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "1717",
+					"path": [
+						"api",
+						"tables",
+						"1"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Start the Pillow Fight",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"connection_id\": 1,\n    \"table_ids\": [1],\n    \"operation_type\": \"all\",\n    \"operation_delay\": 1.0,\n    \"batch_size\": 1\n  }",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:1717/api/v1/pillow-fight/start",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "1717",
+					"path": [
+						"api",
+						"v1",
+						"pillow-fight",
+						"start"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Start the Pillow Fight (local)",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"connection_id\": 1,\n    \"table_ids\": [1],\n    \"operation_type\": \"all\",\n    \"operation_delay\": 1.0,\n    \"batch_size\": 1\n  }",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:1717/api/v1/pillow-fight/start",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "1717",
+					"path": [
+						"api",
+						"v1",
+						"pillow-fight",
+						"start"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Start the Pillow Fight (avoid DELETEs)",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"connection_id\": 1,\n    \"table_ids\": [1],\n    \"operation_type\": \"update\",\n    \"operation_delay\": 1.0,\n    \"batch_size\": 1\n  }",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:1717/api/v1/pillow-fight/start",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "1717",
+					"path": [
+						"api",
+						"v1",
+						"pillow-fight",
+						"start"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Check status",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "GET",
+				"header": [
+					{
+						"key": "Accept",
+						"value": "application/json"
+					}
+				],
+				"url": {
+					"raw": "http://localhost:1717/api/v1/pillow-fight/status",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "1717",
+					"path": [
+						"api",
+						"v1",
+						"pillow-fight",
+						"status"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Stop fight",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://10.17.3.132:1718/api/v1/pillow-fight/stop/1/1/",
+					"protocol": "http",
+					"host": [
+						"10",
+						"17",
+						"3",
+						"132"
+					],
+					"port": "1718",
+					"path": [
+						"api",
+						"v1",
+						"pillow-fight",
+						"stop",
+						"1",
+						"1",
+						""
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Stop fight (local)",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:1717/api/v1/pillow-fight/stop/1/1/",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "1717",
+					"path": [
+						"api",
+						"v1",
+						"pillow-fight",
+						"stop",
+						"1",
+						"1",
+						""
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Delete connection",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "DELETE",
+				"header": [],
+				"url": {
+					"raw": "http://localhost:1717/api/connections/1/",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "1717",
+					"path": [
+						"api",
+						"connections",
+						"1",
+						""
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Create query (local)",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"connection_id\": 1,\n  \"query\": \"SELECT count(1) FROM DRIVERS\"\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:1717/api/v1/automation/connections/1/query",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "1717",
+					"path": [
+						"api",
+						"v1",
+						"automation",
+						"connections",
+						"1",
+						"query"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Run connection (local)",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "PUT",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\"status\": \"running\"}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:1717/api/connections/1/status",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "1717",
+					"path": [
+						"api",
+						"connections",
+						"1",
+						"status"
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}
