@@ -315,10 +315,10 @@ async def execute_query(connection_id: int, request: SqlQueryRequest, db = Depen
                 row_count=0
             )
         
-        if connection.status != "running":
+        if connection.status not in [ConnectionStatus.RUNNING, ConnectionStatus.IDLE]:
             return SqlQueryResponse(
                 success=False,
-                message=f"Connection with ID {connection_id} is not running",
+                message=f"Connection with ID {connection_id} is not active (status: {connection.status})",
                 results=[],
                 column_names=[],
                 row_count=0
