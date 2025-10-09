@@ -82,7 +82,7 @@ class MSSQLDatabaseService(DatabaseServiceBase):
                 engine = db_connector
             except Exception as e:
                 logger.error(f"Error connecting to database: {str(e)}")
-                return []
+                raise Exception(f"Failed to connect to database: {str(e)}")
         
         try:
             # Get JDBC metadata
@@ -100,10 +100,10 @@ class MSSQLDatabaseService(DatabaseServiceBase):
                 return schemas
             else:
                 logger.error("No JDBC connection available")
-                return []
+                raise Exception("Failed to establish JDBC connection")
         except Exception as e:
             logger.error(f"Error getting schemas: {str(e)}")
-            return []
+            raise Exception(f"Failed to get schemas: {str(e)}")
     
     def get_tables(self, connection_id: int, schema: str = None) -> List[str]:
         """Get all tables for a database connection."""
@@ -143,7 +143,7 @@ class MSSQLDatabaseService(DatabaseServiceBase):
                 engine = db_connector
             except Exception as e:
                 logger.error(f"Error connecting to database: {str(e)}")
-                return []
+                raise Exception(f"Failed to connect to database: {str(e)}")
         
         try:
             # Get JDBC metadata
@@ -165,10 +165,10 @@ class MSSQLDatabaseService(DatabaseServiceBase):
                 return tables
             else:
                 logger.error("No JDBC connection available")
-                return []
+                raise Exception("Failed to establish JDBC connection")
         except Exception as e:
             logger.error(f"Error getting tables: {str(e)}")
-            return []
+            raise Exception(f"Failed to get tables: {str(e)}")
     
     def get_table_schema(self, connection_id: int, table_name: str, schema_name: str = None) -> TableSchemaResponse:
         """Get the schema of a table."""
