@@ -74,6 +74,14 @@ def get_connections(skip: int = 0, limit: int = 100, db = Depends(get_db)):
     connections = db_service.get_connections(skip=skip, limit=limit)
     print("DEBUG: API called, returning connections")
     return connections
+    """Get all database connections."""
+    db_service = DatabaseService(db)
+    connections = db_service.get_connections(skip=skip, limit=limit)
+
+@router.get("/connections/", response_model=List[DatabaseConnectionResponse])
+def get_connections_trailing_slash(skip: int = 0, limit: int = 100, db = Depends(get_db)):
+    """Get all database connections (with trailing slash)."""
+    return get_connections(skip=skip, limit=limit, db=db)
 
 
 @router.get("/connections/{connection_id}", response_model=DatabaseConnectionResponse)
