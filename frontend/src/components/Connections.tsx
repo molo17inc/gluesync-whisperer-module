@@ -28,9 +28,9 @@ import {
 } from '@mui/material';
 import {
   Add as AddIcon,
-  Delete as DeleteIcon,
-  PlayArrow as PlayIcon,
+  PlayArrow as PlayArrowIcon,
   Stop as StopIcon,
+  Delete as DeleteIcon,
 } from '@mui/icons-material';
 import { Connection, connectionApi } from '../services/api';
 
@@ -43,12 +43,13 @@ const Connections: React.FC = () => {
     message: '',
     severity: 'success',
   });
-  const [formData, setFormData] = useState<Partial<Connection>>({
+
+  const [formData, setFormData] = useState({
     name: '',
     description: '',
-    db_type: 'mssql',
-    host: '',
-    port: 1433,
+    db_type: 'sqlite' as 'mssql' | 'as400' | 'sqlite',
+    host: 'localhost',
+    port: 5432,
     username: '',
     password: '',
     database: '',
@@ -59,11 +60,10 @@ const Connections: React.FC = () => {
   }, []);
 
   const loadConnections = async () => {
-    console.log("Loading connections...");
     try {
       setLoading(true);
       const data = await connectionApi.list();
-      setConnections(data);
+      setConnections([...data]);
     } catch (error) {
       showSnackbar('Failed to load connections', 'error');
     } finally {
@@ -75,29 +75,11 @@ const Connections: React.FC = () => {
     setSnackbar({ open: true, message, severity });
   };
 
-  const handleCloseSnackbar = () => {
-    setSnackbar({ ...snackbar, open: false });
-  };
-
-  const handleOpenDialog = () => {
-    setFormData({
-      name: '',
-      description: '',
-      db_type: 'mssql',
-      host: '',
-      port: 1433,
-      username: '',
-      password: '',
-      database: '',
-    });
-    setOpen(true);
-  };
-
   const handleCloseDialog = () => {
     setOpen(false);
   };
 
-  const handleInputChange = (field: keyof Connection, value: any) => {
+  const handleInputChange = (field: keyof typeof formData, value: any) => {
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
@@ -108,9 +90,8 @@ const Connections: React.FC = () => {
       handleCloseDialog();
       loadConnections();
     } catch (error) {
-      const errorMessage = error?.response?.data?.detail || 'Failed to create connection';
+      const errorMessage = (error as any)?.response?.data?.detail || 'Failed to create connection';
       showSnackbar(errorMessage, 'error');
-      showSnackbar('Failed to create connection', 'error');
     }
   };
 
@@ -142,7 +123,7 @@ const Connections: React.FC = () => {
       case 'running':
         return 'success';
       case 'idle':
-        return 'warning';
+        return 'default';
       default:
         return 'default';
     }
@@ -155,16 +136,28 @@ const Connections: React.FC = () => {
         <Button
           variant="contained"
           startIcon={<AddIcon />}
-          onClick={handleOpenDialog}
+          onClick={() => {
+            setFormData({
+              name: '',
+              description: '',
+              db_type: 'sqlite',
+              host: 'localhost',
+              port: 5432,
+              username: '',
+              password: '',
+              database: '',
+            });
+            setOpen(true);
+          }}
         >
-          New Connection
+          Create Connection
         </Button>
       </Box>
 
       <Card>
         <CardContent>
-          <TableContainer component={Paper}>
-            <Table>
+          <TableContainer>
+            <Table sx={{ minWidth: 650 }} aria-label="connections table">
               <TableHead>
                 <TableRow>
                   <TableCell>Name</TableCell>
@@ -172,7 +165,7 @@ const Connections: React.FC = () => {
                   <TableCell>Host</TableCell>
                   <TableCell>Database</TableCell>
                   <TableCell>Status</TableCell>
-                  <TableCell align="right">Actions</TableCell>
+                  <TableCell>Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -192,37 +185,34 @@ const Connections: React.FC = () => {
                     </TableCell>
                     <TableCell>
                       <Chip
-                        label={connection.db_type.toUpperCase()}
+                        label={(connection.db_type || 'UNKNOWN').toUpperCase()}
                         size="small"
                         color="primary"
                         variant="outlined"
                       />
                     </TableCell>
-                    <TableCell>
-                      {connection.host}:{connection.port}
-                    </TableCell>
-                    <TableCell>
-                      {connection.database || connection.database_name || 'N/A'}
-                    </TableCell>
+                    <TableCell>{connection.host}:{connection.port}</TableCell>
+                    <TableCell>{connection.database || connection.database_name || '-'}</TableCell>
                     <TableCell>
                       <Chip
-                        label={connection.status || 'unknown'}
+                        label={(connection.status || 'unknown').toUpperCase()}
                         size="small"
                         color={getStatusColor(connection.status)}
+                        variant="outlined"
                       />
                     </TableCell>
-                    <TableCell align="right">
+                    <TableCell>
                       <IconButton
-                        size="small"
                         onClick={() => handleStatusChange(connection.id!, connection.status || 'idle')}
-                        color={connection.status === 'running' ? 'error' : 'success'}
+                        color="primary"
+                        size="small"
                       >
-                        {connection.status === 'running' ? <StopIcon /> : <PlayIcon />}
+                        {(connection.status === 'running') ? <StopIcon /> : <PlayArrowIcon />}
                       </IconButton>
                       <IconButton
-                        size="small"
                         onClick={() => handleDelete(connection.id!)}
                         color="error"
+                        size="small"
                       >
                         <DeleteIcon />
                       </IconButton>
@@ -261,38 +251,34 @@ const Connections: React.FC = () => {
               value={formData.description}
               onChange={(e) => handleInputChange('description', e.target.value)}
               fullWidth
-              multiline
-              rows={2}
             />
-            <FormControl fullWidth>
+            <FormControl fullWidth required>
               <InputLabel>Database Type</InputLabel>
               <Select
                 value={formData.db_type}
                 label="Database Type"
-                onChange={(e) => handleInputChange('db_type', e.target.value as Connection['db_type'])}
+                onChange={(e) => handleInputChange('db_type', e.target.value as any)}
               >
+                <MenuItem value="sqlite">SQLite</MenuItem>
                 <MenuItem value="mssql">MS SQL Server</MenuItem>
                 <MenuItem value="as400">AS400</MenuItem>
-                <MenuItem value="sqlite">SQLite</MenuItem>
               </Select>
             </FormControl>
-            <Box sx={{ display: 'flex', gap: 2 }}>
-              <TextField
-                label="Host"
-                value={formData.host}
-                onChange={(e) => handleInputChange('host', e.target.value)}
-                fullWidth
-                required
-              />
-              <TextField
-                label="Port"
-                type="number"
-                value={formData.port}
-                onChange={(e) => handleInputChange('port', parseInt(e.target.value))}
-                sx={{ width: 120 }}
-                required
-              />
-            </Box>
+            <TextField
+              label="Host"
+              value={formData.host}
+              onChange={(e) => handleInputChange('host', e.target.value)}
+              fullWidth
+              required
+            />
+            <TextField
+              label="Port"
+              type="number"
+              value={formData.port}
+              onChange={(e) => handleInputChange('port', parseInt(e.target.value) || 5432)}
+              fullWidth
+              required
+            />
             <TextField
               label="Username"
               value={formData.username}
@@ -310,7 +296,6 @@ const Connections: React.FC = () => {
             />
             <TextField
               label="Database"
-              required
               value={formData.database}
               onChange={(e) => handleInputChange('database', e.target.value)}
               fullWidth
@@ -332,11 +317,14 @@ const Connections: React.FC = () => {
 
       <Snackbar
         open={snackbar.open}
-        autoHideDuration={4000}
-        onClose={handleCloseSnackbar}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        autoHideDuration={6000}
+        onClose={() => setSnackbar({ ...snackbar, open: false })}
       >
-        <Alert onClose={handleCloseSnackbar} severity={snackbar.severity} sx={{ width: '100%' }}>
+        <Alert
+          onClose={() => setSnackbar({ ...snackbar, open: false })}
+          severity={snackbar.severity}
+          sx={{ width: '100%' }}
+        >
           {snackbar.message}
         </Alert>
       </Snackbar>

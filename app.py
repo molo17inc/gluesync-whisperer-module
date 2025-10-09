@@ -141,8 +141,7 @@ async def serve_frontend():
 # Catch-all route for SPA routing (must be last)
 @app.get("/{full_path:path}", include_in_schema=False)
 async def catch_all(full_path: str):
-    """Handle SPA routing by serving index.html for non-API routes."""
-    # Let API routes be handled by their respective routers
+    """Handle SPA routing by serving index.html for frontend routes."""
     index_path = os.path.join(static_dir, "index.html")
     if os.path.exists(index_path):
         return FileResponse(index_path)
@@ -150,48 +149,11 @@ async def catch_all(full_path: str):
         # Fallback to API docs if frontend not built
         return RedirectResponse(url="/docs")
 
-# Health check
-@app.get("/health", include_in_schema=False)
-def health_check():
-    """Health check endpoint."""
-    return {"status": "ok"}
-
 if __name__ == "__main__":
-    ssl_enabled = settings.SSL_ENABLED
-    
-    if ssl_enabled:
-        # SSL configuration
-        ssl_keyfile = settings.SSL_KEYFILE
-        ssl_certfile = settings.SSL_CERTFILE
-        
-        # Check if SSL files exist
-        if not os.path.exists(ssl_keyfile):
-            logger.error(f"SSL keyfile not found: {ssl_keyfile}")
-            ssl_enabled = False
-        
-        if not os.path.exists(ssl_certfile):
-            logger.error(f"SSL certfile not found: {ssl_certfile}")
-            ssl_enabled = False
-    
-    if ssl_enabled:
-        # Create SSL context
-        ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-        ssl_context.load_cert_chain(ssl_certfile, keyfile=ssl_keyfile)
-        
-        # Run with SSL
-        uvicorn.run(
-            "app:app",
-            host=settings.HOST,
-            port=settings.PORT,
-            reload=settings.DEBUG,
-            ssl_keyfile=ssl_keyfile,
-            ssl_certfile=ssl_certfile,
-        )
-    else:
-        # Run without SSL
-        uvicorn.run(
-            "app:app",
-            host=settings.HOST,
-            port=settings.PORT,
-            reload=settings.DEBUG,
-        )
+    import uvicorn
+    uvicorn.run(
+        "app:app",
+        host=settings.HOST,
+        port=settings.PORT,
+        reload=False,
+    )
