@@ -1397,14 +1397,32 @@ class DatabaseConnector:
     
     def getMetaData(self):
         """Get database metadata, delegating to the JDBC connection."""
-        if hasattr(self, 'jconn') and self.jconn:
-            return self.jconn.getMetaData()
-        elif hasattr(self, 'connection') and hasattr(self.connection, 'jconn'):
-            return self.connection.jconn.getMetaData()
-        raise RuntimeError("No JDBC connection available for metadata access")
+        if not self.connection:
+            self.connect()
+        return self.connection.conn.getMetaData()
+        
+    def get_engine(self):
+        """Get the database engine (JDBC connection).
+        
+        This method is provided for compatibility with SQLAlchemy-style interfaces.
+        In this JDBC implementation, we return the connection itself as the "engine".
+        """
+        if not self.connection:
+            self.connect()
+        return self.connection.conn
     
     def execute_batch(self, queries):
-        """Execute multiple queries in a batch using JDBC."""
+        """Execute multiple queries in a batch using JDBC.
+        
+        Args:
+            queries: List of SQL queries to execute
+            
+        Returns:
+            list: List of results for each query
+        """
+        if not self.connection:
+            self.connect()
+            
         if not self.connection:
             raise RuntimeError("Not connected to database")
         
@@ -1452,12 +1470,26 @@ class DatabaseConnector:
             # Rollback on error
             if self.connection:
                 self.connection.rollback()
+            logger.error(f"Error in batch execution: {str(e)}")
+            raise
+            
+        finally:
+            # Reset auto-commit to True and close cursor
+            if self.connection:
+                try:
+                    self.connection.jconn.setAutoCommit(True)
+                except Exception as e:
+                    logger.warning(f"Error resetting auto-commit: {str(e)}")
+            
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception as e:
+                    logger.warning(f"Error closing cursor: {str(e)}")
+            if self.connection:
+                self.connection.rollback()
             logger.error(f"Error executing batch: {str(e)}")
             raise
-        finally:
-            # Close cursor
-            if cursor:
-                cursor.close()
 
 def main():
     """Main function for testing database connections."""
