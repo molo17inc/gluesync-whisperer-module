@@ -31,11 +31,13 @@ import {
   PlayArrow as PlayArrowIcon,
   Stop as StopIcon,
   Delete as DeleteIcon,
+  Edit as EditIcon,
 } from '@mui/icons-material';
 import { Connection, connectionApi } from '../services/api';
 
 const Connections: React.FC = () => {
   const [connections, setConnections] = useState<Connection[]>([]);
+  const [editingConnection, setEditingConnection] = useState<Connection | null>(null);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
@@ -77,6 +79,17 @@ const Connections: React.FC = () => {
 
   const handleCloseDialog = () => {
     setOpen(false);
+    setEditingConnection(null);
+    setFormData({
+      name: '',
+      description: '',
+      db_type: 'sqlite',
+      host: 'localhost',
+      port: 3306,
+      username: '',
+      password: '',
+      database: '',
+    });
   };
 
   const handleInputChange = (field: keyof typeof formData, value: any) => {
@@ -85,12 +98,19 @@ const Connections: React.FC = () => {
 
   const handleSubmit = async () => {
     try {
-      await connectionApi.create(formData as Connection);
-      showSnackbar('Connection created successfully', 'success');
+      if (editingConnection) {
+        // Update existing connection
+        await connectionApi.update(editingConnection.id!, formData as Connection);
+        showSnackbar('Connection updated successfully', 'success');
+      } else {
+        // Create new connection
+        await connectionApi.create(formData as Connection);
+        showSnackbar('Connection created successfully', 'success');
+      }
       handleCloseDialog();
       loadConnections();
     } catch (error) {
-      const errorMessage = (error as any)?.response?.data?.detail || 'Failed to create connection';
+      const errorMessage = (error as any)?.response?.data?.detail || `Failed to ${editingConnection ? 'update' : 'create'} connection`;
       showSnackbar(errorMessage, 'error');
     }
   };
@@ -105,6 +125,21 @@ const Connections: React.FC = () => {
         showSnackbar('Failed to delete connection', 'error');
       }
     }
+  };
+
+  const handleEdit = (connection: Connection) => {
+    setEditingConnection(connection);
+    setFormData({
+      name: connection.name,
+      description: connection.description || '',
+      db_type: connection.db_type,
+      host: connection.host,
+      port: connection.port,
+      username: connection.username,
+      password: connection.password,
+      database: connection.database || connection.database_name || '',
+    });
+    setOpen(true);
   };
 
   const handleStatusChange = async (id: number, currentStatus: string) => {
@@ -210,6 +245,13 @@ const Connections: React.FC = () => {
                         {(connection.status === 'running') ? <StopIcon /> : <PlayArrowIcon />}
                       </IconButton>
                       <IconButton
+                        onClick={() => handleEdit(connection)}
+                        color="secondary"
+                        size="small"
+                      >
+                        <EditIcon />
+                      </IconButton>
+                      <IconButton
                         onClick={() => handleDelete(connection.id!)}
                         color="error"
                         size="small"
@@ -234,9 +276,9 @@ const Connections: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* Create Connection Dialog */}
+      {/* Create/Edit Connection Dialog */}
       <Dialog open={open} onClose={handleCloseDialog} maxWidth="md" fullWidth>
-        <DialogTitle>Create New Connection</DialogTitle>
+        <DialogTitle>{editingConnection ? 'Edit Connection' : 'Create New Connection'}</DialogTitle>
         <DialogContent>
           <Box sx={{ pt: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
             <TextField
@@ -328,7 +370,7 @@ const Connections: React.FC = () => {
             variant="contained"
             disabled={!formData.name || !formData.host || !formData.username || !formData.password || (formData.db_type !== 'as400' && formData.db_type !== 'sqlite' && !formData.database)}
           >
-            Create
+            {editingConnection ? 'Update' : 'Create'}
           </Button>
         </DialogActions>
       </Dialog>

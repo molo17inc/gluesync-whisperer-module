@@ -104,6 +104,12 @@ export const connectionApi = {
     await api.delete(`/connections/${id}/`);
   },
 
+  // Update a connection
+  update: async (id: number, connection: Connection): Promise<Connection> => {
+    const response = await api.put(`/connections/${id}`, connection);
+    return response.data;
+  },
+
   // Update connection status
   updateStatus: async (id: number, status: string): Promise<void> => {
     await api.put(`/connections/${id}/status`, { status });
