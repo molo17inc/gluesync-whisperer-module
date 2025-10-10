@@ -172,7 +172,6 @@ async def serve_frontend():
 
 # Catch-all route for SPA routing (must be last)
 @app.get("/{full_path:path}", include_in_schema=False)
-async def catch_all(full_path: str):
     """Handle SPA routing by serving index.html for frontend routes."""
     index_path = os.path.join(static_dir, "index.html")
     if os.path.exists(index_path):
