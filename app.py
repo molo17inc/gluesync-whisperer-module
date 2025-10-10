@@ -111,20 +111,58 @@ async def serve_assets(path: str):
         from fastapi.responses import JSONResponse
         return JSONResponse(status_code=404, content={"error": "Asset not found"})
 
-# Serve other static files (like vite.svg)
-@app.get("/vite.svg", include_in_schema=False)
-async def serve_vite_svg():
-    """Serve vite.svg file."""
-    if not os.path.exists(static_dir):
-        from fastapi.responses import JSONResponse
-        return JSONResponse(status_code=404, content={"error": "Static directory not found"})
-        
-    svg_path = os.path.join(static_dir, "vite.svg")
-    if os.path.exists(svg_path):
-        return FileResponse(svg_path)
+# Serve favicon and other static files from root
+@app.get("/favicon.ico", include_in_schema=False)
+async def serve_favicon_ico():
+    """Serve favicon.ico file."""
+    favicon_path = os.path.join(static_dir, "favicon.ico")
+    if os.path.exists(favicon_path):
+        return FileResponse(favicon_path)
     else:
         from fastapi.responses import JSONResponse
-        return JSONResponse(status_code=404, content={"error": "File not found"})
+        return JSONResponse(status_code=404, content={"error": "Favicon not found"})
+
+@app.get("/favicon.svg", include_in_schema=False)
+async def serve_favicon_svg():
+    """Serve favicon.svg file."""
+    favicon_path = os.path.join(static_dir, "favicon.svg")
+    if os.path.exists(favicon_path):
+        return FileResponse(favicon_path)
+    else:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=404, content={"error": "Favicon not found"})
+
+@app.get("/apple-touch-icon.png", include_in_schema=False)
+async def serve_apple_touch_icon():
+    """Serve apple-touch-icon.png file."""
+    icon_path = os.path.join(static_dir, "apple-touch-icon.png")
+    if os.path.exists(icon_path):
+        return FileResponse(icon_path)
+    else:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=404, content={"error": "Icon not found"})
+
+# Serve other static files from root static directory
+@app.get("/web-app-manifest-192x192.png", include_in_schema=False)
+async def serve_pwa_icon_192():
+    """Serve PWA icon 192x192."""
+    icon_path = os.path.join(static_dir, "web-app-manifest-192x192.png")
+    if os.path.exists(icon_path):
+        return FileResponse(icon_path)
+    else:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=404, content={"error": "PWA icon not found"})
+
+# Serve any other static files from root static directory
+@app.get("/favicon-96x96.png", include_in_schema=False)
+async def serve_favicon_png():
+    """Serve favicon-96x96.png file."""
+    favicon_path = os.path.join(static_dir, "favicon-96x96.png")
+    if os.path.exists(favicon_path):
+        return FileResponse(favicon_path)
+    else:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=404, content={"error": "Favicon PNG not found"})
 
 @app.get("/", include_in_schema=False)
 async def serve_frontend():

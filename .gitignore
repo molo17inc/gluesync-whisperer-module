@@ -105,8 +105,9 @@ tmp/
 *.sqlite
 *.sqlitedb
 
-# Docker volumes
-docker_volumes/
-__pycache__
+# Frontend build artifacts
+static/assets/*.js
+static/assets/*.css
+frontend/dist/
+.vite/
 frontend/node_modules
-frontend/.vite
