@@ -30,6 +30,7 @@ import {
   Add as AddIcon,
   Delete as DeleteIcon,
   TableChart as TableIcon,
+  Edit as EditIcon,
 } from '@mui/icons-material';
 import {
   Connection,
@@ -49,6 +50,7 @@ const Tables: React.FC = () => {
   const [loadingSchemas, setLoadingSchemas] = useState(false);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [editingTable, setEditingTable] = useState<TableConfig | null>(null);
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
     open: false,
     message: '',
@@ -116,6 +118,19 @@ const Tables: React.FC = () => {
 
   const handleCloseDialog = () => {
     setOpen(false);
+    setEditingTable(null);
+    setFormData({
+      table_name: '',
+      schema_name: '',
+      operation_type: 'all',
+      operation_delay: 1,
+      batch_size: 1,
+      enabled: true,
+      connection_id: 0,
+    });
+    setSelectedConnection(null);
+    setSchemas([]);
+    setTables([]);
   };
 
   const handleConnectionChange = async (connectionId: number) => {
@@ -166,12 +181,20 @@ const Tables: React.FC = () => {
     }
 
     try {
-      await tableApi.create(formData as TableConfig);
-      showSnackbar('Table configuration created successfully', 'success');
+      if (editingTable) {
+        // Update existing table configuration
+        await tableApi.update(editingTable.id!, formData as TableConfig);
+        showSnackbar('Table configuration updated successfully', 'success');
+      } else {
+        // Create new table configuration
+        await tableApi.create(formData as TableConfig);
+        showSnackbar('Table configuration created successfully', 'success');
+      }
       handleCloseDialog();
       loadData();
     } catch (error) {
-      showSnackbar('Failed to create table configuration', 'error');
+      const action = editingTable ? 'update' : 'create';
+      showSnackbar(`Failed to ${action} table configuration`, 'error');
     }
   };
 
@@ -185,6 +208,41 @@ const Tables: React.FC = () => {
         showSnackbar('Failed to delete table configuration', 'error');
       }
     }
+  };
+
+  const handleEdit = async (tableConfig: TableConfig) => {
+    setEditingTable(tableConfig);
+    setFormData({
+      table_name: tableConfig.table_name,
+      schema_name: tableConfig.schema_name,
+      operation_type: tableConfig.operation_type,
+      operation_delay: tableConfig.operation_delay,
+      batch_size: tableConfig.batch_size,
+      enabled: tableConfig.enabled,
+      connection_id: tableConfig.connection_id,
+    });
+
+    // Load the connection and its schemas
+    const connection = (Array.isArray(connections) ? connections : []).find(c => c.id === tableConfig.connection_id);
+    if (connection) {
+      setSelectedConnection(connection);
+
+      try {
+        // Load schemas for the connection
+        const schemasData = await connectionApi.getSchemas(connection.id!);
+        const schemaObjects = schemasData.map((schema: string) => ({ name: schema }));
+        setSchemas(schemaObjects);
+
+        // Load tables for the schema
+        const tablesData = await connectionApi.getTables(connection.id!, tableConfig.schema_name);
+        setTables(tablesData);
+      } catch (error) {
+        console.error('Failed to load data for editing:', error);
+        showSnackbar('Failed to load data for editing', 'error');
+      }
+    }
+
+    setOpen(true);
   };
 
   const getConnectionName = (connectionId: number) => {
@@ -266,6 +324,13 @@ const Tables: React.FC = () => {
                     <TableCell align="right">
                       <IconButton
                         size="small"
+                        onClick={() => handleEdit(config)}
+                        color="primary"
+                      >
+                        <EditIcon />
+                      </IconButton>
+                      <IconButton
+                        size="small"
                         onClick={() => handleDelete(config.id!)}
                         color="error"
                       >
@@ -291,7 +356,7 @@ const Tables: React.FC = () => {
 
       {/* Configure Table Dialog */}
       <Dialog open={open} onClose={handleCloseDialog} maxWidth="md" fullWidth>
-        <DialogTitle>Configure Table for Automation</DialogTitle>
+        <DialogTitle>{editingTable ? 'Edit Table Configuration' : 'Configure Table for Automation'}</DialogTitle>
         <DialogContent>
           <Box sx={{ pt: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
             <FormControl fullWidth>
@@ -404,7 +469,7 @@ const Tables: React.FC = () => {
             variant="contained"
             disabled={!formData.table_name || !formData.schema_name || !formData.connection_id}
           >
-            Configure Table
+            {editingTable ? 'Update Configuration' : 'Configure Table'}
           </Button>
         </DialogActions>
       </Dialog>

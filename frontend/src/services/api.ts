@@ -136,6 +136,12 @@ export const tableApi = {
     return response.data;
   },
 
+  // Update table configuration
+  update: async (id: number, config: TableConfig): Promise<TableConfig> => {
+    const response = await api.put(`/tables/${id}`, config);
+    return response.data;
+  },
+
   // Delete table configuration
   delete: async (id: number): Promise<void> => {
     await api.delete(`/tables/${id}`);
