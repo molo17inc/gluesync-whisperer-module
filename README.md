@@ -8,8 +8,7 @@ A specialized module for orchestrating database operations. This application ena
 - Configure tables for automated operations
 - Control operation types (insert, update, delete, or all)
 - Set delay between operations and batch sizes
-- View operation logs and connection status
-- REST API for configuration and control
+- **Web-based GUI**: Modern React frontend for easy database connection management and operation monitoring
 - Execute custom SQL queries against configured database connections
 - Robust parameter handling for all database types
 - Automatic transaction management for data modification operations
@@ -74,34 +73,25 @@ All required drivers are included in the Dockerfile for containerized deployment
    python3 init_db.py
    ```
 
-## Usage
+## Web Interface
 
-### Start the server
+Gluesync Whisperer now includes a modern web-based GUI built with React that provides an intuitive interface for:
 
-```bash
-python3 app.py
-```
+- **Connection Management**: Create, edit, and delete database connections
+- **Schema Exploration**: Browse database schemas and tables
+- **Operation Monitoring**: View real-time operation status and logs
+- **Configuration Management**: Configure table operations and settings
+- **SQL Query Execution**: Execute custom queries against configured databases
 
-The API server will start on <http://0.0.0.0:1717> by default.
+### Accessing the Web Interface
 
-### Using Docker
+Once the server is running, access the web interface at:
 
-You can also run the application using Docker:
+- **Frontend GUI**: <http://localhost:5173>
+- **Backend API**: <http://localhost:8000>
+- **API Documentation**: <http://localhost:8000/docs> (Swagger UI)
 
-```bash
-# Build the Docker image
-docker build -t gluesync-whisperer .
-
-# Run the container
-docker run -d -p 1717:1717 --name whisperer gluesync-whisperer
-```
-
-### API Documentation
-
-Once the server is running, access the API documentation at:
-
-- Swagger UI: <http://localhost:1717/docs>
-- ReDoc: <http://localhost:1717/redoc>
+The web interface provides the same functionality as the REST API but with a user-friendly graphical interface.
 
 ## License
 
@@ -344,22 +334,9 @@ PillowFight can run multiple operation types concurrently (INSERT, UPDATE, DELET
 - `GET /api/v1/pillow-fight/status`: Get status of active PillowFight tests
   - Returns a list of all active PillowFight tests with statistics on operations performed
 
-- `POST /api/v1/pillow-fight/stop/{connection_id}/{table_id}`: Stop a PillowFight test
   - Path parameters:
     - `connection_id`: ID of the database connection
     - `table_id`: ID of the table to stop testing
-
-#### When to Use PillowFight vs. Regular Operations
-
-| Feature | PillowFight | Regular Operations |
-|---------|------------|--------------------|
-| **Purpose** | Testing and stress simulation | Actual data synchronization |
-| **Operation Types** | Can run multiple types concurrently | One operation type at a time |
-| **Data Integrity** | Generates test data that may need cleanup | Creates legitimate synchronized data |
-| **Performance Impact** | Designed to push system limits | Optimized for production use |
-| **Monitoring** | Detailed statistics for test analysis | Basic operation logging |
-
-#### Example Use Case
 
 Before deploying a new database schema or application version to production, use PillowFight to:
 
@@ -369,6 +346,23 @@ Before deploying a new database schema or application version to production, use
 4. Measure performance metrics for different operation types
 
 ## Docker Usage
+
+### Using Docker Compose (Recommended)
+
+The easiest way to run the application with both backend and frontend:
+
+```bash
+# Start both services
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+```
+
+This will start:
+- **Backend API**: <http://localhost:8000>
+- **Frontend GUI**: <http://localhost:5173>
+- **API Documentation**: <http://localhost:8000/docs>
 
 ### Basic Docker Build
 
@@ -381,7 +375,7 @@ Before deploying a new database schema or application version to production, use
 2. Run the container:
 
    ```bash
-   docker run -d -p 1717:1717 --name whisperer gluesync-whisperer
+   docker run -d -p 8000:8000 -p 5173:5173 --name whisperer gluesync-whisperer
    ```
 
 ### Multi-Architecture Docker Build
