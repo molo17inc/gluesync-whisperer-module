@@ -167,9 +167,9 @@ const Query: React.FC = () => {
 
   const sampleQueries = [
     { label: 'Count records in DRIVERS table', query: 'SELECT COUNT(*) FROM DRIVERS' },
-    { label: 'Show first 10 records', query: 'SELECT TOP 10 * FROM DRIVERS' },
-    { label: 'Show table structure', query: 'SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = \'DRIVERS\'' },
-    { label: 'Show database schemas', query: 'SELECT name FROM sys.databases' },
+    { label: 'Show first 10 records', query: 'SELECT * FROM DRIVERS LIMIT 10' },
+    { label: 'Show table structure', query: 'DESCRIBE DRIVERS' },
+    { label: 'Show available tables', query: 'SHOW TABLES' },
   ];
 
   return (

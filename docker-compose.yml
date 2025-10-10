@@ -15,7 +15,6 @@ services:
       - ./logs:/app/logs
       # - ./:/app  # Mount the entire project for live code changes
     environment:
-      - DB_URL=sqlite:///./data/whisperer.db
       - PORT=8000
       - DEBUG=true
       
@@ -32,7 +31,6 @@ services:
   #   environment:
   #     - DB_URL=sqlite:///./data/whisperer.db
   #     - DEBUG=true
-  #     - JAVA_HOME=/usr/lib/jvm/zulu21-ca-amd64
   #     - PYTHONUNBUFFERED=1
   #   command: >  # Override the default command to keep the container running
   #     bash -c "tail -f /dev/null"

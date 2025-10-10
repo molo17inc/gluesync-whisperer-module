@@ -76,7 +76,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     GLUESYNC_LICENSE_FILE=/opt/gluesync/data/gs-license.dat \
     SSL_ENABLED=False \
     GLUESYNC_SECURITY_CONFIG=/opt/gluesync/data/security-config.json \
-    SSL_SKIP_VERIFY=True
+    SSL_SKIP_VERIFY=True \
+    # Java settings for JDBC \
+    JAVA_HOME=/usr/lib/jvm/zulu21-ca-amd64
 
 # Install system dependencies for database drivers and runtime requirements
 RUN apt-get update && apt-get install -y --no-install-recommends \

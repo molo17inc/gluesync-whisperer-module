@@ -47,9 +47,9 @@ const Connections: React.FC = () => {
   const [formData, setFormData] = useState({
     name: '',
     description: '',
-    db_type: 'sqlite' as 'mssql' | 'as400' | 'sqlite',
+    db_type: 'sqlite' as 'mssql' | 'as400' | 'sqlite' | 'postgresql' | 'mysql' | 'oracle',
     host: 'localhost',
-    port: 5432,
+    port: 3306, // Default MySQL port
     username: '',
     password: '',
     database: '',
@@ -257,9 +257,27 @@ const Connections: React.FC = () => {
               <Select
                 value={formData.db_type}
                 label="Database Type"
-                onChange={(e) => handleInputChange('db_type', e.target.value as any)}
+                onChange={(e) => {
+                  const dbType = e.target.value as 'mssql' | 'as400' | 'sqlite' | 'postgresql' | 'mysql' | 'oracle';
+                  handleInputChange('db_type', dbType);
+                  // Set default port based on database type
+                  const defaultPorts = {
+                    'sqlite': 0, // SQLite doesn't use ports
+                    'mysql': 3306,
+                    'postgresql': 5432,
+                    'mssql': 1433,
+                    'oracle': 1521, // Oracle default port
+                    'as400': 446 // Common AS400 port
+                  };
+                  if (defaultPorts[dbType] !== formData.port) {
+                    handleInputChange('port', defaultPorts[dbType]);
+                  }
+                }}
               >
                 <MenuItem value="sqlite">SQLite</MenuItem>
+                <MenuItem value="mysql">MySQL</MenuItem>
+                <MenuItem value="postgresql">PostgreSQL</MenuItem>
+                <MenuItem value="oracle">Oracle</MenuItem>
                 <MenuItem value="mssql">MS SQL Server</MenuItem>
                 <MenuItem value="as400">AS400</MenuItem>
               </Select>
@@ -299,7 +317,7 @@ const Connections: React.FC = () => {
               value={formData.database}
               onChange={(e) => handleInputChange('database', e.target.value)}
               fullWidth
-              helperText="Database name (for MS SQL) or leave empty (for AS400)"
+              helperText="Database name (required for MySQL, PostgreSQL, Oracle, MS SQL) or leave empty for AS400"
             />
           </Box>
         </DialogContent>
@@ -308,7 +326,7 @@ const Connections: React.FC = () => {
           <Button
             onClick={handleSubmit}
             variant="contained"
-            disabled={!formData.name || !formData.host || !formData.username || !formData.password || !formData.database}
+            disabled={!formData.name || !formData.host || !formData.username || !formData.password || (formData.db_type !== 'as400' && formData.db_type !== 'sqlite' && !formData.database)}
           >
             Create
           </Button>

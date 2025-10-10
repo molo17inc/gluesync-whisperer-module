@@ -41,7 +41,6 @@ import {
 } from '../services/api';
 
 const Tables: React.FC = () => {
-  console.log('🚀 Tables component mounted');
   const [connections, setConnections] = useState<Connection[]>([]);
   const [tableConfigs, setTableConfigs] = useState<TableConfig[]>([]);
   const [schemas, setSchemas] = useState<Schema[]>([]);
@@ -67,15 +66,12 @@ const Tables: React.FC = () => {
   const [selectedConnection, setSelectedConnection] = useState<Connection | null>(null);
 
   useEffect(() => {
-    console.log('🔄 useEffect triggered, calling loadData');
     loadData();
   }, []);
 
   const loadData = async () => {
-    console.log('🔄 Starting initial data load...');
     try {
       setLoading(true);
-      console.log('📡 Fetching connections and table configs...');
       const [connectionsData, tablesData] = await Promise.all([
         connectionApi.list(),
         tableApi.list(),
@@ -87,11 +83,10 @@ const Tables: React.FC = () => {
       setConnections(connectionsData);
       setTableConfigs(tablesData);
     } catch (error) {
-      console.error('❌ Failed to load initial data:', error);
+      console.error('Failed to load initial data:', error);
       showSnackbar('Failed to load data', 'error');
     } finally {
       setLoading(false);
-      console.log('🏁 Initial data loading completed');
     }
   };
 
@@ -135,17 +130,14 @@ const Tables: React.FC = () => {
     try {
       const schemasData = await connectionApi.getSchemas(connectionId);
       console.log('✅ Schemas loaded successfully:', schemasData?.length || 0, 'schemas found');
-      console.log('📋 Raw schemas data:', schemasData);
       // Convert string array to Schema objects for frontend compatibility
       const schemaObjects = schemasData.map((schema: string) => ({ name: schema }));
-      console.log('🔄 Converted schemas:', schemaObjects);
       setSchemas(schemaObjects);
     } catch (error) {
-      console.error('❌ Failed to load schemas:', error);
+      console.error('Failed to load schemas:', error);
       showSnackbar('Failed to load schemas', 'error');
     } finally {
       setLoadingSchemas(false);
-      console.log('🏁 Schema loading completed for connection:', connectionId);
     }
   };
 
@@ -156,8 +148,6 @@ const Tables: React.FC = () => {
 
     try {
       const tablesData = await connectionApi.getTables(selectedConnection.id!, schemaName);
-      console.log('✅ Tables loaded successfully:', tablesData?.length || 0, 'tables found');
-      console.log('📋 Raw tables data:', tablesData);
       setTables(tablesData);
     } catch (error) {
       console.error('Failed to load tables:', error);

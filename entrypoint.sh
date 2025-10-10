@@ -39,7 +39,7 @@ fi
 
 # Run database migrations if needed
 echo "Initializing database..."
-python3 -c "from database import Base, engine; Base.metadata.create_all(bind=engine)"
+python3 -c "from database import get_db; db = get_db(); print('Database initialized successfully!')"
 
 # Start the application
 echo "Starting Gluesync Whisperer..."
