@@ -237,19 +237,23 @@ def delete_table(table_id: int, db = Depends(get_db)):
 @router.get("/connections/{connection_id}/schemas", response_model=List[str])
 def get_schemas(connection_id: int, db = Depends(get_db)):
     """Get all schemas for a database connection."""
+    logger.info(f"API CALL: get_schemas for connection_id={connection_id}")
     db_service = DatabaseService(db)
     
     # Check if connection exists
     connection = db_service.get_connection(connection_id)
     if not connection:
+        logger.error(f"Connection with ID {connection_id} not found")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Connection with ID {connection_id} not found"
         )
+    logger.info(f"Connection found: {connection.name}, type: {connection.db_type}")
     
     # Get schemas
     try:
         schemas = db_service.get_schemas(connection_id)
+        logger.info(f"Retrieved {len(schemas)} schemas for connection {connection_id}: {schemas}")
         return schemas
     except Exception as e:
         logger.error(f"Error getting schemas: {str(e)}")
@@ -274,8 +278,19 @@ def get_database_tables(connection_id: int, schema: str = None, db = Depends(get
     
     # Get tables
     try:
+        logger.info(f"API CALL: get_database_tables for connection_id={connection_id}, schema={schema}")
         tables = db_service.get_tables(connection_id, schema=schema)
-        return tables
+        logger.info(f"Retrieved {len(tables)} tables for connection {connection_id}")
+        
+        # Convert string list to TableResponse objects
+        table_responses = []
+        for table_name in tables:
+            table_responses.append({
+                "name": table_name,
+                "schema_name": schema
+            })
+        
+        return table_responses
     except Exception as e:
         logger.error(f"Error getting database tables: {str(e)}")
         raise HTTPException(

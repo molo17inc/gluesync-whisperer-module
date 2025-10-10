@@ -143,7 +143,7 @@ class TableListResponse(BaseModel):
 
 class TableResponse(BaseModel):
     name: str
-    schema: str
+    schema_name: str
 
 
 class TableSchemaResponse(BaseModel):

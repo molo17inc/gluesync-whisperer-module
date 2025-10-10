@@ -44,6 +44,7 @@ class MySQLDatabaseService(DatabaseServiceBase):
         if not connection:
             raise ValueError(f"Connection with ID {connection_id} not found")
 
+        logger.info(f"MySQL: Getting schemas for connection {connection_id} ({connection.name})")
         engine = self._get_engine(connection)
         sql = self.sql_statements.get_schemas_statement()
 
@@ -51,6 +52,7 @@ class MySQLDatabaseService(DatabaseServiceBase):
             result = conn.execute(sql)
             schemas = [row[0] for row in result if row[0] is not None]
 
+        logger.info(f"MySQL: Retrieved {len(schemas)} schemas: {schemas}")
         return schemas
 
     def get_tables(self, connection_id: int, schema: str = None) -> List[str]:
@@ -58,6 +60,7 @@ class MySQLDatabaseService(DatabaseServiceBase):
         if not connection:
             raise ValueError(f"Connection with ID {connection_id} not found")
 
+        logger.info(f"MySQL: Getting tables for connection {connection_id} ({connection.name}), schema: {schema}")
         engine = self._get_engine(connection)
         sql = self.sql_statements.get_tables_statement(schema)
 
@@ -68,6 +71,7 @@ class MySQLDatabaseService(DatabaseServiceBase):
                 result = conn.execute(sql)
             tables = [row[0] for row in result if row[0] is not None]
 
+        logger.info(f"MySQL: Retrieved {len(tables)} tables for schema '{schema}': {tables}")
         return tables
 
     def get_table_schema(self, connection_id: int, table_name: str, schema_name: str = None) -> TableSchemaResponse:
@@ -75,6 +79,7 @@ class MySQLDatabaseService(DatabaseServiceBase):
         if not connection:
             raise ValueError(f"Connection with ID {connection_id} not found")
 
+        logger.info(f"MySQL: Getting schema for table '{table_name}' in schema '{schema_name}' for connection {connection_id} ({connection.name})")
         engine = self._get_engine(connection)
         sql = self.sql_statements.get_columns_statement(schema_name, table_name)
 
@@ -105,4 +110,5 @@ class MySQLDatabaseService(DatabaseServiceBase):
                 foreign_keys=[]
             )
 
+        logger.info(f"MySQL: Retrieved schema for {schema_name or 'default'}.{table_name}: {len(columns)} columns, {len(primary_keys)} primary keys")
         return schema_response

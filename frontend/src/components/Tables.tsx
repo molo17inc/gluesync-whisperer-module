@@ -148,9 +148,19 @@ const Tables: React.FC = () => {
       // Convert string array to Schema objects for frontend compatibility
       const schemaObjects = schemasData.map((schema: string) => ({ name: schema }));
       setSchemas(schemaObjects);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to load schemas:', error);
-      showSnackbar('Failed to load schemas', 'error');
+      const errorMessage = error?.response?.data?.detail || error?.message || 'Failed to load schemas';
+      
+      // Check if it's a connection error
+      if (errorMessage.includes('Connection refused') || errorMessage.includes('Not connected to database')) {
+        const connection = (Array.isArray(connections) ? connections : []).find(c => c.id === connectionId);
+        showSnackbar(`Cannot connect to database "${connection?.name || 'Unknown'}". Please check connection settings.`, 'error');
+      } else {
+        showSnackbar(`Failed to load schemas: ${errorMessage}`, 'error');
+      }
+      
+      setSchemas([]);
     } finally {
       setLoadingSchemas(false);
     }
@@ -164,9 +174,18 @@ const Tables: React.FC = () => {
     try {
       const tablesData = await connectionApi.getTables(selectedConnection.id!, schemaName);
       setTables(tablesData);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to load tables:', error);
-      showSnackbar('Failed to load tables', 'error');
+      const errorMessage = error?.response?.data?.detail || error?.message || 'Failed to load tables';
+      
+      // Check if it's a connection error
+      if (errorMessage.includes('Connection refused') || errorMessage.includes('Not connected to database')) {
+        showSnackbar(`Cannot connect to database "${selectedConnection.name}". Please check connection settings.`, 'error');
+      } else {
+        showSnackbar(`Failed to load tables: ${errorMessage}`, 'error');
+      }
+      
+      setTables([]);
     }
   };
 
@@ -236,9 +255,20 @@ const Tables: React.FC = () => {
         // Load tables for the schema
         const tablesData = await connectionApi.getTables(connection.id!, tableConfig.schema_name);
         setTables(tablesData);
-      } catch (error) {
+      } catch (error: any) {
         console.error('Failed to load data for editing:', error);
-        showSnackbar('Failed to load data for editing', 'error');
+        const errorMessage = error?.response?.data?.detail || error?.message || 'Failed to load data for editing';
+        
+        // Check if it's a connection error
+        if (errorMessage.includes('Connection refused') || errorMessage.includes('Not connected to database')) {
+          showSnackbar(`Cannot connect to database "${connection.name}". Please check connection settings.`, 'error');
+        } else {
+          showSnackbar(`Failed to load data for editing: ${errorMessage}`, 'error');
+        }
+        
+        // Still open the dialog but with empty schemas/tables
+        setSchemas([]);
+        setTables([]);
       }
     }
 
@@ -359,6 +389,12 @@ const Tables: React.FC = () => {
         <DialogTitle>{editingTable ? 'Edit Table Configuration' : 'Configure Table for Automation'}</DialogTitle>
         <DialogContent>
           <Box sx={{ pt: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {schemas.length === 0 && selectedConnection && (
+              <Alert severity="warning" sx={{ mb: 1 }}>
+                Cannot connect to database "{selectedConnection.name}". Please check connection settings before {editingTable ? 'editing' : 'configuring'} this table.
+              </Alert>
+            )}
+            
             <FormControl fullWidth>
               <InputLabel>Connection</InputLabel>
               <Select
