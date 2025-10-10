@@ -35,6 +35,9 @@ from services.database_service_base import DatabaseServiceBase
 from services.database_service_mssql import MSSQLDatabaseService
 from services.database_service_as400 import AS400DatabaseService
 from services.database_service_sqlite import SQLiteDatabaseService
+from services.database_service_mysql import MySQLDatabaseService
+from services.database_service_postgresql import PostgreSQLDatabaseService
+from services.database_service_oracle import OracleDatabaseService
 
 logger = logging.getLogger(__name__)
 
@@ -88,3 +91,6 @@ class DatabaseServiceFactory:
 DatabaseServiceFactory.register(DatabaseType.MSSQL, MSSQLDatabaseService)
 DatabaseServiceFactory.register(DatabaseType.AS400, AS400DatabaseService)
 DatabaseServiceFactory.register(DatabaseType.SQLITE, SQLiteDatabaseService)
+DatabaseServiceFactory.register(DatabaseType.MYSQL, MySQLDatabaseService)
+DatabaseServiceFactory.register(DatabaseType.POSTGRESQL, PostgreSQLDatabaseService)
+DatabaseServiceFactory.register(DatabaseType.ORACLE, OracleDatabaseService)
