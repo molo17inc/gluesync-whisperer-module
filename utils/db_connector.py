@@ -1401,12 +1401,43 @@ class DatabaseConnector:
             self.connect()
         return self.connection.conn.getMetaData()
         
-    def get_engine(self):
+    def get_engine(self, **kwargs):
         """Get the database engine (JDBC connection).
         
         This method is provided for compatibility with SQLAlchemy-style interfaces.
-        In this JDBC implementation, we return the connection itself as the "engine".
+        
+        Args:
+            **kwargs: Optional connection parameters (host, port, database, username, password)
+            
+        Returns:
+            The JDBC connection object
+            
+        Note:
+            In this JDBC implementation, we return the connection itself as the "engine".
         """
+        # If connection parameters are provided, create a new connection with those parameters
+        if kwargs:
+            # Create a new DatabaseConnector with the provided parameters
+            db_type = kwargs.get('db_type', self.db_type)
+            host = kwargs.get('host', self.host)
+            port = kwargs.get('port', self.port)
+            database = kwargs.get('database', self.database)
+            username = kwargs.get('username', self.username)
+            password = kwargs.get('password', self.password)
+            
+            # Create a new connector with the provided parameters
+            connector = DatabaseConnector(
+                db_type=db_type,
+                host=host,
+                port=port,
+                database=database,
+                username=username,
+                password=password
+            )
+            connector.connect()
+            return connector
+        
+        # Otherwise, use the existing connection
         if not self.connection:
             self.connect()
         return self.connection.conn
