@@ -25,6 +25,7 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
+ """
 
 import os
 import ssl
@@ -172,7 +173,8 @@ async def serve_frontend():
 
 # Catch-all route for SPA routing (must be last)
 @app.get("/{full_path:path}", include_in_schema=False)
-    """Handle SPA routing by serving index.html for frontend routes."""
+async def catch_all(full_path: str):
+    """Handle SPA routing."""
     index_path = os.path.join(static_dir, "index.html")
     if os.path.exists(index_path):
         return FileResponse(index_path)
