@@ -30,7 +30,14 @@
 import os
 import ssl
 import json
+import logging
 
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+
+from config import Settings
 from api.router import router as api_router
 from api.table_router import router as table_router
 from routers.automation import router as automation_router
@@ -84,7 +91,7 @@ app.middleware("http")(catch_exceptions_middleware)
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 
 # Include routers (API routes)
-app.include_router(router)
+app.include_router(api_router)
 app.include_router(table_router)
 app.include_router(automation_router)
 app.include_router(pillow_fight_router)
