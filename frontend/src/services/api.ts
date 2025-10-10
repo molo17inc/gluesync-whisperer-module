@@ -16,7 +16,7 @@ export interface Connection {
   id?: number;
   name: string;
   description: string;
-  db_type: 'mssql' | 'as400' | 'sqlite';
+  db_type: 'mssql' | 'as400' | 'sqlite' | 'mysql' | 'postgresql' | 'oracle';
   host: string;
   port: number;
   username: string;
