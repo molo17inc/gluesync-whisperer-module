@@ -163,8 +163,26 @@ class DatabaseServiceBase(ABC):
         # Get the existing connection
         connection = self.get_connection(connection_id)
         
-        # Update fields
+        # Update fields - handle enum fields specially to preserve enum types
         for field, value in connection_update.dict(exclude_unset=True).items():
+            if field == 'db_type' and isinstance(value, str):
+                # Handle db_type enum conversion
+                if value.startswith('DatabaseType.'):
+                    # Extract the enum name from "DatabaseType.MYSQL"
+                    enum_name = value.split('.')[1]
+                    value = DatabaseType[enum_name]
+                else:
+                    # Normal string conversion
+                    value = DatabaseType[value.upper()]
+            elif field == 'status' and isinstance(value, str):
+                # Handle status enum conversion
+                if value.startswith('ConnectionStatus.'):
+                    # Extract the enum name from "ConnectionStatus.RUNNING"
+                    enum_name = value.split('.')[1]
+                    value = ConnectionStatus[enum_name]
+                else:
+                    # Normal string conversion
+                    value = ConnectionStatus[value.upper()]
             setattr(connection, field, value)
         
         # Update the updated_at timestamp
