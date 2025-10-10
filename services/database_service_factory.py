@@ -58,11 +58,22 @@ class DatabaseServiceFactory:
         """Create a database service instance for the specified database type"""
         # Convert string db_type to enum if needed
         if isinstance(db_type, str):
+            logger.info(f"Factory received string db_type: {repr(db_type)}")
             try:
-                db_type = DatabaseType[db_type.upper()]
+                # Handle the case where db_type is "DatabaseType.MYSQL" (str representation of enum)
+                if db_type.startswith('DatabaseType.'):
+                    # Extract the enum name from "DatabaseType.MYSQL"
+                    enum_name = db_type.split('.')[1]
+                    db_type = DatabaseType[enum_name]
+                else:
+                    # Normal string conversion
+                    db_type = DatabaseType[db_type.upper()]
             except (KeyError, AttributeError):
-                logger.warning(f"Unknown database type string: {db_type}")
+                logger.error(f"Unknown database type string: {db_type}")
                 raise ValueError(f"Unsupported database type: {db_type}")
+        else:
+            # db_type is already an enum
+            logger.info(f"Factory received enum db_type: {db_type} (type: {type(db_type)})")
                 
         if db_type not in cls._registry:
             logger.error(f"No database service implementation registered for {db_type}")

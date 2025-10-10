@@ -46,11 +46,24 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def build_jdbc_connection_info(db_type, host, port, username, password, database):
-    """Build JDBC connection information based on database type.
-    
-    Returns a tuple of (jdbc_url, driver_class, properties)
     """
-    properties = {"user": username, "password": password} if username and password else {}
+    Build JDBC connection information based on database type.
+    
+    Args:
+        db_type: Database type (DatabaseType enum or string)
+        host: Database host
+        port: Database port
+        username: Database username
+        password: Database password
+        database: Database name
+        
+    Returns:
+        tuple: (jdbc_url, driver_class, properties)
+    """
+    properties = {
+        "user": username,
+        "password": password
+    }
     
     if db_type == DatabaseType.MYSQL:
         jdbc_url = f"jdbc:mysql://{host}:{port}/{database}"
@@ -1479,38 +1492,38 @@ def main():
         # List tables
         if args.list_tables:
             tables = connector.get_tables()
-            print(f"Found {len(tables)} tables:")
+            logger.info(f"Found {len(tables)} tables:")
             for table in tables:
-                print(f"  - {table}")
+                logger.info(f"  - {table}")
         
         # Get table schema
         if args.table:
             schema = connector.get_table_schema(args.table)
-            print(f"\nTable schema for {args.table}:")
-            print(f"Primary keys: {schema['primary_keys']}")
+            logger.info(f"\nTable schema for {args.table}:")
+            logger.info(f"Primary keys: {schema['primary_keys']}")
             
-            print("\nColumns:")
+            logger.info("\nColumns:")
             for col, col_info in schema['columns'].items():
                 pk_indicator = "*" if col_info['primary_key'] else " "
                 nullable = "NULL" if col_info['nullable'] else "NOT NULL"
-                print(f"  {pk_indicator} {col}: {col_info['type']} ({nullable})")
+                logger.info(f"  {pk_indicator} {col}: {col_info['type']} ({nullable})")
             
             if schema['foreign_keys']:
-                print("\nForeign keys:")
+                logger.info("\nForeign keys:")
                 for fk in schema['foreign_keys']:
-                    print(f"  {', '.join(fk['constrained_columns'])} -> {fk['referred_table']}({', '.join(fk['referred_columns'])})")
+                    logger.info(f"  {', '.join(fk['constrained_columns'])} -> {fk['referred_table']}({', '.join(fk['referred_columns'])})")
             
             if schema['indexes']:
-                print("\nIndexes:")
+                logger.info("\nIndexes:")
                 for idx in schema['indexes']:
                     unique = "UNIQUE " if idx['unique'] else ""
-                    print(f"  {unique}INDEX {idx['name']} on ({', '.join(idx['columns'])})")
+                    logger.info(f"  {unique}INDEX {idx['name']} on ({', '.join(idx['columns'])})")
         
         # # Execute query
         # if args.query:
         #     results = connector.execute_query(args.query)
-        #     print(f"\nQuery results:")
-        #     print(json.dumps(results, indent=2, default=str))
+        #     logger.info(f"\nQuery results:")    
+        #     logger.info(json.dumps(results, indent=2, default=str))
     
     finally:
         # Disconnect

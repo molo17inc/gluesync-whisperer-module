@@ -44,6 +44,20 @@ def get_sql_statements(database_type):
     Raises:
         ValueError: If the database type is not supported
     """
+def get_sql_statements(database_type):
+    """
+    Factory function to get the appropriate SQL statements implementation
+    based on the database type.
+    
+    Args:
+        database_type (DatabaseType): The type of database
+        
+    Returns:
+        BaseSqlStatements: An instance of a class that implements BaseSqlStatements
+        
+    Raises:
+        ValueError: If the database type is not supported
+    """
     if database_type == DatabaseType.MYSQL:
         return MySqlSqlStatements()
     elif database_type == DatabaseType.POSTGRESQL:

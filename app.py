@@ -3,44 +3,37 @@
  * This file is part of Gluesync Whisperer.
  *
  * Gluesync Whisperer is dual-licensed under the following licenses:
+ * - GNU Affero General Public License v3.0
+ * - Gluesync Commercial License
  *
- * 1. GNU General Public License (GPL) Version 3
- *    You may use, modify, and distribute this software under the terms of the GPL v3.
- *    See the LICENSE-GPL file or <http://www.gnu.org/licenses/gpl-3.0.html> for details.
- *    This option is available at no cost, but any derivative works must also be licensed under GPL v3.
+ * You can choose between one of them if you use this software.
  *
- * 2. MOLO17 Commercial License
- *    Alternatively, you may use this software under the MOLO17 Commercial License,
- *    which includes a warranty and permits proprietary use. Contact MOLO17 at info@molo17.com
- *    for licensing terms and conditions.
+ * For more information about the Gluesync Commercial License
+ * contact us at info@gluesync.com
  *
- * You must choose one of these licenses to use this software. Using this software implies
- * acceptance of one of these licenses. See the accompanying LICENSE files or contact
- * MOLO17 for more information.
+ * GNU Affero General Public License v3.0:
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
- * Copyright (C) 2025 MOLO17. All rights reserved.
-"""
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
 
-# JDBC drivers are used for all database connections directly
-
-import asyncio
-import logging
 import os
 import ssl
 import json
-import uvicorn
-from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-from starlette.middleware.base import BaseHTTPMiddleware
 
-from api.router import router
+from api.router import router as api_router
 from api.table_router import router as table_router
 from routers.automation import router as automation_router
 from routers.pillow_fight import router as pillow_fight_router
-from config import settings, Settings
 from database import init_db
 
 # Initialize settings to ensure data directory exists
@@ -144,8 +137,8 @@ async def serve_apple_touch_icon():
 
 # Serve other static files from root static directory
 @app.get("/web-app-manifest-192x192.png", include_in_schema=False)
-async def serve_pwa_icon_192():
-    """Serve PWA icon 192x192."""
+async def serve_pwa_icon_192x192():
+    """Serve PWA icon."""
     icon_path = os.path.join(static_dir, "web-app-manifest-192x192.png")
     if os.path.exists(icon_path):
         return FileResponse(icon_path)
@@ -156,7 +149,7 @@ async def serve_pwa_icon_192():
 # Serve any other static files from root static directory
 @app.get("/favicon-96x96.png", include_in_schema=False)
 async def serve_favicon_png():
-    """Serve favicon-96x96.png file."""
+    """Serve favicon PNG file."""
     favicon_path = os.path.join(static_dir, "favicon-96x96.png")
     if os.path.exists(favicon_path):
         return FileResponse(favicon_path)

@@ -73,7 +73,7 @@ def get_connections(skip: int = 0, limit: int = 100, db = Depends(get_db)):
     """Get all database connections."""
     db_service = DatabaseService(db)
     connections = db_service.get_connections(skip=skip, limit=limit)
-    print("DEBUG: API called, returning connections")
+    logger.debug("DEBUG: API called, returning connections")
     return connections
     """Get all database connections."""
     db_service = DatabaseService(db)
@@ -101,7 +101,7 @@ def get_connection(connection_id: int, db = Depends(get_db)):
 @router.put("/connections/{connection_id}", response_model=DatabaseConnectionResponse)
 def update_connection(
     connection_id: int, 
-    connection_update: DatabaseConnectionUpdate, 
+    connection_update: DatabaseConnectionUpdate,
     db = Depends(get_db)
 ):
     """Update a database connection."""
@@ -125,8 +125,6 @@ def update_connection(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error updating connection: {str(e)}"
         )
-
-
 @router.delete("/connections/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_connection(connection_id: int, db = Depends(get_db)):
     """Delete a database connection."""
