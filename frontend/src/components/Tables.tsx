@@ -18,6 +18,7 @@ import {
   DialogActions,
   TextField,
   FormControl,
+  CircularProgress,
   InputLabel,
   Select,
   MenuItem,
@@ -66,6 +67,7 @@ const Tables: React.FC = () => {
     connection_id: 0,
   });
   const [selectedConnection, setSelectedConnection] = useState<Connection | null>(null);
+  const [connectionError, setConnectionError] = useState<{connectionId: number | null, message: string} | null>(null);
 
   useEffect(() => {
     loadData();
@@ -137,11 +139,14 @@ const Tables: React.FC = () => {
     const connection = (Array.isArray(connections) ? connections : []).find(c => c.id === connectionId);
     if (!connection) return;
 
+    // Reset error state for this connection
+    setConnectionError(null);
     setSelectedConnection(connection);
     setFormData(prev => ({ ...prev, connection_id: connectionId }));
 
     console.log('🔄 Starting to load schemas for connection:', connectionId);
     setLoadingSchemas(true);
+    
     try {
       const schemasData = await connectionApi.getSchemas(connectionId);
       console.log('✅ Schemas loaded successfully:', schemasData?.length || 0, 'schemas found');
@@ -152,15 +157,24 @@ const Tables: React.FC = () => {
       console.error('Failed to load schemas:', error);
       const errorMessage = error?.response?.data?.detail || error?.message || 'Failed to load schemas';
       
-      // Check if it's a connection error
-      if (errorMessage.includes('Connection refused') || errorMessage.includes('Not connected to database')) {
-        const connection = (Array.isArray(connections) ? connections : []).find(c => c.id === connectionId);
-        showSnackbar(`Cannot connect to database "${connection?.name || 'Unknown'}". Please check connection settings.`, 'error');
+      // Set connection error state
+      if (errorMessage.includes('Connection refused') || 
+          errorMessage.includes('Not connected to database') ||
+          errorMessage.includes('Connection timed out') ||
+          errorMessage.includes('authentication failed')) {
+        setConnectionError({
+          connectionId,
+          message: `Cannot connect to database "${connection?.name || 'Unknown'}". Please check connection settings.`
+        });
       } else {
-        showSnackbar(`Failed to load schemas: ${errorMessage}`, 'error');
+        setConnectionError({
+          connectionId,
+          message: `Failed to load schemas: ${errorMessage}`
+        });
       }
       
       setSchemas([]);
+      showSnackbar(connectionError?.message || 'Failed to load schemas', 'error');
     } finally {
       setLoadingSchemas(false);
     }
@@ -389,11 +403,15 @@ const Tables: React.FC = () => {
         <DialogTitle>{editingTable ? 'Edit Table Configuration' : 'Configure Table for Automation'}</DialogTitle>
         <DialogContent>
           <Box sx={{ pt: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
-            {schemas.length === 0 && selectedConnection && (
-              <Alert severity="warning" sx={{ mb: 1 }}>
-                Cannot connect to database "{selectedConnection.name}". Please check connection settings before {editingTable ? 'editing' : 'configuring'} this table.
+            {loadingSchemas ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                <CircularProgress size={24} />
+              </Box>
+            ) : connectionError?.connectionId === formData.connection_id ? (
+              <Alert severity="error" sx={{ mb: 1 }}>
+                {connectionError.message}
               </Alert>
-            )}
+            ) : null}
             
             <FormControl fullWidth>
               <InputLabel>Connection</InputLabel>
