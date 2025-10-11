@@ -155,10 +155,10 @@ class DatabaseService:
         return self._get_connection_direct(connection_id)
         
     def get_engine(self, connection: DatabaseConnection) -> Any:
-        """Get a database engine for a connection.
+        """Get a database connector for a connection.
         This method delegates to the appropriate service implementation.
         """
-        logger.info(f"Getting engine for connection ID: {connection.id}")
+        logger.info(f"Getting connector for connection ID: {connection.id}")
         
         # Get the appropriate service
         service = self._get_service_for_connection_id(connection.id)
@@ -167,7 +167,7 @@ class DatabaseService:
             logger.error(f"No service found for connection ID {connection.id}")
             return None
         
-        # Get the engine from the service
+        # Get the connector from the service
         return service._get_engine(connection)
     
     def get_connection_by_name(self, name: str) -> Optional[DatabaseConnection]:

@@ -27,17 +27,19 @@ class MySQLDatabaseService(DatabaseServiceBase):
         if connection_id in self.engines:
             return self.engines[connection_id]
 
-        logger.info(f"Creating MySQL engine for connection: {connection.name}")
-        connector = DatabaseConnector(DatabaseType.MYSQL)
-        engine = connector.get_engine(
+        logger.info(f"Creating MySQL connector for connection: {connection.name}")
+        connector = DatabaseConnector(
+            db_type=DatabaseType.MYSQL,
             host=connection.host,
             port=connection.port,
             database=connection.database,
             username=connection.username,
             password=connection.password
         )
-        self.engines[connection_id] = engine
-        return engine
+        
+        # Store the connector in the engines dict
+        self.engines[connection_id] = connector
+        return connector
 
     def get_schemas(self, connection_id: int) -> List[str]:
         connection = self.get_connection(connection_id)
@@ -45,15 +47,42 @@ class MySQLDatabaseService(DatabaseServiceBase):
             raise ValueError(f"Connection with ID {connection_id} not found")
 
         logger.info(f"MySQL: Getting schemas for connection {connection_id} ({connection.name})")
-        engine = self._get_engine(connection)
-        sql = self.sql_statements.get_schemas_statement()
-
-        with engine.connect() as conn:
-            result = conn.execute(sql)
+        connector = DatabaseConnector(
+            db_type=DatabaseType.MYSQL,
+            host=connection.host,
+            port=connection.port,
+            database=connection.database,
+            username=connection.username,
+            password=connection.password
+        )
+        
+        try:
+            # Connect to the database
+            success = connector.connect()
+            if not success:
+                raise RuntimeError(f"Failed to connect to MySQL database: {connection.name}")
+            
+            # Get the database connection
+            conn = connector.connection.conn
+            cursor = conn.cursor()
+            
+            # Execute the query
+            sql = self.sql_statements.get_schemas_statement()
+            cursor.execute(sql)
+            
+            # Process the results
+            result = cursor.fetchall()
             schemas = [row[0] for row in result if row[0] is not None]
-
-        logger.info(f"MySQL: Retrieved {len(schemas)} schemas: {schemas}")
-        return schemas
+            
+            logger.info(f"MySQL: Retrieved {len(schemas)} schemas: {schemas}")
+            
+        except Exception as e:
+            logger.error(f"Error getting schemas: {str(e)}")
+            raise
+        finally:
+            # Ensure the connection is closed
+            if 'connector' in locals():
+                connector.disconnect()
 
     def get_tables(self, connection_id: int, schema: str = None) -> List[str]:
         connection = self.get_connection(connection_id)
@@ -61,47 +90,101 @@ class MySQLDatabaseService(DatabaseServiceBase):
             raise ValueError(f"Connection with ID {connection_id} not found")
 
         logger.info(f"MySQL: Getting tables for connection {connection_id} ({connection.name}), schema: {schema}")
-        engine = self._get_engine(connection)
-        sql = self.sql_statements.get_tables_statement(schema)
-
-        with engine.connect() as conn:
+        connector = DatabaseConnector(
+            db_type=DatabaseType.MYSQL,
+            host=connection.host,
+            port=connection.port,
+            database=connection.database,
+            username=connection.username,
+            password=connection.password
+        )
+        
+        try:
+            # Connect to the database
+            success = connector.connect()
+            if not success:
+                raise RuntimeError(f"Failed to connect to MySQL database: {connection.name}")
+            
+            # Get the database connection
+            conn = connector.connection.conn
+            cursor = conn.cursor()
+            
+            # Execute the query
+            sql = self.sql_statements.get_tables_statement(schema)
             if schema:
-                result = conn.execute(sql, (schema,))
+                cursor.execute(sql, (schema,))
             else:
-                result = conn.execute(sql)
+                cursor.execute(sql)
+            
+            # Process the results
+            result = cursor.fetchall()
             tables = [row[0] for row in result if row[0] is not None]
-
-        logger.info(f"MySQL: Retrieved {len(tables)} tables for schema '{schema}': {tables}")
-        return tables
+            
+            logger.info(f"MySQL: Retrieved {len(tables)} tables for schema '{schema}': {tables}")
+            return tables
+            
+        except Exception as e:
+            logger.error(f"Error getting tables: {str(e)}")
+            raise
+        finally:
+            # Ensure the connection is closed
+            if 'connector' in locals():
+                connector.disconnect()
 
     def get_table_schema(self, connection_id: int, table_name: str, schema_name: str = None) -> TableSchemaResponse:
         connection = self.get_connection(connection_id)
         if not connection:
             raise ValueError(f"Connection with ID {connection_id} not found")
-
+            
         logger.info(f"MySQL: Getting schema for table '{table_name}' in schema '{schema_name}' for connection {connection_id} ({connection.name})")
-        engine = self._get_engine(connection)
-        sql = self.sql_statements.get_columns_statement(schema_name, table_name)
-
-        with engine.connect() as conn:
+        
+        connector = DatabaseConnector(
+            db_type=DatabaseType.MYSQL,
+            host=connection.host,
+            port=connection.port,
+            database=connection.database,
+            username=connection.username,
+            password=connection.password
+        )
+        
+        try:
+            # Connect to the database
+            success = connector.connect()
+            if not success:
+                raise RuntimeError(f"Failed to connect to MySQL database: {connection.name}")
+            
+            # Get the database connection
+            conn = connector.connection.conn
+            cursor = conn.cursor()
+            
+            # Get columns information
+            columns_sql = self.sql_statements.get_columns_statement(schema_name, table_name)
+            
             if schema_name:
-                result = conn.execute(sql, (schema_name, table_name))
+                cursor.execute(columns_sql, (schema_name, table_name))
             else:
-                result = conn.execute(sql, (table_name,))
-
+                cursor.execute(columns_sql, (table_name,))
+            
+            # Process columns
             columns = []
-            for row in result:
+            for row in cursor.fetchall():
                 columns.append({
                     'name': row[0],
                     'type': row[3],
                     'nullable': row[13] == 'YES' if len(row) > 13 else True,
                     'primary_key': row[12] == 1 if len(row) > 12 else False,
                 })
-
+            
+            # Get primary keys
             pk_sql = self.sql_statements.get_primary_keys_statement(schema_name, table_name)
-            pk_result = conn.execute(pk_sql, (schema_name, table_name) if schema_name else (table_name,))
-            primary_keys = [row[0] for row in pk_result]
-
+            if schema_name:
+                cursor.execute(pk_sql, (schema_name, table_name))
+            else:
+                cursor.execute(pk_sql, (table_name,))
+                
+            primary_keys = [row[0] for row in cursor.fetchall()]
+            
+            # Create the response
             schema_response = TableSchemaResponse(
                 table_name=table_name,
                 schema_name=schema_name,
@@ -109,6 +192,15 @@ class MySQLDatabaseService(DatabaseServiceBase):
                 primary_keys=primary_keys,
                 foreign_keys=[]
             )
-
-        logger.info(f"MySQL: Retrieved schema for {schema_name or 'default'}.{table_name}: {len(columns)} columns, {len(primary_keys)} primary keys")
-        return schema_response
+            
+            logger.info(f"MySQL: Retrieved schema for {schema_name or 'default'}.{table_name}: {len(columns)} columns, {len(primary_keys)} primary keys")
+            return schema_response
+            
+        except Exception as e:
+            logger.error(f"Error getting table schema: {str(e)}")
+            raise
+            
+        finally:
+            # Ensure the connection is closed
+            if 'connector' in locals():
+                connector.disconnect()

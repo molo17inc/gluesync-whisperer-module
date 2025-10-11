@@ -266,15 +266,20 @@ class DatabaseServiceBase(ABC):
         connection = self.get_connection(connection_id)
         
         try:
-            # Get the engine
-            engine = self._get_engine(connection)
+            # Get the connector
+            connector = self._get_engine(connection)
             
-            # Try to connect
-            if hasattr(engine, 'connect'):
-                conn = engine.connect()
-                if hasattr(conn, 'close'):
-                    conn.close()
-                return True
+            # Try to connect using the DatabaseConnector
+            if hasattr(connector, 'connect'):
+                success = connector.connect()
+                if success:
+                    # Test that we can create a cursor
+                    if hasattr(connector, 'connection') and connector.connection:
+                        cursor = connector.connection.cursor()
+                        cursor.execute("SELECT 1")
+                        cursor.close()
+                        return True
+                return False
             return False
         except Exception as e:
             logger.error(f"Error testing connection: {str(e)}")
