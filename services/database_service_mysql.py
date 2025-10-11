@@ -63,7 +63,7 @@ class MySQLDatabaseService(DatabaseServiceBase):
                 raise RuntimeError(f"Failed to connect to MySQL database: {connection.name}")
             
             # Get the database connection
-            conn = connector.connection.conn
+            conn = connector.connection
             cursor = conn.cursor()
             
             # Execute the query
@@ -72,9 +72,12 @@ class MySQLDatabaseService(DatabaseServiceBase):
             
             # Process the results
             result = cursor.fetchall()
-            schemas = [row[0] for row in result if row[0] is not None]
+            schemas = [str(row[0]) for row in result if row[0] is not None]
             
             logger.info(f"MySQL: Retrieved {len(schemas)} schemas: {schemas}")
+            
+            # Ensure we return a proper list of strings
+            return list(map(str, schemas))
             
         except Exception as e:
             logger.error(f"Error getting schemas: {str(e)}")
@@ -82,6 +85,10 @@ class MySQLDatabaseService(DatabaseServiceBase):
         finally:
             # Ensure the connection is closed
             if 'connector' in locals():
+                try:
+                    cursor.close()
+                except:
+                    pass
                 connector.disconnect()
 
     def get_tables(self, connection_id: int, schema: str = None) -> List[str]:
@@ -106,7 +113,7 @@ class MySQLDatabaseService(DatabaseServiceBase):
                 raise RuntimeError(f"Failed to connect to MySQL database: {connection.name}")
             
             # Get the database connection
-            conn = connector.connection.conn
+            conn = connector.connection
             cursor = conn.cursor()
             
             # Execute the query

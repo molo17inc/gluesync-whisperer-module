@@ -75,6 +75,7 @@ class PostgreSQLDatabaseService(DatabaseServiceBase):
             schemas = [row[0] for row in result if row[0] is not None]
             
             logger.info(f"PostgreSQL: Retrieved {len(schemas)} schemas: {schemas}")
+            return schemas
             
         except Exception as e:
             logger.error(f"Error getting schemas: {str(e)}")
@@ -121,7 +122,9 @@ class PostgreSQLDatabaseService(DatabaseServiceBase):
             tables = [row[0] for row in result if row[0] is not None]
             
             logger.info(f"PostgreSQL: Retrieved {len(tables)} tables for schema '{schema}': {tables}")
-            return tables
+            
+            # Ensure we return a proper list of strings
+            return list(map(str, tables))
             
         except Exception as e:
             logger.error(f"Error getting tables: {str(e)}")
