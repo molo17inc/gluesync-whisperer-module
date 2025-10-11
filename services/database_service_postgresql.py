@@ -70,9 +70,9 @@ class PostgreSQLDatabaseService(DatabaseServiceBase):
             sql = self.sql_statements.get_schemas_statement()
             cursor.execute(sql)
             
-            # Process the results
+            # Process the results - return a list of schema names as strings
             result = cursor.fetchall()
-            schemas = [row[0] for row in result if row[0] is not None]
+            schemas = [str(row[0]) for row in result if row[0] is not None and str(row[0]) not in ['pg_toast', 'pg_catalog', 'information_schema']]
             
             logger.info(f"PostgreSQL: Retrieved {len(schemas)} schemas: {schemas}")
             return schemas
@@ -110,24 +110,24 @@ class PostgreSQLDatabaseService(DatabaseServiceBase):
             conn = connector.connection
             cursor = conn.cursor()
             
-            # Execute the query
+            # Execute the query - SQL is already formatted with the schema
             sql = self.sql_statements.get_tables_statement(schema)
-            if schema:
-                cursor.execute(sql, (schema,))
-            else:
-                cursor.execute(sql)
+            cursor.execute(sql)
             
             # Process the results
             result = cursor.fetchall()
-            tables = [row[0] for row in result if row[0] is not None]
+            tables = [{"name": str(row[0]), "schema_name": schema or ""} for row in result if row[0] is not None]
             
             logger.info(f"PostgreSQL: Retrieved {len(tables)} tables for schema '{schema}': {tables}")
-            
-            # Ensure we return a proper list of strings
-            return list(map(str, tables))
+            return tables
             
         except Exception as e:
-            logger.error(f"Error getting tables: {str(e)}")
+            import traceback
+            error_details = traceback.format_exc()
+            logger.error(f"Error getting tables: {str(e)}\nFull traceback:\n{error_details}")
+            # Log the SQL query that caused the error
+            logger.error(f"SQL query that caused the error: {sql}")
+            logger.error(f"Parameters used: { {'schema': schema} if schema else 'No parameters' }")
             raise
         finally:
             # Ensure the connection is closed

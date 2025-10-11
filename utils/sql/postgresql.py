@@ -36,13 +36,22 @@ class PostgreSqlSqlStatements(BaseSqlStatements):
         """
     
     def get_tables_statement(self, schema=None):
-        return """
-        SELECT table_name
-        FROM information_schema.tables
-        WHERE table_schema = :schema
-        AND table_type = 'BASE TABLE'
-        ORDER BY table_name
-        """
+        if schema:
+            return f"""
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = '{schema}'
+            AND table_type = 'BASE TABLE'
+            ORDER BY table_name
+            """
+        else:
+            return """
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = current_schema()
+            AND table_type = 'BASE TABLE'
+            ORDER BY table_name
+            """
     
     def get_columns_statement(self, schema=None, table=None):
         return """
