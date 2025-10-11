@@ -116,16 +116,13 @@ class MySQLDatabaseService(DatabaseServiceBase):
             conn = connector.connection
             cursor = conn.cursor()
             
-            # Execute the query
+            # Execute the query with schema already included in the SQL string
             sql = self.sql_statements.get_tables_statement(schema)
-            if schema:
-                cursor.execute(sql, (schema,))
-            else:
-                cursor.execute(sql)
+            cursor.execute(sql)
             
             # Process the results
             result = cursor.fetchall()
-            tables = [row[0] for row in result if row[0] is not None]
+            tables = [{"name": str(row[0]), "schema_name": schema or ""} for row in result if row[0] is not None]
             
             logger.info(f"MySQL: Retrieved {len(tables)} tables for schema '{schema}': {tables}")
             return tables

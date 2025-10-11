@@ -34,11 +34,18 @@ class MySqlSqlStatements(BaseSqlStatements):
         """
     
     def get_tables_statement(self, schema=None):
-        return """
-        SELECT TABLE_NAME
-        FROM INFORMATION_SCHEMA.TABLES
-        WHERE TABLE_SCHEMA = %s
-        """
+        if schema:
+            return f"""
+            SELECT TABLE_NAME
+            FROM INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_SCHEMA = '{schema}'
+            """
+        else:
+            return """
+            SELECT TABLE_NAME
+            FROM INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_SCHEMA = DATABASE()
+            """
     
     def get_columns_statement(self, schema=None, table=None):
         return """

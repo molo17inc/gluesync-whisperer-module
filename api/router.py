@@ -209,36 +209,11 @@ def get_schemas(connection_id: int, db = Depends(get_db)):
             detail=f"Error getting schemas: {str(e)}"
         )
 
-@router.get("/connections/{connection_id}/tables", response_model=List[TableResponse])
-def get_tables(connection_id: int, schema: Optional[str] = None, db = Depends(get_db)):
-    """Get all tables for a database connection. Optionally specify a schema."""
-    db_service = DatabaseService(db)
-    
-    # Check if connection exists
-    existing_connection = db_service.get_connection(connection_id)
-    if not existing_connection:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Connection with ID {connection_id} not found"
-        )
-    
-    # Get tables
-    try:
-        tables = db_service.get_tables(connection_id, schema=schema)
-        return tables
-    except Exception as e:
-        logger.error(f"Error getting tables: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error getting tables: {str(e)}"
-        )
-
 
 @router.put("/connections/{connection_id}/status", response_model=DatabaseConnectionResponse)
 def update_connection_status(
     connection_id: int, 
     status_update: ConnectionStatusUpdate, 
-    db = Depends(get_db)
 ):
     """Update a database connection status (start/stop/pause)."""
     db_service = DatabaseService(db)

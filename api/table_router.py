@@ -282,15 +282,8 @@ def get_database_tables(connection_id: int, schema: str = None, db = Depends(get
         tables = db_service.get_tables(connection_id, schema=schema)
         logger.info(f"Retrieved {len(tables)} tables for connection {connection_id}")
         
-        # Convert string list to TableResponse objects
-        table_responses = []
-        for table_name in tables:
-            table_responses.append({
-                "name": table_name,
-                "schema_name": schema
-            })
-        
-        return table_responses
+        # The database service already returns the correct format
+        return tables
     except Exception as e:
         logger.error(f"Error getting database tables: {str(e)}")
         raise HTTPException(
