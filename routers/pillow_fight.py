@@ -28,7 +28,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from database import get_db
-from models import DatabaseType, OperationType, ConnectionStatus
+from models import PillowFightSession
 from schemas import TableOperationRequest
 from services.pillow_fight_service import PillowFightService
 from services.connection_service import ConnectionService
@@ -68,8 +68,8 @@ class PillowFightStatusItem(BaseModel):
     operations: Dict[str, int]
     duration: Optional[float] = None
 
-class PillowFightStatusResponse(BaseModel):
-    pillow_fights: List[PillowFightStatusItem]
+class PillowFightSessionHistoryResponse(BaseModel):
+    sessions: List[PillowFightStatusItem]
 
 @router.post("/start", response_model=PillowFightResponse)
 def start_pillow_fight(
@@ -367,6 +367,46 @@ def get_pillow_fight_status(db = Depends(get_db)):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error getting pillow fight status: {str(e)}"
+        )
+
+@router.get("/history", response_model=PillowFightSessionHistoryResponse)
+def get_pillow_fight_history(db = Depends(get_db)):
+    """Get pillow fight session history."""
+    try:
+        # Get pillow fight sessions from database
+        sessions = db.get_pillow_fight_sessions(limit=100)
+
+        # Convert to response format
+        session_items = []
+        for session_row in sessions:
+            session = PillowFightSession.from_row(session_row)
+            session_item = PillowFightStatusItem(
+                fight_id=session.fight_id,
+                connection_id=session.connection_id,
+                table_id=0,  # We don't have individual table IDs in session history
+                table_name=f"{len(session.table_ids)} tables",
+                operation_types=session.operation_types,
+                operation_delay=session.operation_delay,
+                batch_size=session.batch_size,
+                start_time=session.start_time,
+                last_operation_time=session.end_time,
+                status=session.status,
+                operations={
+                    "insert": session.total_inserts,
+                    "update": session.total_updates,
+                    "delete": session.total_deletes,
+                    "errors": session.total_errors
+                },
+                duration=None  # Could calculate from start/end times if needed
+            )
+            session_items.append(session_item)
+
+        return PillowFightSessionHistoryResponse(sessions=session_items)
+    except Exception as e:
+        logger.error(f"Error getting pillow fight history: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting pillow fight history: {str(e)}"
         )
 
 def pillow_fight_complete(fight_id: str, connection_id: int):

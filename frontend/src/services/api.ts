@@ -63,8 +63,8 @@ export interface PillowFightStatus {
   table_id?: number;
 }
 
-export interface PillowFightStatusResponse {
-  pillow_fights: Array<{
+export interface PillowFightSessionHistoryResponse {
+  sessions: Array<{
     fight_id: string;
     connection_id: number;
     table_id: number;
@@ -168,6 +168,12 @@ export const pillowFightApi = {
   // Start pillow fight
   start: async (request: PillowFightRequest): Promise<PillowFightStartResponse> => {
     const response = await api.post('/v1/pillow-fight/start', request);
+    return response.data;
+  },
+
+  // Get history
+  getHistory: async (): Promise<PillowFightSessionHistoryResponse> => {
+    const response = await api.get('/v1/pillow-fight/history');
     return response.data;
   },
 

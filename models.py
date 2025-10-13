@@ -236,3 +236,78 @@ class OperationLog:
             'status': self.status,
             'error_message': self.error_message
         }
+
+
+class PillowFightSession:
+    """Pillow fight session tracking."""
+
+    def __init__(self, id=None, fight_id=None, connection_id=None, table_ids=None,
+                 operation_types=None, operation_delay=None, batch_size=None,
+                 start_time=None, end_time=None, status=None, operations_count=None,
+                 total_inserts=0, total_updates=0, total_deletes=0, total_errors=0,
+                 created_at=None, updated_at=None):
+        self.id = id
+        self.fight_id = fight_id
+        self.connection_id = connection_id
+        self.table_ids = table_ids or []
+        self.operation_types = operation_types or []
+        self.operation_delay = operation_delay
+        self.batch_size = batch_size
+        self.start_time = start_time
+        self.end_time = end_time
+        self.status = status  # running, completed, stopped, error
+        self.operations_count = operations_count or 0
+        self.total_inserts = total_inserts
+        self.total_updates = total_updates
+        self.total_deletes = total_deletes
+        self.total_errors = total_errors
+        self.created_at = created_at or datetime.now()
+        self.updated_at = updated_at or datetime.now()
+
+    @classmethod
+    def from_row(cls, row):
+        """Create a PillowFightSession instance from a database row."""
+        # Parse JSON strings from SQLite
+        table_ids = json.loads(row['table_ids']) if row['table_ids'] else []
+        operation_types = json.loads(row['operation_types']) if row['operation_types'] else []
+
+        session = cls(
+            id=row['id'],
+            fight_id=row['fight_id'],
+            connection_id=row['connection_id'],
+            table_ids=table_ids,
+            operation_types=operation_types,
+            operation_delay=row['operation_delay'],
+            batch_size=row['batch_size'],
+            start_time=row['start_time'],
+            end_time=row['end_time'],
+            status=row['status'],
+            operations_count=row['operations_count'],
+            total_inserts=row['total_inserts'],
+            total_updates=row['total_updates'],
+            total_deletes=row['total_deletes'],
+            total_errors=row['total_errors'],
+            created_at=row['created_at'],
+            updated_at=row['updated_at']
+        )
+        return session
+
+    def to_dict(self):
+        """Convert to dictionary for database storage."""
+        return {
+            'id': self.id,
+            'fight_id': self.fight_id,
+            'connection_id': self.connection_id,
+            'table_ids': json.dumps(self.table_ids) if self.table_ids else None,
+            'operation_types': json.dumps(self.operation_types) if self.operation_types else None,
+            'operation_delay': self.operation_delay,
+            'batch_size': self.batch_size,
+            'start_time': self.start_time,
+            'end_time': self.end_time,
+            'status': self.status,
+            'operations_count': self.operations_count,
+            'total_inserts': self.total_inserts,
+            'total_updates': self.total_updates,
+            'total_deletes': self.total_deletes,
+            'total_errors': self.total_errors
+        }

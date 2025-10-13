@@ -23,7 +23,7 @@
 
 import logging
 from database import engine, Base
-from models import DatabaseConnection, TableConfig, OperationLog
+from models import DatabaseConnection, TableConfig, OperationLog, PillowFightSession
 
 # Configure logging
 logging.basicConfig(

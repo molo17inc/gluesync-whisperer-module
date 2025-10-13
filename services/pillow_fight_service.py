@@ -30,7 +30,7 @@ import json
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
-from models import DatabaseConnection, TableConfig, OperationType, ConnectionStatus, DatabaseType
+from models import DatabaseConnection, TableConfig, OperationType, ConnectionStatus, DatabaseType, PillowFightSession
 from services.database_service import DatabaseService
 
 # Configure logging
@@ -184,7 +184,7 @@ class PillowFightService:
             # Store the thread
             self.threads[key] = thread
             
-            logger.info(f"Started pillow fight for connection {connection_id} and table {table_id}")
+            logger.info(f"Started pillow fight for connection {connection_id} with tables {table_ids}")
     
     def stop_pillow_fight(self, connection_id: int, table_id: int) -> None:
         """Stop a pillow fight for a connection and table."""
@@ -210,6 +210,21 @@ class PillowFightService:
                 datetime.now() - datetime.fromisoformat(self.status[key]["start_time"])
             ).total_seconds()
         
+        # Update session record in database
+        fight_id = f"{connection_id}_{table_id}"
+        session_data = {
+            'end_time': datetime.now().isoformat(),
+            'status': 'stopped',
+            'operations_count': self.status[key]["operations"]["insert"] + self.status[key]["operations"]["update"] + self.status[key]["operations"]["delete"],
+            'total_inserts': self.status[key]["operations"]["insert"],
+            'total_updates': self.status[key]["operations"]["update"],
+            'total_deletes': self.status[key]["operations"]["delete"],
+            'total_errors': self.status[key]["operations"]["errors"]
+        }
+        self.db.execute("UPDATE pillow_fight_sessions SET end_time=?, status=?, operations_count=?, total_inserts=?, total_updates=?, total_deletes=?, total_errors=? WHERE fight_id=?",
+                       (session_data['end_time'], session_data['status'], session_data['operations_count'], session_data['total_inserts'], session_data['total_updates'], session_data['total_deletes'], session_data['total_errors'], fight_id))
+        self.db.commit()
+        
         # Remove from tracking
         if key in self.stop_events:
             del self.stop_events[key]
@@ -217,6 +232,7 @@ class PillowFightService:
             del self.threads[key]
         
         logger.info(f"Stopped pillow fight for connection {connection_id} and table {table_id}")
+        logger.info(f"Pillow fight completed {session_data['operations_count']} total operations")
     
     def get_status(self, connection_id: int, table_id: int) -> Optional[Dict[str, Any]]:
         """Get the status of a pillow fight."""

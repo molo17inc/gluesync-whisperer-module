@@ -105,19 +105,28 @@ class Database:
                 )
                 ''')
                 
-                # Create operation_logs table
-                logger.info("Creating operation_logs table if it doesn't exist")
+                # Create pillow_fight_sessions table
+                logger.info("Creating pillow_fight_sessions table if it doesn't exist")
                 cursor.execute('''
-                CREATE TABLE IF NOT EXISTS operation_logs (
+                CREATE TABLE IF NOT EXISTS pillow_fight_sessions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    table_config_id INTEGER NOT NULL,
-                    operation_type TEXT NOT NULL,
-                    record_id TEXT,
-                    operation_data TEXT,
-                    status TEXT NOT NULL,
-                    error_message TEXT,
+                    fight_id TEXT NOT NULL UNIQUE,
+                    connection_id INTEGER NOT NULL,
+                    table_ids TEXT NOT NULL,  -- JSON array of table IDs
+                    operation_types TEXT NOT NULL,  -- JSON array of operation types
+                    operation_delay REAL NOT NULL DEFAULT 1.0,
+                    batch_size INTEGER NOT NULL DEFAULT 1,
+                    start_time TEXT,
+                    end_time TEXT,
+                    status TEXT NOT NULL DEFAULT 'running',
+                    operations_count INTEGER NOT NULL DEFAULT 0,
+                    total_inserts INTEGER NOT NULL DEFAULT 0,
+                    total_updates INTEGER NOT NULL DEFAULT 0,
+                    total_deletes INTEGER NOT NULL DEFAULT 0,
+                    total_errors INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT,
-                    FOREIGN KEY (table_config_id) REFERENCES table_configs (id) ON DELETE CASCADE
+                    updated_at TEXT,
+                    FOREIGN KEY (connection_id) REFERENCES database_connections (id) ON DELETE CASCADE
                 )
                 ''')
                 
@@ -243,6 +252,58 @@ class Database:
             cursor.execute(query, params or ())
             row = cursor.fetchone()
             return row[0] if row else None
+
+    def insert_pillow_fight_session(self, session_data):
+        """Insert a new pillow fight session."""
+        query = '''
+        INSERT INTO pillow_fight_sessions
+        (fight_id, connection_id, table_ids, operation_types, operation_delay, batch_size,
+         start_time, status, operations_count, total_inserts, total_updates, total_deletes, total_errors)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        '''
+        return self.execute(query, (
+            session_data['fight_id'],
+            session_data['connection_id'],
+            session_data['table_ids'],
+            session_data['operation_types'],
+            session_data['operation_delay'],
+            session_data['batch_size'],
+            session_data['start_time'],
+            session_data['status'],
+            session_data['operations_count'],
+            session_data['total_inserts'],
+            session_data['total_updates'],
+            session_data['total_deletes'],
+            session_data['total_errors']
+        ))
+
+    def update_pillow_fight_session(self, fight_id, session_data):
+        """Update an existing pillow fight session."""
+        query = '''
+        UPDATE pillow_fight_sessions SET
+        end_time = ?, status = ?, operations_count = ?, total_inserts = ?, total_updates = ?,
+        total_deletes = ?, total_errors = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE fight_id = ?
+        '''
+        return self.execute(query, (
+            session_data['end_time'],
+            session_data['status'],
+            session_data['operations_count'],
+            session_data['total_inserts'],
+            session_data['total_updates'],
+            session_data['total_deletes'],
+            session_data['total_errors'],
+            fight_id
+        ))
+
+    def get_pillow_fight_sessions(self, limit=50):
+        """Get pillow fight sessions, ordered by creation time (newest first)."""
+        query = '''
+        SELECT * FROM pillow_fight_sessions
+        ORDER BY created_at DESC
+        LIMIT ?
+        '''
+        return self.query(query, (limit,))
 
 # Singleton database instance
 _db = Database(settings.DB_URL)
