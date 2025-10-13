@@ -149,6 +149,7 @@ def start_pillow_fight(
         pillow_fight_service = PillowFightService(db)
         
         # Start the pillow fight
+        logger.info(f"Starting pillow fight for connection {request.connection_id} with tables {table_ids}")
         pillow_fight_service.start_pillow_fight(
             connection_id=request.connection_id,
             table_ids=table_ids,
@@ -159,6 +160,7 @@ def start_pillow_fight(
         
         # Store the pillow fight
         active_pillow_fights[fight_id] = pillow_fight_service
+        logger.info(f"Pillow fight {fight_id} stored in active pillow fights")
         
         # Add a background task to check when pillow fight is complete
         background_tasks.add_task(
@@ -166,6 +168,7 @@ def start_pillow_fight(
             fight_id,
             request.connection_id
         )
+        logger.info(f"Scheduled background task to monitor pillow fight {fight_id} completion")
         
         return PillowFightResponse(
             connection_id=request.connection_id,

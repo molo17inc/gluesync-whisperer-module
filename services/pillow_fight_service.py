@@ -254,6 +254,9 @@ class PillowFightService:
         # Create database engine outside the loop to avoid recreating it for each operation
         engine = None
         
+        # Initialize operation counters
+        operations_performed = 0
+        
         while not stop_event.is_set():
             try:
                 # Only create the engine if it doesn't exist or if there was an error
@@ -314,6 +317,7 @@ class PillowFightService:
                     logger.info(f"Updated status to running for pillow fight {key}")
                 
                 # Perform a batch of operations
+                batch_operations = 0
                 for _ in range(batch_size):
                     if stop_event.is_set():
                         logger.info(f"Stop event set, breaking out of batch loop")
@@ -347,6 +351,8 @@ class PillowFightService:
                         # Update the last operation time
                         self.status[key]["last_operation_time"] = datetime.now().isoformat()
                         logger.info(f"Updated last_operation_time for pillow fight {key}")
+                        operations_performed += 1
+                        batch_operations += 1
                         
                     except Exception as e:
                         logger.error(f"Error performing {op_type} on {table.table_name}: {str(e)}")
@@ -357,6 +363,7 @@ class PillowFightService:
                 
                 # Sleep for the specified delay
                 logger.info(f"Sleeping for {operation_delay} seconds before next batch")
+                logger.info(f"Completed batch of {batch_operations} operations for pillow fight {key}")
                 time.sleep(operation_delay)
                 
             except Exception as e:
@@ -381,6 +388,7 @@ class PillowFightService:
             datetime.now() - datetime.fromisoformat(self.status[key]["start_time"])
         ).total_seconds()
         logger.info(f"Stopped pillow fight for connection {connection.id} and table {table.id}")
+        logger.info(f"Pillow fight completed {operations_performed} total operations with status: {self.status[key]['operations']}")
     
     def _perform_insert(self, engine, connection: DatabaseConnection, table: TableConfig) -> None:
         """Perform an insert operation on a table."""
@@ -839,12 +847,17 @@ class PillowFightService:
                             logger.info(f"No records found in {table_name}")
                             return None
                         
-                        # Get a random record - MS SQL Server uses TOP instead of LIMIT
-                        if hasattr(engine, 'db_type') and engine.db_type == DatabaseType.MSSQL:
+                        # Generate a random offset for LIMIT/OFFSET queries
+                        offset = random.randint(0, count_value - 1)
+                        logger.debug(f"Generated random offset: {offset} for table {table_name} with {count_value} records")
+                        
+                        # Get a random record - PostgreSQL and other databases use LIMIT/OFFSET
+                        if hasattr(engine, 'db_type') and engine.db_type == DatabaseType.POSTGRESQL:
+                            select_stmt = f"SELECT * FROM {table_name} LIMIT 1 OFFSET {offset}"
+                        elif hasattr(engine, 'db_type') and engine.db_type == DatabaseType.MSSQL:
                             select_stmt = f"SELECT TOP 1 * FROM {table_name} ORDER BY NEWID()"
                         else:
-                            # For other databases
-                            offset = random.randint(0, count_value - 1)
+                            # For other databases, try LIMIT/OFFSET first, fallback to TOP if needed
                             select_stmt = f"SELECT * FROM {table_name} LIMIT 1 OFFSET {offset}"
                         
                         logger.debug(f"Executing select query: {select_stmt}")
@@ -894,13 +907,17 @@ class PillowFightService:
                             logger.info(f"No records found in {table_name}")
                             return None
                         
-                        # Get a random record - MS SQL Server uses TOP instead of LIMIT
-                        if db_connector.db_type == DatabaseType.MSSQL:
+                        # Generate a random offset for LIMIT/OFFSET queries
+                        offset = random.randint(0, count_value - 1)
+                        
+                        # Get a random record - PostgreSQL and other databases use LIMIT/OFFSET
+                        if db_connector.db_type == DatabaseType.POSTGRESQL:
+                            select_stmt = f"SELECT * FROM {table_name} LIMIT 1 OFFSET {offset}"
+                        elif db_connector.db_type == DatabaseType.MSSQL:
                             # For MS SQL Server
                             select_stmt = f"SELECT TOP 1 * FROM {table_name} ORDER BY NEWID()"
                         else:
                             # For other databases
-                            offset = random.randint(0, count_value - 1)
                             select_stmt = f"SELECT * FROM {table_name} LIMIT 1 OFFSET {offset}"
                         
                         try:
@@ -944,11 +961,14 @@ class PillowFightService:
                                     logger.info(f"No records found in {table_name}")
                                     return None
                                 
-                                # Get a random offset - MS SQL Server uses TOP instead of LIMIT
+                                # Generate a random offset for LIMIT/OFFSET queries
                                 offset = random.randint(0, count_value - 1)
                                 
                                 # Query a random record based on database type
-                                if hasattr(engine, 'db_connector') and engine.db_connector.db_type == DatabaseType.MSSQL:
+                                if hasattr(engine, 'db_connector') and engine.db_connector.db_type == DatabaseType.POSTGRESQL:
+                                    # For PostgreSQL
+                                    select_stmt = f"SELECT * FROM {table_name} LIMIT 1 OFFSET {offset}"
+                                elif hasattr(engine, 'db_connector') and engine.db_connector.db_type == DatabaseType.MSSQL:
                                     # For MS SQL Server
                                     select_stmt = f"SELECT TOP 1 * FROM {table_name} ORDER BY NEWID()"
                                 else:
