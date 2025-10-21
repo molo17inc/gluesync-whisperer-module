@@ -47,11 +47,20 @@ from database import init_db
 # Initialize settings to ensure data directory exists
 settings = Settings()
 
-# Configure logging
+# Configure logging to output to stdout/stderr for Docker compatibility
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.StreamHandler()  # This ensures logs go to stdout/stderr
+    ]
 )
+
+# Also add a specific handler for uvicorn access logs
+uvicorn_logger = logging.getLogger("uvicorn")
+uvicorn_logger.handlers.clear()
+uvicorn_logger.addHandler(logging.StreamHandler())
+uvicorn_logger.setLevel(logging.INFO if not settings.DEBUG else logging.DEBUG)
 
 logger = logging.getLogger(__name__)
 
