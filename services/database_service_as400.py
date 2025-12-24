@@ -80,7 +80,7 @@ class AS400DatabaseService(DatabaseServiceBase):
             if hasattr(engine, 'get_tables'):
                 tables_result = engine.get_tables(schema)
                 # Convert string list to object format for consistency
-                return [{"name": table, "schema": schema} for table in tables_result]
+                return [{"name": table, "schema_name": schema} for table in tables_result]
             
             # Fallback for direct SQL query
             cursor = engine.execute(
@@ -88,7 +88,7 @@ class AS400DatabaseService(DatabaseServiceBase):
                 (schema,)
             )
             table_names = [row[0] for row in cursor.fetchall()]
-            return [{"name": table, "schema": schema} for table in table_names]
+            return [{"name": table, "schema_name": schema} for table in table_names]
         except Exception as e:
             logger.error(f"Error getting tables: {str(e)}")
             raise
