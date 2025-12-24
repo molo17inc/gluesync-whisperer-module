@@ -158,7 +158,7 @@ class MySQLDatabaseService(DatabaseServiceBase):
                 raise RuntimeError(f"Failed to connect to MySQL database: {connection.name}")
             
             # Get the database connection
-            conn = connector.connection.conn
+            conn = connector.connection
             cursor = conn.cursor()
             
             # Get columns information
