@@ -175,7 +175,9 @@ class MySQLDatabaseService(DatabaseServiceBase):
             
             # Process columns
             columns_dict = {}
-            for row in cursor.fetchall():
+            column_rows = cursor.fetchall()
+            logger.debug(f"MySQL schema raw column rows count: {len(column_rows)}")
+            for row in column_rows:
                 column_name = str(row[0])
                 columns_dict[column_name] = {
                     'name': column_name,
@@ -188,7 +190,9 @@ class MySQLDatabaseService(DatabaseServiceBase):
             pk_sql = self.sql_statements.get_primary_keys_statement(target_schema, table_name)
             cursor.execute(pk_sql, (target_schema, table_name))
                 
-            primary_keys = [str(row[0]) for row in cursor.fetchall()]
+            primary_key_rows = cursor.fetchall()
+            logger.debug(f"MySQL schema raw PK rows: {primary_key_rows}")
+            primary_keys = [str(row[0]) for row in primary_key_rows if row and row[0] is not None]
             
             # Create the response
             schema_response = TableSchemaResponse(
@@ -199,7 +203,7 @@ class MySQLDatabaseService(DatabaseServiceBase):
                 foreign_keys=[]
             )
             
-            logger.info(f"MySQL: Retrieved schema for {schema_name or 'default'}.{table_name}: {len(columns)} columns, {len(primary_keys)} primary keys")
+            logger.info(f"MySQL: Retrieved schema for {schema_name or 'default'}.{table_name}: {len(columns_dict)} columns, {len(primary_keys)} primary keys")
             return schema_response
             
         except Exception as e:
