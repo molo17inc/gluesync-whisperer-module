@@ -28,6 +28,7 @@ import string
 import threading
 import time
 import uuid
+import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -72,6 +73,7 @@ class PillowFightService:
         self._resume_lock = threading.Lock()
         self._job_lock = threading.Lock()
         self._resumed = False
+        self.error_threshold = int(os.getenv("PILLOW_FIGHT_TABLE_ERROR_THRESHOLD", "5"))
     
     def _ensure_resumed(self):
         """Resume any pending/running jobs after a restart."""
@@ -569,6 +571,29 @@ class PillowFightService:
                             last_operation_at=datetime.utcnow().isoformat(),
                             error_message=str(op_exc),
                         )
+                        error_count = self.status[key]["operations"]["errors"]
+                        if error_count >= self.error_threshold:
+                            threshold_message = (
+                                f"Reached error threshold ({self.error_threshold}) for "
+                                f"{table.schema_name}.{table.table_name}. Last error: {op_exc}"
+                            )
+                            logger.error(threshold_message)
+                            self.status[key]["status"] = PillowFightTableStatus.ERROR.value
+                            self.status[key]["error"] = threshold_message
+                            self.job_store.update_table_status(
+                                job_id,
+                                table.id,
+                                PillowFightTableStatus.ERROR,
+                                last_operation_at=datetime.utcnow().isoformat(),
+                                error_message=threshold_message,
+                            )
+                            self.job_store.update_job_status(
+                                job_id,
+                                JobStatus.ERROR,
+                                error_message=threshold_message,
+                            )
+                            stop_event.set()
+                            break
                 
                 self.job_store.heartbeat(job_id)
                 if stop_event.is_set():

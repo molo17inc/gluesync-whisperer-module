@@ -169,7 +169,7 @@ class MySQLDatabaseService(DatabaseServiceBase):
             cursor = conn.cursor()
             
             # Get columns information
-            columns_sql = self.sql_statements.get_columns_statement(schema_name, table_name)
+            columns_sql = self.sql_statements.get_columns_statement(target_schema, table_name)
             
             cursor.execute(columns_sql, (target_schema, table_name))
             
@@ -184,7 +184,7 @@ class MySQLDatabaseService(DatabaseServiceBase):
                 })
             
             # Get primary keys
-            pk_sql = self.sql_statements.get_primary_keys_statement(schema_name, table_name)
+            pk_sql = self.sql_statements.get_primary_keys_statement(target_schema, table_name)
             cursor.execute(pk_sql, (target_schema, table_name))
                 
             primary_keys = [row[0] for row in cursor.fetchall()]

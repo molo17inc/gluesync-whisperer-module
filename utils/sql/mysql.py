@@ -77,8 +77,8 @@ class MySqlSqlStatements(BaseSqlStatements):
                 ON TC.TABLE_SCHEMA = KCU.TABLE_SCHEMA
                    AND TC.TABLE_NAME = KCU.TABLE_NAME
                    AND TC.CONSTRAINT_NAME = KCU.CONSTRAINT_NAME
-        WHERE C.TABLE_SCHEMA = %s
-           AND C.TABLE_NAME = %s
+        WHERE C.TABLE_SCHEMA = ?
+           AND C.TABLE_NAME = ?
         ORDER BY C.ORDINAL_POSITION
         """
     
@@ -92,8 +92,8 @@ class MySqlSqlStatements(BaseSqlStatements):
             AND TC.TABLE_SCHEMA = KCU.TABLE_SCHEMA
             AND TC.TABLE_NAME = KCU.TABLE_NAME
         WHERE TC.CONSTRAINT_TYPE = 'PRIMARY KEY'
-            AND TC.TABLE_SCHEMA = %s
-            AND TC.TABLE_NAME = %s
+            AND TC.TABLE_SCHEMA = ?
+            AND TC.TABLE_NAME = ?
         ORDER BY KCU.ORDINAL_POSITION
         """
     
@@ -111,8 +111,8 @@ class MySqlSqlStatements(BaseSqlStatements):
             AND TC.TABLE_NAME = KCU.TABLE_NAME
         WHERE KCU.REFERENCED_TABLE_NAME IS NOT NULL
             AND TC.CONSTRAINT_TYPE = 'FOREIGN KEY'
-            AND KCU.TABLE_SCHEMA = %s
-            AND KCU.TABLE_NAME = %s
+            AND KCU.TABLE_SCHEMA = ?
+            AND KCU.TABLE_NAME = ?
         """
     
     def count_rows_statement(self, table):
