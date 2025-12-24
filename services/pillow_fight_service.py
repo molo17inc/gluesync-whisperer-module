@@ -21,17 +21,28 @@
  * Copyright (C) 2025 MOLO17. All rights reserved.
 """
 
+import json
 import logging
 import random
 import string
-import time
 import threading
-import json
-from typing import Dict, List, Optional, Any
+import time
+import uuid
 from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
 
-from models import DatabaseConnection, TableConfig, OperationType, ConnectionStatus, DatabaseType
+from models import (
+    ConnectionStatus,
+    DatabaseConnection,
+    DatabaseType,
+    OperationType,
+    PillowFightJobStatus as JobStatus,
+    PillowFightTableStatus,
+    TableConfig,
+)
 from services.database_service import DatabaseService
+from services.pillow_fight_job_store import PillowFightJobStore
+from services.table_service import TableService
 
 # Configure logging
 logging.basicConfig(
@@ -50,10 +61,79 @@ class PillowFightService:
         """Initialize the pillow fight service."""
         self.db = db
         self.db_service = DatabaseService(db)
-        self.stop_events = {}  # {(connection_id, table_id): threading.Event}
-        self.threads = {}  # {(connection_id, table_id): threading.Thread}
-        self.status = {}  # {(connection_id, table_id): status_dict}
+        self.table_service = TableService(db)
+        self.job_store = PillowFightJobStore(db)
+        self.stop_events = {}  # {(job_id, table_id): threading.Event}
+        self.threads = {}  # {(job_id, table_id): threading.Thread}
+        self.status = {}  # {(job_id, table_id): status_dict}
+        self._job_threads: Dict[str, Dict[int, threading.Thread]] = {}
+        self._active_jobs: Dict[str, Dict[str, Any]] = {}
         self._schema_cache = {}  # {(connection_id, table_name, schema_name): TableSchemaResponse}
+        self._resume_lock = threading.Lock()
+        self._job_lock = threading.Lock()
+        self._resumed = False
+    
+    def _ensure_resumed(self):
+        """Resume any pending/running jobs after a restart."""
+        with self._resume_lock:
+            if self._resumed:
+                return
+            try:
+                self._resume_active_jobs()
+            finally:
+                self._resumed = True
+    
+    def _resume_active_jobs(self):
+        """Reload jobs from persistence and restart table threads."""
+        active_jobs = self.job_store.get_jobs_with_tables_by_status(
+            [JobStatus.PENDING.value, JobStatus.RUNNING.value],
+            table_statuses=[
+                PillowFightTableStatus.PENDING.value,
+                PillowFightTableStatus.RUNNING.value,
+            ],
+        )
+        if not active_jobs:
+            return
+        
+        logger.info(f"Resuming {len(active_jobs)} pillow fight jobs from persistent store")
+        for entry in active_jobs:
+            job = entry["job"]
+            tables = entry["tables"]
+            job_id = job["job_id"]
+            try:
+                connection = self._get_connection(job["connection_id"])
+                operation_types = json.loads(job["operation_types"]) if job.get("operation_types") else []
+                operation_delay = job.get("operation_delay", 1.0)
+                batch_size = job.get("batch_size", 1)
+                
+                self._active_jobs[job_id] = {
+                    "connection_id": job["connection_id"],
+                    "operation_types": operation_types,
+                    "operation_delay": operation_delay,
+                    "batch_size": batch_size,
+                }
+                self._job_threads[job_id] = {}
+                
+                for table_entry in tables:
+                    table_id = table_entry["table_config_id"]
+                    table = self._get_table(table_id)
+                    if not table:
+                        logger.warning(f"Skipping resume for missing table {table_id}")
+                        continue
+                    
+                    self._start_table_job(
+                        job_id=job_id,
+                        connection=connection,
+                        table=table,
+                        operation_types=operation_types,
+                        operation_delay=operation_delay,
+                        batch_size=batch_size,
+                        resume=True,
+                    )
+                
+                self.job_store.mark_job_started(job_id)
+            except Exception as exc:
+                logger.error(f"Failed to resume pillow fight job {job_id}: {exc}", exc_info=True)
     
     def start_pillow_fight(
         self,
@@ -61,162 +141,312 @@ class PillowFightService:
         table_ids: List[int],
         operation_types: List[str],
         operation_delay: float = 1.0,
-        batch_size: int = 1
-    ) -> None:
-        """Start a pillow fight for a connection and tables."""
-        # Get the connection
-        connection_data = self.db.query_one("SELECT * FROM database_connections WHERE id = ?", (connection_id,))
-        if not connection_data:
-            logger.error(f"Connection with ID {connection_id} not found")
-            return
-        
-        # Convert database_name to database for the DatabaseConnection model
-        connection_dict = dict(connection_data)
-        
-        # Ensure we have the required fields with correct names
-        if 'database_name' in connection_dict:
-            connection_dict['database'] = connection_dict['database_name']
-        
-        # Make sure we have db_type field
-        if 'type' in connection_dict and 'db_type' not in connection_dict:
-            connection_dict['db_type'] = connection_dict['type']
-        
-        # Log the fields we're working with
-        logger.debug(f"Connection data fields: {connection_dict.keys()}")
-        
-        # Create a clean dictionary with only the fields that DatabaseConnection expects
-        clean_dict = {
-            'id': connection_dict.get('id'),
-            'name': connection_dict.get('name'),
-            'description': connection_dict.get('description'),
-            'db_type': connection_dict.get('db_type'),
-            'host': connection_dict.get('host'),
-            'port': connection_dict.get('port'),
-            'username': connection_dict.get('username'),
-            'password': connection_dict.get('password'),
-            'database': connection_dict.get('database_name'),  # Use database_name from DB as database in model
-            'connection_string': connection_dict.get('connection_string'),
-            'status': connection_dict.get('status'),
-            'created_at': connection_dict.get('created_at'),
-            'updated_at': connection_dict.get('updated_at'),
-            'last_operation_at': connection_dict.get('last_operation_at')
-        }
-        
-        # Remove any None values to avoid passing None to required fields
-        clean_dict = {k: v for k, v in clean_dict.items() if v is not None}
-        
-        logger.debug(f"Creating DatabaseConnection with fields: {clean_dict.keys()}")
-        connection = DatabaseConnection(**clean_dict)
-        
-        # Update the connection status
-        self.db.execute("UPDATE database_connections SET status = ? WHERE id = ?", 
-                        (ConnectionStatus.RUNNING.value, connection_id))
-        self.db.commit()
-        
-        # Start a pillow fight for each table
-        for table_id in table_ids:
-            # Get the table
-            table_data = self.db.query_one("SELECT * FROM table_configs WHERE id = ?", (table_id,))
-            if not table_data:
-                logger.error(f"Table with ID {table_id} not found")
-                continue
+        batch_size: int = 1,
+    ) -> str:
+        """Start a pillow fight job; returns job_id."""
+        self._ensure_resumed()
+        with self._job_lock:
+            job_id = str(uuid.uuid4())
+            logger.info(f"Starting pillow fight job {job_id} for connection {connection_id}")
             
-            # Parse JSON fields
-            if 'column_definitions' in table_data and table_data['column_definitions']:
-                try:
-                    table_data['column_definitions'] = json.loads(table_data['column_definitions'])
-                except json.JSONDecodeError:
-                    logger.error(f"Failed to parse column_definitions for table {table_id}")
-                    continue
-                    
-            if 'primary_keys' in table_data and table_data['primary_keys']:
-                try:
-                    table_data['primary_keys'] = json.loads(table_data['primary_keys'])
-                except json.JSONDecodeError:
-                    logger.error(f"Failed to parse primary_keys for table {table_id}")
-                    continue
+            # Normalize operation types if ALL requested
+            normalized_ops = self._normalize_operation_types(operation_types)
             
-            # Convert operation_type to enum if needed
-            if 'operation_type' in table_data:
-                try:
-                    table_data['operation_type'] = OperationType(table_data['operation_type'])
-                except (ValueError, TypeError):
-                    pass  # Keep as string if not a valid enum value
+            # Validate tables and prevent conflicts
+            available_tables = self.table_service.get_tables_by_connection(connection_id)
+            available_ids = {table.id for table in available_tables}
+            missing = [tid for tid in table_ids if tid not in available_ids]
+            if missing:
+                raise ValueError(f"Tables not found for connection {connection_id}: {missing}")
             
-            table = TableConfig(**table_data)
+            conflicts = self.job_store.find_active_table_conflicts(table_ids)
+            if conflicts:
+                raise ValueError(
+                    f"Tables already running in other jobs: {conflicts}. Stop them or wait until completion."
+                )
             
-            # Check if a pillow fight is already running for this table
-            key = (connection_id, table_id)
-            if key in self.threads and self.threads[key].is_alive():
-                logger.info(f"Pillow fight already running for connection {connection_id} and table {table_id}")
-                continue
+            # Persist job record and table entries
+            self.job_store.create_job(
+                job_id=job_id,
+                connection_id=connection_id,
+                table_ids=table_ids,
+                operation_types=normalized_ops,
+                operation_delay=operation_delay,
+                batch_size=batch_size,
+            )
             
-            # Create a stop event
-            stop_event = threading.Event()
-            self.stop_events[key] = stop_event
-            
-            # Initialize status
-            self.status[key] = {
+            connection = self._get_connection(connection_id)
+            self._active_jobs[job_id] = {
                 "connection_id": connection_id,
-                "table_id": table_id,
-                "operation_types": operation_types,
+                "operation_types": normalized_ops,
                 "operation_delay": operation_delay,
                 "batch_size": batch_size,
-                "start_time": datetime.now().isoformat(),
-                "last_operation_time": None,
-                "status": "running",
-                "operations": {
-                    "insert": 0,
-                    "update": 0,
-                    "delete": 0,
-                    "errors": 0
-                }
             }
+            self._job_threads[job_id] = {}
             
-            # Start the pillow fight in a separate thread
-            thread = threading.Thread(
-                target=self._run_pillow_fight,
-                args=(connection, table, operation_types, operation_delay, batch_size, stop_event, key),
-                daemon=True
-            )
-            thread.start()
+            for table_id in table_ids:
+                table = self._get_table(table_id)
+                if not table:
+                    logger.warning(f"Skipping missing table {table_id} for job {job_id}")
+                    continue
+                self._start_table_job(
+                    job_id=job_id,
+                    connection=connection,
+                    table=table,
+                    operation_types=normalized_ops,
+                    operation_delay=operation_delay,
+                    batch_size=batch_size,
+                )
             
-            # Store the thread
-            self.threads[key] = thread
-            
-            logger.info(f"Started pillow fight for connection {connection_id} and table {table_id}")
-    
-    def stop_pillow_fight(self, connection_id: int, table_id: int) -> None:
-        """Stop a pillow fight for a connection and table."""
-        key = (connection_id, table_id)
+            self.job_store.mark_job_started(job_id)
+            return job_id
+
+    def _normalize_operation_types(self, operation_types: List[str]) -> List[str]:
+        """Normalize requested operations; expand ALL to concrete operations."""
+        if not operation_types:
+            return [
+                OperationType.INSERT.value,
+                OperationType.UPDATE.value,
+                OperationType.DELETE.value,
+            ]
+        normalized = [op.lower() for op in operation_types]
+        if OperationType.ALL.value in normalized or "all" in normalized:
+            return [
+                OperationType.INSERT.value,
+                OperationType.UPDATE.value,
+                OperationType.DELETE.value,
+            ]
+        valid_ops = {op.value for op in OperationType if op is not OperationType.ALL}
+        invalid = [op for op in normalized if op not in valid_ops]
+        if invalid:
+            raise ValueError(f"Invalid operation types requested: {invalid}")
+        return normalized
+
+    def _get_connection(self, connection_id: int) -> DatabaseConnection:
+        connection = self.db_service.get_connection(connection_id)
+        if not connection:
+            raise ValueError(f"Connection with ID {connection_id} not found")
+        return connection
+
+    def _get_table(self, table_id: int) -> Optional[TableConfig]:
+        return self.table_service.get_table(table_id)
+
+    def _start_table_job(
+        self,
+        job_id: str,
+        connection: DatabaseConnection,
+        table: TableConfig,
+        operation_types: List[str],
+        operation_delay: float,
+        batch_size: int,
+        resume: bool = False,
+    ) -> None:
+        key = (job_id, table.id)
+        stop_event = self.stop_events.get(key)
+        if not stop_event:
+            stop_event = threading.Event()
+            self.stop_events[key] = stop_event
         
-        # Check if a pillow fight is running for this table
-        if key not in self.threads or not self.threads[key].is_alive():
-            logger.info(f"No pillow fight running for connection {connection_id} and table {table_id}")
+        self.status[key] = {
+            "job_id": job_id,
+            "connection_id": connection.id,
+            "table_id": table.id,
+            "table_name": table.table_name,
+            "operation_types": operation_types,
+            "operation_delay": operation_delay,
+            "batch_size": batch_size,
+            "start_time": datetime.now().isoformat(),
+            "last_operation_time": None,
+            "status": "running" if resume else "pending",
+            "operations": {
+                "insert": 0,
+                "update": 0,
+                "delete": 0,
+                "errors": 0,
+            },
+        }
+        
+        self.job_store.update_table_status(job_id, table.id, PillowFightTableStatus.RUNNING)
+        thread = threading.Thread(
+            target=self._run_table_job,
+            args=(
+                job_id,
+                connection,
+                table,
+                operation_types,
+                operation_delay,
+                batch_size,
+                stop_event,
+                key,
+            ),
+            daemon=True,
+        )
+        self.threads[key] = thread
+        self._job_threads.setdefault(job_id, {})[table.id] = thread
+        thread.start()
+    
+    def _serialize_job(self, job: Dict[str, Any], tables: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Convert raw DB rows into API-friendly job payload."""
+        raw_ops = job.get("operation_types")
+        operation_types: List[str] = []
+        if isinstance(raw_ops, list):
+            operation_types = [str(op).lower() for op in raw_ops]
+        elif isinstance(raw_ops, str):
+            try:
+                parsed = json.loads(raw_ops)
+                if isinstance(parsed, list):
+                    operation_types = [str(op).lower() for op in parsed]
+                elif parsed:
+                    operation_types = [str(parsed).lower()]
+            except json.JSONDecodeError:
+                operation_types = [raw_ops.lower()]
+        elif raw_ops:
+            operation_types = [str(raw_ops).lower()]
+        if not operation_types:
+            operation_types = [
+                OperationType.INSERT.value,
+                OperationType.UPDATE.value,
+                OperationType.DELETE.value,
+            ]
+        
+        serialized_tables: List[Dict[str, Any]] = []
+        for table_row in tables:
+            table_config = self.table_service.get_table(table_row["table_config_id"])
+            serialized_tables.append(
+                {
+                    "job_id": job["job_id"],
+                    "table_id": table_row["table_config_id"],
+                    "table_name": table_config.table_name if table_config else None,
+                    "schema_name": table_config.schema_name if table_config else None,
+                    "status": table_row.get("status"),
+                    "insert_count": table_row.get("insert_count", 0),
+                    "update_count": table_row.get("update_count", 0),
+                    "delete_count": table_row.get("delete_count", 0),
+                    "error_count": table_row.get("error_count", 0),
+                    "last_operation_at": table_row.get("last_operation_at"),
+                    "resume_cursor": table_row.get("resume_cursor"),
+                }
+            )
+        
+        return {
+            "job_id": job["job_id"],
+            "connection_id": job["connection_id"],
+            "status": job.get("status"),
+            "operation_types": operation_types,
+            "operation_delay": job.get("operation_delay", 1.0),
+            "batch_size": job.get("batch_size", 1),
+            "created_at": job.get("created_at"),
+            "started_at": job.get("started_at"),
+            "completed_at": job.get("completed_at"),
+            "last_heartbeat": job.get("last_heartbeat"),
+            "error_message": job.get("error_message"),
+            "tables": serialized_tables,
+        }
+    
+    def _refresh_job_status(self, job_id: str) -> None:
+        """Evaluate aggregate table statuses and update job record."""
+        job = self.job_store.get_job(job_id)
+        if not job:
+            return
+        table_rows = self.job_store.get_job_tables(job_id)
+        if not table_rows:
             return
         
-        # Set the stop event
-        if key in self.stop_events:
-            self.stop_events[key].set()
+        statuses = [row.get("status") for row in table_rows]
+        new_status: JobStatus
+        if any(status == PillowFightTableStatus.ERROR.value for status in statuses):
+            new_status = JobStatus.ERROR
+        elif any(status == PillowFightTableStatus.RUNNING.value for status in statuses):
+            new_status = JobStatus.RUNNING
+        elif all(status == PillowFightTableStatus.COMPLETED.value for status in statuses):
+            new_status = JobStatus.COMPLETED
+        elif all(status == PillowFightTableStatus.STOPPED.value for status in statuses):
+            new_status = JobStatus.STOPPED
+        elif all(status == PillowFightTableStatus.PENDING.value for status in statuses):
+            new_status = JobStatus.PENDING
+        else:
+            new_status = JobStatus.RUNNING
         
-        # Wait for the thread to finish
-        if key in self.threads:
-            self.threads[key].join(timeout=5)
-        
-        # Update the status
-        if key in self.status:
-            self.status[key]["status"] = "stopped"
-            self.status[key]["duration"] = (
-                datetime.now() - datetime.fromisoformat(self.status[key]["start_time"])
-            ).total_seconds()
-        
-        # Remove from tracking
-        if key in self.stop_events:
-            del self.stop_events[key]
-        if key in self.threads:
-            del self.threads[key]
-        
-        logger.info(f"Stopped pillow fight for connection {connection_id} and table {table_id}")
+        self.job_store.update_job_status(job_id, new_status)
+        if new_status in {JobStatus.COMPLETED, JobStatus.STOPPED, JobStatus.ERROR}:
+            self._active_jobs.pop(job_id, None)
+            self._job_threads.pop(job_id, None)
+
+    def _stop_table(self, job_id: str, table_id: int, *, mark_stopped: bool = True) -> None:
+        key = (job_id, table_id)
+        stop_event = self.stop_events.get(key)
+        if stop_event:
+            stop_event.set()
+        thread = self.threads.get(key)
+        if thread and thread.is_alive():
+            thread.join(timeout=5)
+        if mark_stopped:
+            self.job_store.update_table_status(
+                job_id,
+                table_id,
+                PillowFightTableStatus.STOPPED,
+                last_operation_at=datetime.utcnow().isoformat(),
+            )
+        self.stop_events.pop(key, None)
+        self.threads.pop(key, None)
+        self.status.pop(key, None)
+        if job_id in self._job_threads and table_id in self._job_threads[job_id]:
+            del self._job_threads[job_id][table_id]
+        if job_id in self._job_threads and not self._job_threads[job_id]:
+            self._job_threads.pop(job_id, None)
+        self._refresh_job_status(job_id)
+    
+    def stop_pillow_fight(self, connection_id: int, table_id: int) -> None:
+        """Stop a pillow fight for a connection and table (legacy helper)."""
+        job_id = self.job_store.get_active_job_for_table(connection_id, table_id)
+        if not job_id:
+            logger.info(f"No active pillow fight job found for connection {connection_id} and table {table_id}")
+            return
+        self._stop_table(job_id, table_id)
+        logger.info(f"Stopped pillow fight for job {job_id}, connection {connection_id}, table {table_id}")
+    
+    def stop_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        """Stop an entire pillow fight job."""
+        self._ensure_resumed()
+        job = self.job_store.get_job(job_id)
+        if not job:
+            return None
+        tables = self.job_store.get_job_tables(job_id)
+        for table_row in tables:
+            if table_row.get("status") in (
+                PillowFightTableStatus.PENDING.value,
+                PillowFightTableStatus.RUNNING.value,
+            ):
+                self._stop_table(job_id, table_row["table_config_id"])
+        self.job_store.update_job_status(job_id, JobStatus.STOPPED)
+        self._active_jobs.pop(job_id, None)
+        self._job_threads.pop(job_id, None)
+        return self.get_job_status(job_id)
+    
+    def stop_table_job(self, job_id: str, table_id: int) -> Optional[Dict[str, Any]]:
+        """Stop a single table inside a job and return updated job status."""
+        job = self.job_store.get_job(job_id)
+        if not job:
+            return None
+        self._stop_table(job_id, table_id)
+        return self.get_job_status(job_id)
+    
+    def list_jobs(self, search: Optional[str] = None) -> List[Dict[str, Any]]:
+        """List pillow fight jobs with tables."""
+        self._ensure_resumed()
+        jobs_with_tables = self.job_store.get_jobs_with_tables(search)
+        serialized: List[Dict[str, Any]] = []
+        for entry in jobs_with_tables:
+            serialized.append(self._serialize_job(entry["job"], entry["tables"]))
+        return serialized
+    
+    def get_job_status(self, job_id: str) -> Optional[Dict[str, Any]]:
+        """Get a single pillow fight job status."""
+        job = self.job_store.get_job(job_id)
+        if not job:
+            return None
+        tables = self.job_store.get_job_tables(job_id)
+        return self._serialize_job(job, tables)
     
     def get_status(self, connection_id: int, table_id: int) -> Optional[Dict[str, Any]]:
         """Get the status of a pillow fight."""
@@ -235,40 +465,33 @@ class PillowFightService:
         
         return self.status[key]
     
-    def _run_pillow_fight(
+    def _run_table_job(
         self,
+        job_id: str,
         connection: DatabaseConnection,
         table: TableConfig,
         operation_types: List[str],
         operation_delay: float,
         batch_size: int,
         stop_event: threading.Event,
-        key: tuple
+        key: tuple,
     ) -> None:
-        """Run the pillow fight for a connection and table."""
-        # Log that we're starting the pillow fight
-        logger.info(f"Starting pillow fight for connection {connection.id} and table {table.table_name}")
-        logger.info(f"Using operation types: {operation_types}")
-        logger.info(f"Table config: {table.__dict__}")
+        """Run the pillow fight loop for a single table inside a job."""
+        logger.info(f"Starting pillow fight job {job_id} table {table.table_name}")
         
-        # Create database engine outside the loop to avoid recreating it for each operation
         engine = None
-        
-        # Initialize operation counters
         operations_performed = 0
         
         while not stop_event.is_set():
             try:
-                # Only create the engine if it doesn't exist or if there was an error
                 if engine is None:
                     logger.info(f"Creating database engine for connection {connection.id}")
-                    # For JDBC connections (AS400 and MS SQL Server), create a DatabaseConnector directly
-                    if connection.db_type in [DatabaseType.AS400, DatabaseType.MSSQL] or \
-                       (isinstance(connection.db_type, str) and connection.db_type.upper() in ['AS400', 'MSSQL']):
-                        # Import here to avoid circular imports
+                    if connection.db_type in [DatabaseType.AS400, DatabaseType.MSSQL] or (
+                        isinstance(connection.db_type, str)
+                        and connection.db_type.upper() in ["AS400", "MSSQL"]
+                    ):
                         from utils.db_connector import DatabaseConnector
                         
-                        # Convert string db_type to enum if needed
                         connector_db_type = connection.db_type
                         if isinstance(connection.db_type, str):
                             try:
@@ -276,119 +499,128 @@ class PillowFightService:
                             except (KeyError, AttributeError):
                                 logger.warning(f"Unknown database type string: {connection.db_type}")
                         
-                        # Make sure we have a valid database name
-                        # Use database field from the connection object
                         database_name = connection.database
-                        logger.info(f"Creating JDBC DatabaseConnector with parameters: db_type={connector_db_type}, host={connection.host}, port={connection.port}, database={database_name}")
-                        
-                        # Log all connection attributes for debugging
-                        logger.info(f"Connection object details: {connection.__dict__}")
-                        
-                        # Create the connector with the connection parameters
                         db_connector = DatabaseConnector(
                             db_type=connector_db_type,
                             host=connection.host,
                             port=connection.port,
                             database=database_name,
                             username=connection.username,
-                            password=connection.password
+                            password=connection.password,
                         )
-                        
-                        # Connect to the database
-                        logger.info("Connecting to database...")
                         db_connector.connect()
-                        
-                        # Verify the connection is valid
-                        if not db_connector.connection or not hasattr(db_connector.connection, 'cursor'):
-                            logger.error(f"Could not establish connection to database for {table.schema_name}.{table.table_name}")
+                        if not db_connector.connection or not hasattr(db_connector.connection, "cursor"):
                             raise Exception(f"Failed to establish a valid connection to {connection.db_type} database")
-                        
-                        # Use the connector as our engine
                         engine = db_connector
                         logger.info(f"Created direct JDBC connection for {connection.db_type} database")
                     else:
-                        # For other database types, use the engine from DatabaseService
-                        logger.info(f"Using DatabaseService.get_engine for connection {connection.id}")
                         engine = self.db_service.get_engine(connection)
-                        logger.info(f"Using engine from DatabaseService for {connection.db_type} database")
+                        logger.info(f"Using DatabaseService engine for {connection.db_type}")
                     
-                    # Update status to running
-                    self.status[key]["status"] = "running"
-                    logger.info(f"Updated status to running for pillow fight {key}")
+                    status_entry = self.status.get(key)
+                    if status_entry:
+                        status_entry["status"] = PillowFightTableStatus.RUNNING.value
+                    self.job_store.update_table_status(
+                        job_id,
+                        table.id,
+                        PillowFightTableStatus.RUNNING,
+                        last_operation_at=datetime.utcnow().isoformat(),
+                    )
                 
-                # Perform a batch of operations
                 batch_operations = 0
                 for _ in range(batch_size):
                     if stop_event.is_set():
-                        logger.info(f"Stop event set, breaking out of batch loop")
                         break
-                        
-                    # Randomly select an operation type
-                    op_type = random.choice(operation_types)
-                    logger.info(f"Selected operation type: {op_type}")
                     
+                    op_type = random.choice(operation_types)
+                    op_type_upper = op_type.upper()
                     try:
-                        # Perform the operation - normalize to uppercase for comparison
-                        op_type_upper = op_type.upper()
-                        logger.info(f"Attempting to perform {op_type_upper} operation on {table.table_name}")
-                        
                         if op_type_upper == "INSERT":
-                            logger.info(f"Calling _perform_insert for {table.table_name}")
                             self._perform_insert(engine, connection, table)
                             self.status[key]["operations"]["insert"] += 1
-                            logger.info(f"Successfully performed INSERT on {table.table_name}")
+                            self.job_store.increment_operation(job_id, table.id, "insert")
                         elif op_type_upper == "UPDATE":
-                            logger.info(f"Calling _perform_update for {table.table_name}")
                             self._perform_update(engine, connection, table)
                             self.status[key]["operations"]["update"] += 1
-                            logger.info(f"Successfully performed UPDATE on {table.table_name}")
+                            self.job_store.increment_operation(job_id, table.id, "update")
                         elif op_type_upper == "DELETE":
-                            logger.info(f"Calling _perform_delete for {table.table_name}")
                             self._perform_delete(engine, connection, table)
                             self.status[key]["operations"]["delete"] += 1
-                            logger.info(f"Successfully performed DELETE on {table.table_name}")
+                            self.job_store.increment_operation(job_id, table.id, "delete")
                         
-                        # Update the last operation time
-                        self.status[key]["last_operation_time"] = datetime.now().isoformat()
-                        logger.info(f"Updated last_operation_time for pillow fight {key}")
+                        now_iso = datetime.utcnow().isoformat()
+                        self.status[key]["last_operation_time"] = now_iso
+                        self.job_store.update_table_status(
+                            job_id,
+                            table.id,
+                            PillowFightTableStatus.RUNNING,
+                            last_operation_at=now_iso,
+                        )
                         operations_performed += 1
                         batch_operations += 1
-                        
-                    except Exception as e:
-                        logger.error(f"Error performing {op_type} on {table.table_name}: {str(e)}")
-                        logger.error(f"Exception type: {type(e).__name__}")
-                        import traceback
-                        logger.error(f"Traceback: {traceback.format_exc()}")
+                    except Exception as op_exc:
+                        logger.error(f"Error performing {op_type_upper} on {table.table_name}: {op_exc}")
                         self.status[key]["operations"]["errors"] += 1
+                        self.job_store.increment_error(job_id, table.id)
+                        self.job_store.update_table_status(
+                            job_id,
+                            table.id,
+                            PillowFightTableStatus.RUNNING,
+                            last_operation_at=datetime.utcnow().isoformat(),
+                            error_message=str(op_exc),
+                        )
                 
-                # Sleep for the specified delay
-                logger.info(f"Sleeping for {operation_delay} seconds before next batch")
-                logger.info(f"Completed batch of {batch_operations} operations for pillow fight {key}")
+                self.job_store.heartbeat(job_id)
+                if stop_event.is_set():
+                    break
                 time.sleep(operation_delay)
-                
-            except Exception as e:
-                logger.error(f"Error in pillow fight thread for connection {connection.id} and table {table.id}: {str(e)}")
-                logger.error(f"Exception type: {type(e).__name__}")
-                import traceback
-                logger.error(f"Traceback: {traceback.format_exc()}")
-                self.status[key]["status"] = "error"
-                self.status[key]["error"] = str(e)
-                
-                # Reset the engine so it will be recreated on the next iteration
-                logger.info("Resetting engine due to error")
+            except Exception as loop_exc:
+                logger.error(
+                    f"Error in pillow fight thread job {job_id} connection {connection.id} table {table.id}: {loop_exc}",
+                    exc_info=True,
+                )
+                self.status[key]["status"] = PillowFightTableStatus.ERROR.value
+                self.status[key]["error"] = str(loop_exc)
+                self.job_store.update_table_status(
+                    job_id,
+                    table.id,
+                    PillowFightTableStatus.ERROR,
+                    last_operation_at=datetime.utcnow().isoformat(),
+                    error_message=str(loop_exc),
+                )
+                self.job_store.update_job_status(job_id, JobStatus.ERROR, error_message=str(loop_exc))
                 engine = None
-                
-                # Sleep before retrying to avoid tight error loops
-                logger.info("Sleeping for 5 seconds before retrying")
                 time.sleep(5)
         
-        # Only update status to stopped when the stop_event is set
-        self.status[key]["status"] = "stopped"
-        self.status[key]["duration"] = (
-            datetime.now() - datetime.fromisoformat(self.status[key]["start_time"])
-        ).total_seconds()
-        logger.info(f"Stopped pillow fight for connection {connection.id} and table {table.id}")
-        logger.info(f"Pillow fight completed {operations_performed} total operations with status: {self.status[key]['operations']}")
+        status_entry = self.status.get(key)
+        end_time = datetime.utcnow()
+        if status_entry:
+            status_entry["duration"] = (
+                end_time - datetime.fromisoformat(status_entry["start_time"])
+            ).total_seconds()
+        
+        if status_entry and status_entry.get("status") == PillowFightTableStatus.ERROR.value:
+            logger.info(f"Pillow fight job {job_id} table {table.id} ended with error")
+            self._refresh_job_status(job_id)
+            return
+        
+        if stop_event.is_set():
+            self.job_store.update_table_status(
+                job_id,
+                table.id,
+                PillowFightTableStatus.STOPPED,
+                last_operation_at=end_time.isoformat(),
+            )
+            if status_entry:
+                status_entry["status"] = PillowFightTableStatus.STOPPED.value
+        else:
+            self.job_store.mark_table_completed(job_id, table.id)
+            if status_entry:
+                status_entry["status"] = PillowFightTableStatus.COMPLETED.value
+        logger.info(
+            f"Pillow fight job {job_id} completed {operations_performed} operations for table {table.table_name}"
+        )
+        self._refresh_job_status(job_id)
     
     def _perform_insert(self, engine, connection: DatabaseConnection, table: TableConfig) -> None:
         """Perform an insert operation on a table."""

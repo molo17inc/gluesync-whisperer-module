@@ -34,6 +34,22 @@ class OperationType(enum.Enum):
     ALL = "all"
 
 
+class PillowFightJobStatus(enum.Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    STOPPED = "stopped"
+    ERROR = "error"
+
+
+class PillowFightTableStatus(enum.Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    STOPPED = "stopped"
+    ERROR = "error"
+
+
 class ConnectionStatus(enum.Enum):
     IDLE = "idle"
     RUNNING = "running"

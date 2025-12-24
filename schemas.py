@@ -156,8 +156,51 @@ class TableOperationRequest(BaseModel):
     connection_id: int
     table_ids: List[int]
     operation_type: OperationType = OperationType.ALL
+    operation_types: Optional[List[OperationType]] = None
     operation_delay: float = 1.0
     batch_size: int = 1
+
+
+class PillowFightJobRequest(BaseModel):
+    connection_id: int
+    table_ids: List[int]
+    operation_type: OperationType = OperationType.ALL
+    operation_types: Optional[List[OperationType]] = None
+    operation_delay: float = 1.0
+    batch_size: int = 1
+
+
+class PillowFightJobTableStatus(BaseModel):
+    job_id: str
+    table_id: int
+    table_name: Optional[str] = None
+    schema_name: Optional[str] = None
+    status: str
+    insert_count: int = 0
+    update_count: int = 0
+    delete_count: int = 0
+    error_count: int = 0
+    last_operation_at: Optional[str] = None
+    resume_cursor: Optional[str] = None
+
+
+class PillowFightJobStatus(BaseModel):
+    job_id: str
+    connection_id: int
+    status: str
+    operation_types: List[str]
+    operation_delay: float
+    batch_size: int
+    created_at: str
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    last_heartbeat: Optional[str] = None
+    error_message: Optional[str] = None
+    tables: List[PillowFightJobTableStatus]
+
+
+class PillowFightJobStatusResponse(BaseModel):
+    jobs: List[PillowFightJobStatus]
 
 
 class SqlQueryRequest(BaseModel):

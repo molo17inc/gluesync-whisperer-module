@@ -135,6 +135,54 @@ class Database:
                         logger.info("Added cascade_delete column to table_configs table")
                 except Exception as e:
                     logger.error(f"Error adding cascade_delete column: {str(e)}")
+
+                # Create pillow fight job tracking tables
+                logger.info("Creating pillow fight job tracking tables if they don't exist")
+                cursor.execute('''
+                CREATE TABLE IF NOT EXISTS pillow_fight_jobs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id TEXT NOT NULL UNIQUE,
+                    connection_id INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    operation_types TEXT NOT NULL,
+                    operation_delay REAL NOT NULL DEFAULT 1.0,
+                    batch_size INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    started_at TEXT,
+                    completed_at TEXT,
+                    last_heartbeat TEXT,
+                    error_message TEXT,
+                    FOREIGN KEY (connection_id) REFERENCES database_connections (id) ON DELETE CASCADE
+                )
+                ''')
+
+                cursor.execute('''
+                CREATE TABLE IF NOT EXISTS pillow_fight_job_tables (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id TEXT NOT NULL,
+                    table_config_id INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    insert_count INTEGER NOT NULL DEFAULT 0,
+                    update_count INTEGER NOT NULL DEFAULT 0,
+                    delete_count INTEGER NOT NULL DEFAULT 0,
+                    error_count INTEGER NOT NULL DEFAULT 0,
+                    last_operation_at TEXT,
+                    resume_cursor TEXT,
+                    FOREIGN KEY (job_id) REFERENCES pillow_fight_jobs (job_id) ON DELETE CASCADE,
+                    FOREIGN KEY (table_config_id) REFERENCES table_configs (id) ON DELETE CASCADE
+                )
+                ''')
+
+                cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_pillow_fight_job_tables_job 
+                ON pillow_fight_job_tables(job_id)
+                ''')
+
+                cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_pillow_fight_job_tables_table 
+                ON pillow_fight_job_tables(table_config_id)
+                ''')
                 
                 conn.commit()
                 logger.info("All tables created successfully")
