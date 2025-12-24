@@ -1,66 +1,100 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from "react";
 import {
+  Alert,
   Box,
-  Typography,
   Button,
   Card,
   CardContent,
-  Grid,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  TextField,
   Chip,
-  Alert,
   CircularProgress,
-  LinearProgress,
   Dialog,
-  DialogTitle,
-  DialogContent,
   DialogActions,
+  DialogContent,
+  DialogTitle,
+  Divider,
+  FormControl,
+  Grid,
+  IconButton,
+  InputAdornment,
+  InputLabel,
   List,
   ListItem,
+  ListItemSecondaryAction,
   ListItemText,
+  MenuItem,
+  Select,
+  Stack,
+  TextField,
+  Tooltip,
+  Typography,
   Checkbox,
-} from '@mui/material';
+} from "@mui/material";
 import {
   PlayArrow as PlayIcon,
   Stop as StopIcon,
   Refresh as RefreshIcon,
-} from '@mui/icons-material';
+  Search as SearchIcon,
+} from "@mui/icons-material";
 import {
   Connection,
   TableConfig,
-  PillowFightRequest,
-  PillowFightStatus,
+  PillowFightJobStatus,
+  PillowFightJobRequest,
+  pillowFightApi,
   connectionApi,
   tableApi,
-  pillowFightApi,
-} from '../services/api';
+} from "../services/api";
+
+const STATUS_COLORS: Record<
+  string,
+  "default" | "success" | "warning" | "error" | "info"
+> = {
+  pending: "warning",
+  running: "success",
+  completed: "default",
+  stopped: "default",
+  error: "error",
+};
+
+const getStatusColor = (status?: string) =>
+  STATUS_COLORS[status?.toLowerCase() || ""] ?? "default";
 
 const PillowFight: React.FC = () => {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [tableConfigs, setTableConfigs] = useState<TableConfig[]>([]);
-  const [pillowFightStatus, setPillowFightStatus] = useState<PillowFightStatus | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [jobs, setJobs] = useState<PillowFightJobStatus[]>([]);
+  const [jobsLoading, setJobsLoading] = useState(false);
+  const [loadingData, setLoadingData] = useState(false);
+
+  const [jobSearchInput, setJobSearchInput] = useState("");
+  const [jobSearch, setJobSearch] = useState("");
+
   const [startDialogOpen, setStartDialogOpen] = useState(false);
-  const [selectedConnection, setSelectedConnection] = useState<number | null>(null);
+  const [selectedConnection, setSelectedConnection] = useState<number | "">("");
+  const [tableSearch, setTableSearch] = useState("");
   const [selectedTables, setSelectedTables] = useState<number[]>([]);
-  const [operationType, setOperationType] = useState<'all' | 'insert' | 'update' | 'delete'>('all');
+  const [operationType, setOperationType] = useState<
+    "all" | "insert" | "update" | "delete"
+  >("all");
   const [operationDelay, setOperationDelay] = useState(1);
   const [batchSize, setBatchSize] = useState(1);
+  const [actionInFlight, setActionInFlight] = useState<string | null>(null);
 
   useEffect(() => {
-    loadData();
-    // Set up polling for status updates
-    const interval = setInterval(loadStatus, 2000);
-    return () => clearInterval(interval);
+    loadInitialData();
+    loadJobs();
   }, []);
 
-  const loadData = async () => {
+  useEffect(() => {
+    const interval = setInterval(() => {
+      loadJobs();
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [jobSearch]);
+
+  const loadInitialData = async () => {
     try {
-      setLoading(true);
+      setLoadingData(true);
       const [connectionsData, tablesData] = await Promise.all([
         connectionApi.list(),
         tableApi.list(),
@@ -68,279 +102,465 @@ const PillowFight: React.FC = () => {
       setConnections(connectionsData);
       setTableConfigs(tablesData);
     } catch (error) {
-      console.error('Failed to load data:', error);
+      console.error("Failed to load connections or tables", error);
     } finally {
-      setLoading(false);
+      setLoadingData(false);
     }
   };
 
-  const loadStatus = async () => {
+  const loadJobs = async (searchOverride?: string) => {
     try {
-      const response = await pillowFightApi.getStatus().catch(() => null);
-      if (response && response.pillow_fights && response.pillow_fights.length > 0) {
-        // Use the first pillow fight status for now
-        const firstFight = response.pillow_fights[0];
-        setPillowFightStatus({
-          status: firstFight.status as 'idle' | 'running' | 'stopped' | 'error',
-          message: firstFight.operations ? `Operations: ${Object.keys(firstFight.operations).length}` : undefined,
-          connection_id: firstFight.connection_id,
-          table_id: firstFight.table_id,
-        });
-      } else {
-        setPillowFightStatus(null);
-      }
+      setJobsLoading(true);
+      const response = await pillowFightApi.listJobs(
+        searchOverride ?? (jobSearch || undefined)
+      );
+      setJobs(response.jobs);
     } catch (error) {
-      console.error('Status update error:', error);
-      setPillowFightStatus(null);
+      console.error("Failed to load pillow fight jobs", error);
+    } finally {
+      setJobsLoading(false);
     }
   };
 
-  const handleStartDialogOpen = () => {
-    // Pre-select first connection and its tables
+  const connectionLookup = useMemo(() => {
+    const map = new Map<number, Connection>();
+    connections.forEach((connection) => {
+      if (connection.id != null) {
+        map.set(connection.id, connection);
+      }
+    });
+    return map;
+  }, [connections]);
+
+  const availableTables = useMemo(() => {
+    if (!selectedConnection) return [];
+    return tableConfigs.filter((table) => {
+      const matchesConnection = table.connection_id === selectedConnection;
+      const matchesSearch = tableSearch
+        ? `${table.schema_name}.${table.table_name}`
+            .toLowerCase()
+            .includes(tableSearch.toLowerCase())
+        : true;
+      return matchesConnection && matchesSearch;
+    });
+  }, [selectedConnection, tableConfigs, tableSearch]);
+
+  const handleOpenStartDialog = () => {
     if (connections.length > 0) {
-      const connectionId = connections[0].id!;
-      setSelectedConnection(connectionId);
-      const connectionTables = tableConfigs
-        .filter(config => config.connection_id === connectionId)
-        .map(config => config.id!)
-        .filter(id => id);
-      setSelectedTables(connectionTables);
+      const defaultConnectionId = connections[0].id ?? "";
+      setSelectedConnection(defaultConnectionId);
+      const tablesForConnection = tableConfigs
+        .filter((table) => table.connection_id === defaultConnectionId)
+        .map((table) => table.id!)
+        .filter((id): id is number => Boolean(id));
+      setSelectedTables(tablesForConnection);
     }
+    setTableSearch("");
     setStartDialogOpen(true);
   };
 
-  const handleStartDialogClose = () => {
-    setStartDialogOpen(false);
-  };
-
-  const handleTableToggle = (tableId: number) => {
-    setSelectedTables(prev =>
+  const handleToggleTable = (tableId: number) => {
+    setSelectedTables((prev) =>
       prev.includes(tableId)
-        ? prev.filter(id => id !== tableId)
+        ? prev.filter((id) => id !== tableId)
         : [...prev, tableId]
     );
   };
 
-  const handleStartPillowFight = async () => {
+  const handleToggleSelectAll = () => {
+    const visibleIds = availableTables
+      .map((table) => table.id!)
+      .filter((id): id is number => Boolean(id));
+    const allSelected = visibleIds.every((id) => selectedTables.includes(id));
+    if (allSelected) {
+      setSelectedTables((prev) =>
+        prev.filter((id) => !visibleIds.includes(id))
+      );
+    } else {
+      setSelectedTables((prev) =>
+        Array.from(new Set([...prev, ...visibleIds]))
+      );
+    }
+  };
+
+  const handleStartJob = async () => {
     if (!selectedConnection || selectedTables.length === 0) {
-      alert('Please select a connection and at least one table.');
+      alert("Select a connection and at least one table.");
       return;
     }
 
+    const request: PillowFightJobRequest = {
+      connection_id: selectedConnection,
+      table_ids: selectedTables,
+      operation_type: operationType,
+      operation_delay: operationDelay,
+      batch_size: batchSize,
+    };
+
     try {
-      const request: PillowFightRequest = {
-        connection_id: selectedConnection,
-        table_ids: selectedTables,
-        operation_type: operationType,
-        operation_delay: operationDelay,
-        batch_size: batchSize,
-      };
-
-      const response = await pillowFightApi.start(request);
-
-      // Check if the response indicates success or already running
-      if (response.status === 'started' || response.status === 'already_running') {
-        setStartDialogOpen(false);
-        loadStatus(); // Refresh status immediately
-      } else {
-        throw new Error(`Unexpected status: ${response.status}`);
-      }
+      setActionInFlight("start");
+      await pillowFightApi.startJob(request);
+      setStartDialogOpen(false);
+      await loadJobs();
     } catch (error) {
-      console.error('Failed to start pillow fight:', error);
-      alert('Failed to start pillow fight. Please check your configuration.');
+      console.error("Failed to start pillow fight job", error);
+      alert("Failed to start pillow fight job. Check logs for details.");
+    } finally {
+      setActionInFlight(null);
     }
   };
 
-  const handleStopPillowFight = async () => {
+  const handleStopJob = async (jobId: string) => {
     try {
-      await pillowFightApi.stopAll();
-      loadStatus(); // Refresh status immediately
+      setActionInFlight(jobId);
+      await pillowFightApi.stopJob(jobId);
+      await loadJobs();
     } catch (error) {
-      console.error('Failed to stop pillow fight:', error);
-      alert('Failed to stop pillow fight.');
+      console.error(`Failed to stop pillow fight job ${jobId}`, error);
+      alert("Failed to stop job.");
+    } finally {
+      setActionInFlight(null);
     }
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status?.toLowerCase()) {
-      case 'running':
-        return 'success';
-      case 'idle':
-        return 'warning';
-      case 'stopped':
-        return 'error';
-      case 'error':
-        return 'error';
-      default:
-        return 'default';
+  const handleStopTable = async (jobId: string, tableId: number) => {
+    try {
+      setActionInFlight(`${jobId}:${tableId}`);
+      await pillowFightApi.stopTable(jobId, tableId);
+      await loadJobs();
+    } catch (error) {
+      console.error(`Failed to stop table ${tableId} for job ${jobId}`, error);
+      alert("Failed to stop table.");
+    } finally {
+      setActionInFlight(null);
     }
   };
 
-  const getAvailableTables = () => {
-    if (!selectedConnection) return [];
-    return (Array.isArray(tableConfigs) ? tableConfigs : []).filter(config => config.connection_id === selectedConnection);
+  const activeTableStatuses = ["pending", "running"];
+  const isJobActive = (job: PillowFightJobStatus) =>
+    activeTableStatuses.some((status) =>
+      job.tables.some((table) => table.status?.toLowerCase() === status)
+    ) || ["pending", "running"].includes(job.status?.toLowerCase());
+
+  const handleJobSearch = async () => {
+    setJobSearch(jobSearchInput.trim());
+    await loadJobs(jobSearchInput.trim());
+  };
+
+  const handleJobSearchKeyDown = (
+    event: React.KeyboardEvent<HTMLInputElement>
+  ) => {
+    if (event.key === "Enter") {
+      handleJobSearch();
+    }
+  };
+
+  const renderJobCard = (job: PillowFightJobStatus) => {
+    const connectionName =
+      connectionLookup.get(job.connection_id)?.name || job.connection_id;
+    const aggregateCounts = job.tables.reduce(
+      (acc, table) => {
+        acc.insert += table.insert_count || 0;
+        acc.update += table.update_count || 0;
+        acc.delete += table.delete_count || 0;
+        acc.error += table.error_count || 0;
+        return acc;
+      },
+      { insert: 0, update: 0, delete: 0, error: 0 }
+    );
+
+    return (
+      <Card key={job.job_id} variant="outlined">
+        <CardContent>
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            alignItems={{ xs: "flex-start", sm: "center" }}
+            justifyContent="space-between"
+            spacing={2}
+            sx={{ mb: 2 }}
+          >
+            <Box>
+              <Stack
+                direction="row"
+                spacing={1}
+                alignItems="center"
+                sx={{ mb: 1 }}
+              >
+                <Typography variant="h6">Job {job.job_id}</Typography>
+                <Chip
+                  label={job.status?.toUpperCase()}
+                  color={getStatusColor(job.status)}
+                  size="small"
+                />
+              </Stack>
+              <Typography variant="body2" color="text.secondary">
+                Connection: <strong>{connectionName}</strong>
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Ops: {job.operation_types.join(", ").toUpperCase()} • Delay:{" "}
+                {job.operation_delay}s • Batch: {job.batch_size}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Totals — Insert: {aggregateCounts.insert} • Update:{" "}
+                {aggregateCounts.update} • Delete: {aggregateCounts.delete} •
+                Errors: {aggregateCounts.error}
+              </Typography>
+              {job.error_message && (
+                <Alert severity="error" sx={{ mt: 1, py: 0 }}>
+                  {job.error_message}
+                </Alert>
+              )}
+            </Box>
+            <Stack direction="row" spacing={1}>
+              <Button
+                variant="outlined"
+                color="primary"
+                startIcon={<RefreshIcon />}
+                onClick={() => loadJobs()}
+                disabled={jobsLoading}
+              >
+                Refresh
+              </Button>
+              <Button
+                variant="contained"
+                color="error"
+                startIcon={<StopIcon />}
+                onClick={() => handleStopJob(job.job_id)}
+                disabled={!isJobActive(job) || actionInFlight === job.job_id}
+              >
+                Stop Job
+              </Button>
+            </Stack>
+          </Stack>
+
+          <Divider sx={{ mb: 2 }} />
+
+          {job.tables.length === 0 ? (
+            <Typography variant="body2" color="text.secondary">
+              No table executions found for this job.
+            </Typography>
+          ) : (
+            <Stack spacing={1.5}>
+              {job.tables.map((table) => {
+                const tableActive = activeTableStatuses.includes(
+                  table.status?.toLowerCase() || ""
+                );
+                return (
+                  <Box
+                    key={`${job.job_id}-${table.table_id}`}
+                    sx={{
+                      display: "flex",
+                      flexDirection: { xs: "column", sm: "row" },
+                      justifyContent: "space-between",
+                      alignItems: { xs: "flex-start", sm: "center" },
+                      gap: 1,
+                      p: 1,
+                      border: "1px solid",
+                      borderColor: "divider",
+                      borderRadius: 1,
+                    }}
+                  >
+                    <Box>
+                      <Typography variant="subtitle2">
+                        {table.table_name || `Table ${table.table_id}`}{" "}
+                        <Typography
+                          component="span"
+                          variant="caption"
+                          color="text.secondary"
+                        >
+                          ({table.schema_name || "unknown schema"})
+                        </Typography>
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        ID {table.table_id} • Last Operation:{" "}
+                        {table.last_operation_at
+                          ? new Date(table.last_operation_at).toLocaleString()
+                          : "n/a"}
+                      </Typography>
+                      <Typography variant="body2">
+                        Insert: {table.insert_count} • Update:{" "}
+                        {table.update_count} • Delete: {table.delete_count} •
+                        Errors: {table.error_count}
+                      </Typography>
+                    </Box>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <Chip
+                        label={table.status?.toUpperCase()}
+                        color={getStatusColor(table.status)}
+                        size="small"
+                      />
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        color="error"
+                        startIcon={<StopIcon fontSize="small" />}
+                        onClick={() =>
+                          handleStopTable(job.job_id, table.table_id)
+                        }
+                        disabled={
+                          !tableActive ||
+                          actionInFlight === `${job.job_id}:${table.table_id}`
+                        }
+                      >
+                        Stop Table
+                      </Button>
+                    </Stack>
+                  </Box>
+                );
+              })}
+            </Stack>
+          )}
+        </CardContent>
+      </Card>
+    );
   };
 
   return (
     <Box>
-      <Typography variant="h4" gutterBottom sx={{ mb: 3 }}>
-        Pillow Fight Control
-      </Typography>
+      <Stack
+        direction={{ xs: "column", md: "row" }}
+        justifyContent="space-between"
+        alignItems={{ xs: "flex-start", md: "center" }}
+        spacing={2}
+        sx={{ mb: 3 }}
+      >
+        <Box>
+          <Typography variant="h4" gutterBottom>
+            Pillow Fight Control
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Manage multi-table pillow fight jobs, track per-table operations,
+            and stop jobs individually.
+          </Typography>
+        </Box>
+        <Stack direction="row" spacing={1}>
+          <Button
+            variant="contained"
+            color="success"
+            startIcon={<PlayIcon />}
+            onClick={handleOpenStartDialog}
+            disabled={loadingData || connections.length === 0}
+          >
+            Start Pillow Fight
+          </Button>
+          <Button
+            variant="outlined"
+            startIcon={<RefreshIcon />}
+            onClick={() => loadJobs()}
+            disabled={jobsLoading}
+          >
+            Refresh Jobs
+          </Button>
+        </Stack>
+      </Stack>
 
       <Grid container spacing={3}>
-        {/* Status Card */}
-        <Grid item xs={12} md={6}>
-          <Card>
-            <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-                <Typography variant="h6">Current Status</Typography>
-                <Button
-                  size="small"
-                  startIcon={<RefreshIcon />}
-                  onClick={loadStatus}
-                  disabled={loading}
-                >
-                  Refresh
-                </Button>
-              </Box>
-
-              {pillowFightStatus ? (
-                <Box>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                    <Chip
-                      label={pillowFightStatus?.status?.toUpperCase() }
-                      color={getStatusColor(pillowFightStatus?.status || "unknown")}
-                      size="small"
-                    />
-                    {pillowFightStatus.status === 'running' && (
-                      <CircularProgress size={20} />
-                    )}
-                  </Box>
-
-                  {pillowFightStatus.message && (
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                      {pillowFightStatus.message}
-                    </Typography>
-                  )}
-
-                  {pillowFightStatus.connection_id && (
-                    <Typography variant="body2" sx={{ mb: 1 }}>
-                      <strong>Connection ID:</strong> {pillowFightStatus.connection_id}
-                    </Typography>
-                  )}
-
-                  {pillowFightStatus.table_id && (
-                    <Typography variant="body2" sx={{ mb: 2 }}>
-                      <strong>Table ID:</strong> {pillowFightStatus.table_id}
-                    </Typography>
-                  )}
-                </Box>
-              ) : (
-                <Typography variant="body2" color="text.secondary">
-                  No status information available
-                </Typography>
-              )}
-
-              <Box sx={{ display: 'flex', gap: 1, mt: 2 }}>
-                <Button
-                  variant="contained"
-                  color="success"
-                  startIcon={<PlayIcon />}
-                  onClick={handleStartDialogOpen}
-                  disabled={pillowFightStatus?.status === 'running' || connections.length === 0}
-                  fullWidth
-                >
-                  Start Pillow Fight
-                </Button>
-                <Button
-                  variant="contained"
-                  color="error"
-                  startIcon={<StopIcon />}
-                  onClick={handleStopPillowFight}
-                  disabled={pillowFightStatus?.status !== 'running'}
-                  fullWidth
-                >
-                  Stop
-                </Button>
-              </Box>
-            </CardContent>
-          </Card>
-        </Grid>
-
-        {/* Configuration Summary */}
-        <Grid item xs={12} md={6}>
+        <Grid item xs={12} md={4}>
           <Card>
             <CardContent>
               <Typography variant="h6" gutterBottom>
-                Configuration Summary
+                Overview
               </Typography>
-
-              <Box sx={{ mb: 2 }}>
-                <Typography variant="body2" color="text.secondary">
-                  Connections: {connections.length}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Configured Tables: {tableConfigs.length}
-                </Typography>
-              </Box>
+              <Typography variant="body2">
+                Connections: {connections.length}
+              </Typography>
+              <Typography variant="body2">
+                Configured Tables: {tableConfigs.length}
+              </Typography>
+              <Typography variant="body2">
+                Tracked Jobs: {jobs.length}
+              </Typography>
 
               {connections.length === 0 && (
                 <Alert severity="warning" sx={{ mt: 2 }}>
-                  No database connections configured. Please create a connection first.
+                  No connections configured. Please add a connection first.
                 </Alert>
               )}
-
-              {tableConfigs.length === 0 && connections.length > 0 && (
+              {connections.length > 0 && tableConfigs.length === 0 && (
                 <Alert severity="info" sx={{ mt: 2 }}>
-                  No tables configured for automation. Please configure tables first.
+                  No table configurations available. Configure tables to start
+                  pillow fights.
                 </Alert>
               )}
+            </CardContent>
+          </Card>
+
+          <Card sx={{ mt: 3 }}>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                Job Search
+              </Typography>
+              <TextField
+                fullWidth
+                placeholder="Search by job ID or error text"
+                value={jobSearchInput}
+                onChange={(e) => setJobSearchInput(e.target.value)}
+                onKeyDown={handleJobSearchKeyDown}
+                InputProps={{
+                  endAdornment: (
+                    <InputAdornment position="end">
+                      <IconButton onClick={handleJobSearch}>
+                        <SearchIcon />
+                      </IconButton>
+                    </InputAdornment>
+                  ),
+                }}
+              />
             </CardContent>
           </Card>
         </Grid>
 
-        {/* Recent Activity */}
-        <Grid item xs={12}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6" gutterBottom>
-                Recent Activity
-              </Typography>
+        <Grid item xs={12} md={8}>
+          {jobsLoading && (
+            <Stack
+              direction="row"
+              spacing={1}
+              alignItems="center"
+              sx={{ mb: 2 }}
+            >
+              <CircularProgress size={20} />
               <Typography variant="body2" color="text.secondary">
-                Activity monitoring will be implemented here. This would show recent pillow fight operations,
-                performance metrics, and system events.
+                Loading jobs...
               </Typography>
-            </CardContent>
-          </Card>
+            </Stack>
+          )}
+
+          {jobs.length === 0 && !jobsLoading ? (
+            <Alert severity="info">
+              No pillow fight jobs found. Start one to begin tracking.
+            </Alert>
+          ) : (
+            <Stack spacing={2}>{jobs.map((job) => renderJobCard(job))}</Stack>
+          )}
         </Grid>
       </Grid>
 
-      {/* Start Pillow Fight Dialog */}
       <Dialog
         open={startDialogOpen}
-        onClose={handleStartDialogClose}
+        onClose={() => setStartDialogOpen(false)}
         maxWidth="md"
         fullWidth
       >
-        <DialogTitle>Start Pillow Fight</DialogTitle>
-        <DialogContent>
-          <Box sx={{ pt: 2, display: 'flex', flexDirection: 'column', gap: 3 }}>
+        <DialogTitle>Start Pillow Fight Job</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={3}>
             <FormControl fullWidth>
-              <InputLabel>Connection</InputLabel>
+              <InputLabel id="connection-select-label">Connection</InputLabel>
               <Select
-                value={selectedConnection || ''}
+                labelId="connection-select-label"
                 label="Connection"
+                value={selectedConnection}
                 onChange={(e) => {
-                  const connId = parseInt(e.target.value as string);
+                  const connId = Number(e.target.value);
                   setSelectedConnection(connId);
-                  const connectionTables = tableConfigs
-                    .filter(config => config.connection_id === connId)
-                    .map(config => config.id!)
-                    .filter(id => id);
-                  setSelectedTables(connectionTables);
+                  const tablesForConnection = tableConfigs
+                    .filter((table) => table.connection_id === connId)
+                    .map((table) => table.id!)
+                    .filter((id): id is number => Boolean(id));
+                  setSelectedTables(tablesForConnection);
                 }}
               >
-                {(Array.isArray(connections) ? connections : []).map((connection) => (
+                {connections.map((connection) => (
                   <MenuItem key={connection.id} value={connection.id}>
                     {connection.name} ({connection.db_type})
                   </MenuItem>
@@ -349,25 +569,74 @@ const PillowFight: React.FC = () => {
             </FormControl>
 
             <Box>
-              <Typography variant="h6" gutterBottom>
-                Select Tables ({selectedTables.length} selected)
-              </Typography>
-              {getAvailableTables().length === 0 ? (
-                <Typography variant="body2" color="text.secondary">
-                  No tables configured for the selected connection.
-                </Typography>
+              <Stack
+                direction={{ xs: "column", sm: "row" }}
+                justifyContent="space-between"
+                alignItems={{ xs: "flex-start", sm: "center" }}
+                spacing={2}
+                sx={{ mb: 1 }}
+              >
+                <Box>
+                  <Typography variant="subtitle1">
+                    Tables ({selectedTables.length} selected)
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Use search to narrow down the list. Select all applies to
+                    filtered tables.
+                  </Typography>
+                </Box>
+                <Stack direction="row" spacing={1}>
+                  <TextField
+                    size="small"
+                    placeholder="Search tables"
+                    value={tableSearch}
+                    onChange={(e) => setTableSearch(e.target.value)}
+                  />
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={handleToggleSelectAll}
+                  >
+                    Toggle Select All
+                  </Button>
+                </Stack>
+              </Stack>
+
+              {selectedConnection === "" ? (
+                <Alert severity="info">
+                  Select a connection to view tables.
+                </Alert>
+              ) : availableTables.length === 0 ? (
+                <Alert severity="warning">No tables match your filter.</Alert>
               ) : (
-                <List dense sx={{ maxHeight: 200, overflow: 'auto', border: 1, borderColor: 'divider', borderRadius: 1 }}>
-                  {(Array.isArray(getAvailableTables()) ? getAvailableTables() : []).map((table) => (
-                    <ListItem key={table.id} dense>
+                <List
+                  dense
+                  sx={{
+                    maxHeight: 260,
+                    overflow: "auto",
+                    border: "1px solid",
+                    borderColor: "divider",
+                    borderRadius: 1,
+                  }}
+                >
+                  {availableTables.map((table) => (
+                    <ListItem key={table.id} disableGutters>
                       <Checkbox
+                        edge="start"
                         checked={selectedTables.includes(table.id!)}
-                        onChange={() => handleTableToggle(table.id!)}
+                        onChange={() => handleToggleTable(table.id!)}
                       />
                       <ListItemText
-                        primary={`${table.table_name}`}
-                        secondary={`${table.schema_name} • ${table.operation_type} • Delay: ${table.operation_delay}s`}
+                        primary={`${table.table_name} (${table.schema_name})`}
+                        secondary={`Operation: ${table.operation_type.toUpperCase()} • Delay: ${
+                          table.operation_delay
+                        }s • Batch: ${table.batch_size}`}
                       />
+                      <ListItemSecondaryAction>
+                        <Typography variant="caption" color="text.secondary">
+                          ID {table.id}
+                        </Typography>
+                      </ListItemSecondaryAction>
                     </ListItem>
                   ))}
                 </List>
@@ -375,53 +644,64 @@ const PillowFight: React.FC = () => {
             </Box>
 
             <Grid container spacing={2}>
-              <Grid item xs={12} sm={6}>
+              <Grid item xs={12} sm={4}>
                 <FormControl fullWidth>
                   <InputLabel>Operation Type</InputLabel>
                   <Select
-                    value={operationType}
                     label="Operation Type"
-                    onChange={(e) => setOperationType(e.target.value as typeof operationType)}
+                    value={operationType}
+                    onChange={(e) =>
+                      setOperationType(e.target.value as typeof operationType)
+                    }
                   >
-                    <MenuItem value="all">All Operations</MenuItem>
+                    <MenuItem value="all">All</MenuItem>
                     <MenuItem value="insert">Insert Only</MenuItem>
                     <MenuItem value="update">Update Only</MenuItem>
                     <MenuItem value="delete">Delete Only</MenuItem>
                   </Select>
                 </FormControl>
               </Grid>
-              <Grid item xs={12} sm={3}>
+              <Grid item xs={12} sm={4}>
                 <TextField
                   label="Delay (seconds)"
                   type="number"
                   value={operationDelay}
-                  onChange={(e) => setOperationDelay(parseFloat(e.target.value) || 1)}
+                  onChange={(e) =>
+                    setOperationDelay(parseFloat(e.target.value) || 1)
+                  }
                   fullWidth
                   inputProps={{ min: 0.1, step: 0.1 }}
                 />
               </Grid>
-              <Grid item xs={12} sm={3}>
+              <Grid item xs={12} sm={4}>
                 <TextField
                   label="Batch Size"
                   type="number"
                   value={batchSize}
-                  onChange={(e) => setBatchSize(parseInt(e.target.value) || 1)}
+                  onChange={(e) =>
+                    setBatchSize(parseInt(e.target.value, 10) || 1)
+                  }
                   fullWidth
                   inputProps={{ min: 1 }}
                 />
               </Grid>
             </Grid>
-          </Box>
+          </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={handleStartDialogClose}>Cancel</Button>
+          <Button onClick={() => setStartDialogOpen(false)}>Cancel</Button>
           <Button
-            onClick={handleStartPillowFight}
+            onClick={handleStartJob}
             variant="contained"
             color="success"
-            disabled={!selectedConnection || selectedTables.length === 0}
+            startIcon={<PlayIcon />}
+            disabled={
+              !selectedConnection ||
+              selectedTables.length === 0 ||
+              actionInFlight === "start"
+            }
           >
-            Start Pillow Fight
+            Start Job
           </Button>
         </DialogActions>
       </Dialog>

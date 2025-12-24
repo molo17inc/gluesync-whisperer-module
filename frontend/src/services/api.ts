@@ -62,36 +62,46 @@ export interface TableConfig {
   connection_id: number;
 }
 
-export interface PillowFightRequest {
+export interface PillowFightJobRequest {
   connection_id: number;
   table_ids: number[];
-  operation_type: 'all' | 'insert' | 'update' | 'delete';
+  operation_type?: 'all' | 'insert' | 'update' | 'delete';
+  operation_types?: Array<'all' | 'insert' | 'update' | 'delete'>;
+  operation_delay?: number;
+  batch_size?: number;
+}
+
+export interface PillowFightJobTableStatus {
+  job_id: string;
+  table_id: number;
+  table_name?: string | null;
+  schema_name?: string | null;
+  status: string;
+  insert_count: number;
+  update_count: number;
+  delete_count: number;
+  error_count: number;
+  last_operation_at?: string | null;
+  resume_cursor?: string | null;
+}
+
+export interface PillowFightJobStatus {
+  job_id: string;
+  connection_id: number;
+  status: string;
+  operation_types: string[];
   operation_delay: number;
   batch_size: number;
+  created_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  last_heartbeat?: string | null;
+  error_message?: string | null;
+  tables: PillowFightJobTableStatus[];
 }
 
-export interface PillowFightStatus {
-  status: 'idle' | 'running' | 'stopped' | 'error';
-  message?: string;
-  connection_id?: number;
-  table_id?: number;
-}
-
-export interface PillowFightStatusResponse {
-  pillow_fights: Array<{
-    fight_id: string;
-    connection_id: number;
-    table_id: number;
-    table_name: string;
-    operation_types: string[];
-    operation_delay: number;
-    batch_size: number;
-    start_time?: string;
-    last_operation_time?: string;
-    status: string;
-    operations: Record<string, any>;
-    duration?: number;
-  }>;
+export interface PillowFightJobStatusResponse {
+  jobs: PillowFightJobStatus[];
 }
 
 export interface QueryRequest {
@@ -168,37 +178,31 @@ export const tableApi = {
   },
 };
 
-export interface PillowFightStartResponse {
-  connection_id: number;
-  table_ids: number[];
-  operation_types: string[];
-  operation_delay: number;
-  batch_size: number;
-  status: string;
-  fight_id: string;
-}
-
 export const pillowFightApi = {
-  // Start pillow fight
-  start: async (request: PillowFightRequest): Promise<PillowFightStartResponse> => {
-    const response = await api.post('/v1/pillow-fight/start', request);
+  startJob: async (request: PillowFightJobRequest): Promise<PillowFightJobStatus> => {
+    const response = await api.post('/v1/pillow-fight/jobs', request);
     return response.data;
   },
 
-  // Get status
-  getStatus: async (): Promise<PillowFightStatusResponse> => {
-    const response = await api.get('/v1/pillow-fight/status');
+  listJobs: async (search?: string): Promise<PillowFightJobStatusResponse> => {
+    const params = search ? { search } : undefined;
+    const response = await api.get('/v1/pillow-fight/jobs', { params });
     return response.data;
   },
 
-  // Stop pillow fight
-  stop: async (connectionId: number, tableId: number): Promise<void> => {
-    await api.post(`/v1/pillow-fight/stop/${connectionId}/${tableId}`);
+  getJob: async (jobId: string): Promise<PillowFightJobStatus> => {
+    const response = await api.get(`/v1/pillow-fight/jobs/${jobId}`);
+    return response.data;
   },
 
-  // Stop all pillow fights
-  stopAll: async (): Promise<void> => {
-    await api.post('/v1/pillow-fight/stop-all');
+  stopJob: async (jobId: string): Promise<PillowFightJobStatus> => {
+    const response = await api.post(`/v1/pillow-fight/jobs/${jobId}/stop`);
+    return response.data;
+  },
+
+  stopTable: async (jobId: string, tableId: number): Promise<PillowFightJobStatus> => {
+    const response = await api.post(`/v1/pillow-fight/jobs/${jobId}/tables/${tableId}/stop`);
+    return response.data;
   },
 };
 
