@@ -654,8 +654,9 @@ class PillowFightService:
             
             # Verify the engine is valid
             if engine is None:
-                logger.error(f"Could not establish connection to database for {table.schema_name}.{table.table_name}")
-                return
+                error_msg = f"Could not establish connection to database for {table.schema_name}.{table.table_name}"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
                 
             # Get the table schema with caching
             logger.info(f"Getting table schema for connection ID {connection.id}, table {table.table_name}, schema {table.schema_name}")
@@ -679,7 +680,7 @@ class PillowFightService:
                 logger.info(f"Found {len(columns_dict)} columns and {len(primary_keys)} primary keys")
             except Exception as e:
                 logger.error(f"Error getting table schema for {table.schema_name}.{table.table_name}: {str(e)}")
-                return
+                raise
             
             # Generate random data for each column
             data = {}
@@ -798,8 +799,8 @@ class PillowFightService:
                 if hasattr(table, 'id'):
                     logger.warning(f"You can run: python update_cascade_delete.py --table_id {table.id} --enable True")
             
-            # Continue despite errors - we've logged the issue and provided guidance
-            pass
+            # Propagate error so the caller can track failures
+            raise
     
     def _perform_update(self, engine, connection: DatabaseConnection, table: TableConfig) -> None:
         """Perform an update operation on a table."""
@@ -838,7 +839,7 @@ class PillowFightService:
                     return
             except Exception as e:
                 logger.error(f"Error getting random record for {table.schema_name}.{table.table_name}: {str(e)}")
-                return
+                raise
             
             # Generate random data for each column, excluding primary keys
             data = {}
@@ -907,8 +908,7 @@ class PillowFightService:
             logger.error(f"Exception type: {type(e).__name__}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
-            # Continue despite errors
-            pass
+            raise
     
     def _perform_delete(self, engine, connection: DatabaseConnection, table: TableConfig) -> None:
         """Perform a delete operation on a table."""
@@ -1053,8 +1053,7 @@ class PillowFightService:
             logger.error(f"Exception type: {type(e).__name__}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
-            # Continue despite errors
-            pass
+            raise
     
     def _get_random_record(self, engine, table: TableConfig) -> Optional[Dict[str, Any]]:
         """Get a random record from a table."""

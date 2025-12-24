@@ -174,26 +174,27 @@ class MySQLDatabaseService(DatabaseServiceBase):
             cursor.execute(columns_sql, (target_schema, table_name))
             
             # Process columns
-            columns = []
+            columns_dict = {}
             for row in cursor.fetchall():
-                columns.append({
-                    'name': row[0],
+                column_name = str(row[0])
+                columns_dict[column_name] = {
+                    'name': column_name,
                     'type': row[3],
                     'nullable': row[13] == 'YES' if len(row) > 13 else True,
                     'primary_key': row[12] == 1 if len(row) > 12 else False,
-                })
+                }
             
             # Get primary keys
             pk_sql = self.sql_statements.get_primary_keys_statement(target_schema, table_name)
             cursor.execute(pk_sql, (target_schema, table_name))
                 
-            primary_keys = [row[0] for row in cursor.fetchall()]
+            primary_keys = [str(row[0]) for row in cursor.fetchall()]
             
             # Create the response
             schema_response = TableSchemaResponse(
                 table_name=table_name,
                 schema_name=target_schema,
-                columns=columns,
+                columns=columns_dict,
                 primary_keys=primary_keys,
                 foreign_keys=[]
             )
