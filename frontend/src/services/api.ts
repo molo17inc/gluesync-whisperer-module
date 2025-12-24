@@ -1,7 +1,21 @@
 import axios from 'axios';
 
-// Configure base URL - can be changed based on environment
-const API_BASE_URL = 'http://localhost:8000/api';
+const resolveApiBaseUrl = (): string => {
+  const envUrl = import.meta?.env?.VITE_API_BASE_URL?.trim();
+  if (envUrl) {
+    const normalized = envUrl.endsWith('/') ? envUrl.slice(0, -1) : envUrl;
+    return normalized.includes('/api') ? normalized : `${normalized}/api`;
+  }
+
+  if (typeof window !== 'undefined') {
+    return `${window.location.origin}/api`;
+  }
+
+  // Fallback for non-browser contexts (e.g., tests)
+  return 'http://localhost:8000/api';
+};
+
+const API_BASE_URL = resolveApiBaseUrl();
 
 // Create axios instance with base configuration
 const api = axios.create({
