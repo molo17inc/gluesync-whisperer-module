@@ -55,11 +55,11 @@ export interface TableConfig {
   id?: number;
   table_name: string;
   schema_name: string;
-  operation_type: 'all' | 'insert' | 'update' | 'delete';
   operation_delay: number;
   batch_size: number;
   enabled: boolean;
   connection_id: number;
+  operation_type?: 'all' | 'insert' | 'update' | 'delete';
 }
 
 export interface PillowFightJobRequest {

@@ -13,6 +13,9 @@ import {
   DialogTitle,
   Divider,
   FormControl,
+  FormControlLabel,
+  FormGroup,
+  FormHelperText,
   Grid,
   IconButton,
   InputAdornment,
@@ -25,7 +28,6 @@ import {
   Select,
   Stack,
   TextField,
-  Tooltip,
   Typography,
   Checkbox,
 } from "@mui/material";
@@ -59,6 +61,9 @@ const STATUS_COLORS: Record<
 const getStatusColor = (status?: string) =>
   STATUS_COLORS[status?.toLowerCase() || ""] ?? "default";
 
+const OPERATION_KEYS = ["insert", "update", "delete"] as const;
+type OperationKey = (typeof OPERATION_KEYS)[number];
+
 const PillowFight: React.FC = () => {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [tableConfigs, setTableConfigs] = useState<TableConfig[]>([]);
@@ -73,9 +78,13 @@ const PillowFight: React.FC = () => {
   const [selectedConnection, setSelectedConnection] = useState<number | "">("");
   const [tableSearch, setTableSearch] = useState("");
   const [selectedTables, setSelectedTables] = useState<number[]>([]);
-  const [operationType, setOperationType] = useState<
-    "all" | "insert" | "update" | "delete"
-  >("all");
+  const [operationSelections, setOperationSelections] = useState<
+    Record<OperationKey, boolean>
+  >({
+    insert: true,
+    update: true,
+    delete: true,
+  });
   const [operationDelay, setOperationDelay] = useState(1);
   const [batchSize, setBatchSize] = useState(1);
   const [actionInFlight, setActionInFlight] = useState<string | null>(null);
@@ -183,16 +192,26 @@ const PillowFight: React.FC = () => {
     }
   };
 
+  const selectedOperations = useMemo(
+    () => OPERATION_KEYS.filter((key) => operationSelections[key]),
+    [operationSelections]
+  );
+
   const handleStartJob = async () => {
     if (!selectedConnection || selectedTables.length === 0) {
       alert("Select a connection and at least one table.");
       return;
     }
 
+    if (selectedOperations.length === 0) {
+      alert("Select at least one operation type.");
+      return;
+    }
+
     const request: PillowFightJobRequest = {
       connection_id: selectedConnection,
       table_ids: selectedTables,
-      operation_type: operationType,
+      operation_types: selectedOperations,
       operation_delay: operationDelay,
       batch_size: batchSize,
     };
@@ -628,9 +647,7 @@ const PillowFight: React.FC = () => {
                       />
                       <ListItemText
                         primary={`${table.table_name} (${table.schema_name})`}
-                        secondary={`Operation: ${table.operation_type.toUpperCase()} • Delay: ${
-                          table.operation_delay
-                        }s • Batch: ${table.batch_size}`}
+                        secondary={`Delay: ${table.operation_delay}s • Batch: ${table.batch_size}`}
                       />
                       <ListItemSecondaryAction>
                         <Typography variant="caption" color="text.secondary">
@@ -644,24 +661,38 @@ const PillowFight: React.FC = () => {
             </Box>
 
             <Grid container spacing={2}>
-              <Grid item xs={12} sm={4}>
-                <FormControl fullWidth>
-                  <InputLabel>Operation Type</InputLabel>
-                  <Select
-                    label="Operation Type"
-                    value={operationType}
-                    onChange={(e) =>
-                      setOperationType(e.target.value as typeof operationType)
-                    }
-                  >
-                    <MenuItem value="all">All</MenuItem>
-                    <MenuItem value="insert">Insert Only</MenuItem>
-                    <MenuItem value="update">Update Only</MenuItem>
-                    <MenuItem value="delete">Delete Only</MenuItem>
-                  </Select>
+              <Grid item xs={12} sm={6}>
+                <FormControl component="fieldset" fullWidth>
+                  <Typography variant="subtitle1" sx={{ mb: 1 }}>
+                    Operation Types
+                  </Typography>
+                  <FormGroup row>
+                    {OPERATION_KEYS.map((op) => (
+                      <FormControlLabel
+                        key={op}
+                        control={
+                          <Checkbox
+                            checked={operationSelections[op]}
+                            onChange={(e) =>
+                              setOperationSelections((prev) => ({
+                                ...prev,
+                                [op]: e.target.checked,
+                              }))
+                            }
+                          />
+                        }
+                        label={op.charAt(0).toUpperCase() + op.slice(1)}
+                      />
+                    ))}
+                  </FormGroup>
+                  {selectedOperations.length === 0 && (
+                    <FormHelperText error>
+                      Select at least one operation.
+                    </FormHelperText>
+                  )}
                 </FormControl>
               </Grid>
-              <Grid item xs={12} sm={4}>
+              <Grid item xs={12} sm={3}>
                 <TextField
                   label="Delay (seconds)"
                   type="number"
@@ -673,7 +704,7 @@ const PillowFight: React.FC = () => {
                   inputProps={{ min: 0.1, step: 0.1 }}
                 />
               </Grid>
-              <Grid item xs={12} sm={4}>
+              <Grid item xs={12} sm={3}>
                 <TextField
                   label="Batch Size"
                   type="number"

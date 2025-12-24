@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from "react";
 import {
   Box,
   Typography,
@@ -26,13 +26,13 @@ import {
   IconButton,
   Alert,
   Snackbar,
-} from '@mui/material';
+} from "@mui/material";
 import {
   Add as AddIcon,
   Delete as DeleteIcon,
   TableChart as TableIcon,
   Edit as EditIcon,
-} from '@mui/icons-material';
+} from "@mui/icons-material";
 import {
   Connection,
   TableConfig,
@@ -40,7 +40,7 @@ import {
   Table as DBTable,
   connectionApi,
   tableApi,
-} from '../services/api';
+} from "../services/api";
 
 const Tables: React.FC = () => {
   const [connections, setConnections] = useState<Connection[]>([]);
@@ -52,22 +52,30 @@ const Tables: React.FC = () => {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [editingTable, setEditingTable] = useState<TableConfig | null>(null);
-  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
+  const [snackbar, setSnackbar] = useState<{
+    open: boolean;
+    message: string;
+    severity: "success" | "error";
+  }>({
     open: false,
-    message: '',
-    severity: 'success',
+    message: "",
+    severity: "success",
   });
   const [formData, setFormData] = useState<Partial<TableConfig>>({
-    table_name: '',
-    schema_name: '',
-    operation_type: 'all',
+    table_name: "",
+    schema_name: "",
+    operation_type: "all",
     operation_delay: 1,
     batch_size: 1,
     enabled: true,
     connection_id: 0,
   });
-  const [selectedConnection, setSelectedConnection] = useState<Connection | null>(null);
-  const [connectionError, setConnectionError] = useState<{connectionId: number | null, message: string} | null>(null);
+  const [selectedConnection, setSelectedConnection] =
+    useState<Connection | null>(null);
+  const [connectionError, setConnectionError] = useState<{
+    connectionId: number | null;
+    message: string;
+  } | null>(null);
 
   useEffect(() => {
     loadData();
@@ -80,21 +88,21 @@ const Tables: React.FC = () => {
         connectionApi.list(),
         tableApi.list(),
       ]);
-      console.log('✅ Initial data loaded:', {
+      console.log("✅ Initial data loaded:", {
         connectionsCount: connectionsData?.length || 0,
-        tableConfigsCount: tablesData?.length || 0
+        tableConfigsCount: tablesData?.length || 0,
       });
       setConnections(connectionsData);
       setTableConfigs(tablesData);
     } catch (error) {
-      console.error('Failed to load initial data:', error);
-      showSnackbar('Failed to load data', 'error');
+      console.error("Failed to load initial data:", error);
+      showSnackbar("Failed to load data", "error");
     } finally {
       setLoading(false);
     }
   };
 
-  const showSnackbar = (message: string, severity: 'success' | 'error') => {
+  const showSnackbar = (message: string, severity: "success" | "error") => {
     setSnackbar({ open: true, message, severity });
   };
 
@@ -104,9 +112,9 @@ const Tables: React.FC = () => {
 
   const handleOpenDialog = () => {
     setFormData({
-      table_name: '',
-      schema_name: '',
-      operation_type: 'all',
+      table_name: "",
+      schema_name: "",
+      operation_type: "all",
       operation_delay: 1,
       batch_size: 1,
       enabled: true,
@@ -122,9 +130,8 @@ const Tables: React.FC = () => {
     setOpen(false);
     setEditingTable(null);
     setFormData({
-      table_name: '',
-      schema_name: '',
-      operation_type: 'all',
+      table_name: "",
+      schema_name: "",
       operation_delay: 1,
       batch_size: 1,
       enabled: true,
@@ -136,45 +143,63 @@ const Tables: React.FC = () => {
   };
 
   const handleConnectionChange = async (connectionId: number) => {
-    const connection = (Array.isArray(connections) ? connections : []).find(c => c.id === connectionId);
+    const connection = (Array.isArray(connections) ? connections : []).find(
+      (c) => c.id === connectionId
+    );
     if (!connection) return;
 
     // Reset error state for this connection
     setConnectionError(null);
     setSelectedConnection(connection);
-    setFormData(prev => ({ ...prev, connection_id: connectionId }));
+    setFormData((prev) => ({ ...prev, connection_id: connectionId }));
 
-    console.log('🔄 Starting to load schemas for connection:', connectionId);
+    console.log("🔄 Starting to load schemas for connection:", connectionId);
     setLoadingSchemas(true);
-    
+
     try {
       const schemasData = await connectionApi.getSchemas(connectionId);
-      console.log('✅ Schemas loaded successfully:', schemasData?.length || 0, 'schemas found');
+      console.log(
+        "✅ Schemas loaded successfully:",
+        schemasData?.length || 0,
+        "schemas found"
+      );
       // Convert string array to Schema objects for frontend compatibility
-      const schemaObjects = schemasData.map((schema: string) => ({ name: schema }));
+      const schemaObjects = schemasData.map((schema: string) => ({
+        name: schema,
+      }));
       setSchemas(schemaObjects);
     } catch (error: any) {
-      console.error('Failed to load schemas:', error);
-      const errorMessage = error?.response?.data?.detail || error?.message || 'Failed to load schemas';
-      
+      console.error("Failed to load schemas:", error);
+      const errorMessage =
+        error?.response?.data?.detail ||
+        error?.message ||
+        "Failed to load schemas";
+
       // Set connection error state
-      if (errorMessage.includes('Connection refused') || 
-          errorMessage.includes('Not connected to database') ||
-          errorMessage.includes('Connection timed out') ||
-          errorMessage.includes('authentication failed')) {
+      if (
+        errorMessage.includes("Connection refused") ||
+        errorMessage.includes("Not connected to database") ||
+        errorMessage.includes("Connection timed out") ||
+        errorMessage.includes("authentication failed")
+      ) {
         setConnectionError({
           connectionId,
-          message: `Cannot connect to database "${connection?.name || 'Unknown'}". Please check connection settings.`
+          message: `Cannot connect to database "${
+            connection?.name || "Unknown"
+          }". Please check connection settings.`,
         });
       } else {
         setConnectionError({
           connectionId,
-          message: `Failed to load schemas: ${errorMessage}`
+          message: `Failed to load schemas: ${errorMessage}`,
         });
       }
-      
+
       setSchemas([]);
-      showSnackbar(connectionError?.message || 'Failed to load schemas', 'error');
+      showSnackbar(
+        connectionError?.message || "Failed to load schemas",
+        "error"
+      );
     } finally {
       setLoadingSchemas(false);
     }
@@ -183,62 +208,87 @@ const Tables: React.FC = () => {
   const handleSchemaChange = async (schemaName: string) => {
     if (!selectedConnection) return;
 
-    setFormData(prev => ({ ...prev, schema_name: schemaName }));
+    setFormData((prev) => ({ ...prev, schema_name: schemaName }));
 
     try {
-      const tablesData = await connectionApi.getTables(selectedConnection.id!, schemaName);
+      const tablesData = await connectionApi.getTables(
+        selectedConnection.id!,
+        schemaName
+      );
       setTables(tablesData);
     } catch (error: any) {
-      console.error('Failed to load tables:', error);
-      const errorMessage = error?.response?.data?.detail || error?.message || 'Failed to load tables';
-      
+      console.error("Failed to load tables:", error);
+      const errorMessage =
+        error?.response?.data?.detail ||
+        error?.message ||
+        "Failed to load tables";
+
       // Check if it's a connection error
-      if (errorMessage.includes('Connection refused') || errorMessage.includes('Not connected to database')) {
-        showSnackbar(`Cannot connect to database "${selectedConnection.name}". Please check connection settings.`, 'error');
+      if (
+        errorMessage.includes("Connection refused") ||
+        errorMessage.includes("Not connected to database")
+      ) {
+        showSnackbar(
+          `Cannot connect to database "${selectedConnection.name}". Please check connection settings.`,
+          "error"
+        );
       } else {
-        showSnackbar(`Failed to load tables: ${errorMessage}`, 'error');
+        showSnackbar(`Failed to load tables: ${errorMessage}`, "error");
       }
-      
+
       setTables([]);
     }
   };
 
   const handleInputChange = (field: keyof TableConfig, value: any) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
+    setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
   const handleSubmit = async () => {
-    if (!formData.table_name || !formData.schema_name || !formData.connection_id) {
-      showSnackbar('Please fill in all required fields', 'error');
+    if (
+      !formData.table_name ||
+      !formData.schema_name ||
+      !formData.connection_id
+    ) {
+      showSnackbar("Please fill in all required fields", "error");
       return;
     }
 
     try {
+      const payload: TableConfig = {
+        ...(formData as TableConfig),
+        operation_type: formData.operation_type ?? "all",
+      };
+
       if (editingTable) {
         // Update existing table configuration
-        await tableApi.update(editingTable.id!, formData as TableConfig);
-        showSnackbar('Table configuration updated successfully', 'success');
+        await tableApi.update(editingTable.id!, payload);
+        showSnackbar("Table configuration updated successfully", "success");
       } else {
         // Create new table configuration
-        await tableApi.create(formData as TableConfig);
-        showSnackbar('Table configuration created successfully', 'success');
+        await tableApi.create(payload);
+        showSnackbar("Table configuration created successfully", "success");
       }
       handleCloseDialog();
       loadData();
     } catch (error) {
-      const action = editingTable ? 'update' : 'create';
-      showSnackbar(`Failed to ${action} table configuration`, 'error');
+      const action = editingTable ? "update" : "create";
+      showSnackbar(`Failed to ${action} table configuration`, "error");
     }
   };
 
   const handleDelete = async (id: number) => {
-    if (window.confirm('Are you sure you want to delete this table configuration?')) {
+    if (
+      window.confirm(
+        "Are you sure you want to delete this table configuration?"
+      )
+    ) {
       try {
         await tableApi.delete(id);
-        showSnackbar('Table configuration deleted successfully', 'success');
+        showSnackbar("Table configuration deleted successfully", "success");
         loadData();
       } catch (error) {
-        showSnackbar('Failed to delete table configuration', 'error');
+        showSnackbar("Failed to delete table configuration", "error");
       }
     }
   };
@@ -248,7 +298,7 @@ const Tables: React.FC = () => {
     setFormData({
       table_name: tableConfig.table_name,
       schema_name: tableConfig.schema_name,
-      operation_type: tableConfig.operation_type,
+      operation_type: tableConfig.operation_type ?? "all",
       operation_delay: tableConfig.operation_delay,
       batch_size: tableConfig.batch_size,
       enabled: tableConfig.enabled,
@@ -256,30 +306,49 @@ const Tables: React.FC = () => {
     });
 
     // Load the connection and its schemas
-    const connection = (Array.isArray(connections) ? connections : []).find(c => c.id === tableConfig.connection_id);
+    const connection = (Array.isArray(connections) ? connections : []).find(
+      (c) => c.id === tableConfig.connection_id
+    );
     if (connection) {
       setSelectedConnection(connection);
 
       try {
         // Load schemas for the connection
         const schemasData = await connectionApi.getSchemas(connection.id!);
-        const schemaObjects = schemasData.map((schema: string) => ({ name: schema }));
+        const schemaObjects = schemasData.map((schema: string) => ({
+          name: schema,
+        }));
         setSchemas(schemaObjects);
 
         // Load tables for the schema
-        const tablesData = await connectionApi.getTables(connection.id!, tableConfig.schema_name);
+        const tablesData = await connectionApi.getTables(
+          connection.id!,
+          tableConfig.schema_name
+        );
         setTables(tablesData);
       } catch (error: any) {
-        console.error('Failed to load data for editing:', error);
-        const errorMessage = error?.response?.data?.detail || error?.message || 'Failed to load data for editing';
-        
+        console.error("Failed to load data for editing:", error);
+        const errorMessage =
+          error?.response?.data?.detail ||
+          error?.message ||
+          "Failed to load data for editing";
+
         // Check if it's a connection error
-        if (errorMessage.includes('Connection refused') || errorMessage.includes('Not connected to database')) {
-          showSnackbar(`Cannot connect to database "${connection.name}". Please check connection settings.`, 'error');
+        if (
+          errorMessage.includes("Connection refused") ||
+          errorMessage.includes("Not connected to database")
+        ) {
+          showSnackbar(
+            `Cannot connect to database "${connection.name}". Please check connection settings.`,
+            "error"
+          );
         } else {
-          showSnackbar(`Failed to load data for editing: ${errorMessage}`, 'error');
+          showSnackbar(
+            `Failed to load data for editing: ${errorMessage}`,
+            "error"
+          );
         }
-        
+
         // Still open the dialog but with empty schemas/tables
         setSchemas([]);
         setTables([]);
@@ -290,13 +359,22 @@ const Tables: React.FC = () => {
   };
 
   const getConnectionName = (connectionId: number) => {
-    const connection = (Array.isArray(connections) ? connections : []).find(c => c.id === connectionId);
-    return connection ? connection.name : 'Unknown';
+    const connection = (Array.isArray(connections) ? connections : []).find(
+      (c) => c.id === connectionId
+    );
+    return connection ? connection.name : "Unknown";
   };
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+      <Box
+        sx={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          mb: 3,
+        }}
+      >
         <Typography variant="h4">Table Configurations</Typography>
         <Button
           variant="contained"
@@ -310,7 +388,8 @@ const Tables: React.FC = () => {
 
       {connections.length === 0 && (
         <Alert severity="warning" sx={{ mb: 3 }}>
-          No database connections available. Please create a connection first before configuring tables.
+          No database connections available. Please create a connection first
+          before configuring tables.
         </Alert>
       )}
 
@@ -322,72 +401,64 @@ const Tables: React.FC = () => {
                 <TableRow>
                   <TableCell>Table Name</TableCell>
                   <TableCell>Schema</TableCell>
-                  <TableCell>Connection</TableCell>
-                  <TableCell>Operation Type</TableCell>
                   <TableCell>Settings</TableCell>
                   <TableCell>Status</TableCell>
                   <TableCell align="right">Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {(Array.isArray(tableConfigs) ? tableConfigs : []).map((config) => (
-                  <TableRow key={config.id}>
-                    <TableCell>
-                      <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                        <TableIcon sx={{ mr: 1, color: 'primary.main' }} />
-                        <Typography variant="body1" fontWeight="medium">
-                          {config.table_name}
+                {(Array.isArray(tableConfigs) ? tableConfigs : []).map(
+                  (config) => (
+                    <TableRow key={config.id}>
+                      <TableCell>
+                        <Box sx={{ display: "flex", alignItems: "center" }}>
+                          <TableIcon sx={{ mr: 1, color: "primary.main" }} />
+                          <Typography variant="body1" fontWeight="medium">
+                            {config.table_name}
+                          </Typography>
+                        </Box>
+                      </TableCell>
+                      <TableCell>{config.schema_name}</TableCell>
+                      <TableCell>
+                        <Typography variant="body2">
+                          Delay: {config.operation_delay}s
                         </Typography>
-                      </Box>
-                    </TableCell>
-                    <TableCell>{config.schema_name}</TableCell>
-                    <TableCell>{getConnectionName(config.connection_id)}</TableCell>
-                    <TableCell>
-                      <Chip
-                        label={config.operation_type.toUpperCase()}
-                        size="small"
-                        color="primary"
-                        variant="outlined"
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2">
-                        Delay: {config.operation_delay}s
-                      </Typography>
-                      <Typography variant="body2">
-                        Batch: {config.batch_size}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Chip
-                        label={config.enabled ? 'Enabled' : 'Disabled'}
-                        size="small"
-                        color={config.enabled ? 'success' : 'warning'}
-                      />
-                    </TableCell>
-                    <TableCell align="right">
-                      <IconButton
-                        size="small"
-                        onClick={() => handleEdit(config)}
-                        color="primary"
-                      >
-                        <EditIcon />
-                      </IconButton>
-                      <IconButton
-                        size="small"
-                        onClick={() => handleDelete(config.id!)}
-                        color="error"
-                      >
-                        <DeleteIcon />
-                      </IconButton>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                        <Typography variant="body2">
+                          Batch: {config.batch_size}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Chip
+                          label={config.enabled ? "Enabled" : "Disabled"}
+                          size="small"
+                          color={config.enabled ? "success" : "warning"}
+                        />
+                      </TableCell>
+                      <TableCell align="right">
+                        <IconButton
+                          size="small"
+                          onClick={() => handleEdit(config)}
+                          color="primary"
+                        >
+                          <EditIcon />
+                        </IconButton>
+                        <IconButton
+                          size="small"
+                          onClick={() => handleDelete(config.id!)}
+                          color="error"
+                        >
+                          <DeleteIcon />
+                        </IconButton>
+                      </TableCell>
+                    </TableRow>
+                  )
+                )}
                 {tableConfigs.length === 0 && !loading && (
                   <TableRow>
-                    <TableCell colSpan={7} align="center" sx={{ py: 4 }}>
+                    <TableCell colSpan={5} align="center" sx={{ py: 4 }}>
                       <Typography variant="body2" color="text.secondary">
-                        No table configurations found. Configure your first table to get started with automation.
+                        No table configurations found. Configure your first
+                        table to get started with automation.
                       </Typography>
                     </TableCell>
                   </TableRow>
@@ -400,34 +471,45 @@ const Tables: React.FC = () => {
 
       {/* Configure Table Dialog */}
       <Dialog open={open} onClose={handleCloseDialog} maxWidth="md" fullWidth>
-        <DialogTitle>{editingTable ? 'Edit Table Configuration' : 'Configure Table for Automation'}</DialogTitle>
+        <DialogTitle>
+          {editingTable
+            ? "Edit Table Configuration"
+            : "Configure Table for Automation"}
+        </DialogTitle>
         <DialogContent>
-          <Box sx={{ pt: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <Box sx={{ pt: 2, display: "flex", flexDirection: "column", gap: 2 }}>
             {loadingSchemas ? (
-              <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+              <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
                 <CircularProgress size={24} />
               </Box>
             ) : connectionError?.connectionId === formData.connection_id ? (
               <Alert severity="error" sx={{ mb: 1 }}>
-                {connectionError.message}
+                {connectionError?.message ?? ""}
               </Alert>
             ) : null}
-            
+
             <FormControl fullWidth>
               <InputLabel>Connection</InputLabel>
               <Select
-                value={formData.connection_id || ''}
+                value={formData.connection_id || ""}
                 label="Connection"
                 onChange={(e) => {
                   const value = e.target.value;
-                  handleConnectionChange(typeof value === 'string' ? parseInt(value, 10) : value);
+                  handleConnectionChange(
+                    typeof value === "string" ? parseInt(value, 10) : value
+                  );
                 }}
               >
-                {(Array.isArray(connections) ? connections : []).map((connection) => (
-                  <MenuItem key={`connection-${connection.id || connection.name}`} value={connection.id?.toString() || ''}>
-                    {connection.name} ({connection.db_type})
-                  </MenuItem>
-                ))}
+                {(Array.isArray(connections) ? connections : []).map(
+                  (connection) => (
+                    <MenuItem
+                      key={`connection-${connection.id || connection.name}`}
+                      value={connection.id?.toString() || ""}
+                    >
+                      {connection.name} ({connection.db_type})
+                    </MenuItem>
+                  )
+                )}
               </Select>
             </FormControl>
 
@@ -439,11 +521,22 @@ const Tables: React.FC = () => {
                   label="Schema"
                   onChange={(e) => handleSchemaChange(e.target.value)}
                 >
-                  {(Array.isArray(schemas) ? schemas : []).map((schema, index) => (
-                    <MenuItem key={`schema-${typeof schema === 'string' ? schema : schema.name || `unnamed-${index}`}`} value={typeof schema === 'string' ? schema : schema.name}>
-                      {typeof schema === 'string' ? schema : schema.name}
-                    </MenuItem>
-                  ))}
+                  {(Array.isArray(schemas) ? schemas : []).map(
+                    (schema, index) => (
+                      <MenuItem
+                        key={`schema-${
+                          typeof schema === "string"
+                            ? schema
+                            : schema.name || `unnamed-${index}`
+                        }`}
+                        value={
+                          typeof schema === "string" ? schema : schema.name
+                        }
+                      >
+                        {typeof schema === "string" ? schema : schema.name}
+                      </MenuItem>
+                    )
+                  )}
                 </Select>
               </FormControl>
             )}
@@ -454,10 +547,15 @@ const Tables: React.FC = () => {
                 <Select
                   value={formData.table_name}
                   label="Table"
-                  onChange={(e) => handleInputChange('table_name', e.target.value)}
+                  onChange={(e) =>
+                    handleInputChange("table_name", e.target.value)
+                  }
                 >
                   {(Array.isArray(tables) ? tables : []).map((table, index) => (
-                    <MenuItem key={`table-${table.name || `unnamed-${index}`}`} value={table.name}>
+                    <MenuItem
+                      key={`table-${table.name || `unnamed-${index}`}`}
+                      value={table.name}
+                    >
                       {table.name}
                     </MenuItem>
                   ))}
@@ -465,38 +563,33 @@ const Tables: React.FC = () => {
               </FormControl>
             )}
 
-            <Box sx={{ display: 'flex', gap: 2 }}>
-              <Box sx={{ flex: '1 1 50%' }}>
-                <FormControl fullWidth>
-                  <InputLabel>Operation Type</InputLabel>
-                  <Select
-                    value={formData.operation_type}
-                    label="Operation Type"
-                    onChange={(e) => handleInputChange('operation_type', e.target.value as TableConfig['operation_type'])}
-                  >
-                    <MenuItem value="all">All Operations</MenuItem>
-                    <MenuItem value="insert">Insert Only</MenuItem>
-                    <MenuItem value="update">Update Only</MenuItem>
-                    <MenuItem value="delete">Delete Only</MenuItem>
-                  </Select>
-                </FormControl>
-              </Box>
-              <Box sx={{ flex: '1 1 25%' }}>
+            <Box sx={{ display: "flex", gap: 2 }}>
+              <Box sx={{ flex: "1 1 50%" }}>
                 <TextField
                   label="Delay (seconds)"
                   type="number"
                   value={formData.operation_delay}
-                  onChange={(e) => handleInputChange('operation_delay', parseFloat(e.target.value) || 1)}
+                  onChange={(e) =>
+                    handleInputChange(
+                      "operation_delay",
+                      parseFloat(e.target.value) || 1
+                    )
+                  }
                   fullWidth
                   inputProps={{ min: 0.1, step: 0.1 }}
                 />
               </Box>
-              <Box sx={{ flex: '1 1 25%' }}>
+              <Box sx={{ flex: "1 1 50%" }}>
                 <TextField
                   label="Batch Size"
                   type="number"
                   value={formData.batch_size}
-                  onChange={(e) => handleInputChange('batch_size', parseInt(e.target.value) || 1)}
+                  onChange={(e) =>
+                    handleInputChange(
+                      "batch_size",
+                      parseInt(e.target.value) || 1
+                    )
+                  }
                   fullWidth
                   inputProps={{ min: 1 }}
                 />
@@ -506,9 +599,11 @@ const Tables: React.FC = () => {
             <FormControl fullWidth>
               <InputLabel>Status</InputLabel>
               <Select
-                value={formData.enabled ? 'enabled' : 'disabled'}
+                value={formData.enabled ? "enabled" : "disabled"}
                 label="Status"
-                onChange={(e) => handleInputChange('enabled', e.target.value === 'enabled')}
+                onChange={(e) =>
+                  handleInputChange("enabled", e.target.value === "enabled")
+                }
               >
                 <MenuItem value="enabled">Enabled</MenuItem>
                 <MenuItem value="disabled">Disabled</MenuItem>
@@ -521,9 +616,13 @@ const Tables: React.FC = () => {
           <Button
             onClick={handleSubmit}
             variant="contained"
-            disabled={!formData.table_name || !formData.schema_name || !formData.connection_id}
+            disabled={
+              !formData.table_name ||
+              !formData.schema_name ||
+              !formData.connection_id
+            }
           >
-            {editingTable ? 'Update Configuration' : 'Configure Table'}
+            {editingTable ? "Update Configuration" : "Configure Table"}
           </Button>
         </DialogActions>
       </Dialog>
@@ -532,9 +631,13 @@ const Tables: React.FC = () => {
         open={snackbar.open}
         autoHideDuration={4000}
         onClose={handleCloseSnackbar}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
       >
-        <Alert onClose={handleCloseSnackbar} severity={snackbar.severity} sx={{ width: '100%' }}>
+        <Alert
+          onClose={handleCloseSnackbar}
+          severity={snackbar.severity}
+          sx={{ width: "100%" }}
+        >
           {snackbar.message}
         </Alert>
       </Snackbar>

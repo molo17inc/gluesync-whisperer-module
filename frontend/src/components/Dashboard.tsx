@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from "react";
+import Grid from "@mui/material/Grid";
 import {
-  Grid,
   Card,
   CardContent,
   Typography,
@@ -8,7 +8,7 @@ import {
   Chip,
   LinearProgress,
   Alert,
-} from '@mui/material';
+} from "@mui/material";
 import {
   Storage as StorageIcon,
   TableChart as TableIcon,
@@ -16,12 +16,24 @@ import {
   CheckCircle as CheckCircleIcon,
   Error as ErrorIcon,
   Warning as WarningIcon,
-} from '@mui/icons-material';
-import { connectionApi, pillowFightApi, Connection, PillowFightStatus } from '../services/api';
+} from "@mui/icons-material";
+import {
+  connectionApi,
+  pillowFightApi,
+  tableApi,
+  Connection,
+  PillowFightJobStatus,
+} from "../services/api";
 
 const Dashboard: React.FC = () => {
   const [connections, setConnections] = useState<Connection[]>([]);
-  const [pillowFightStatus, setPillowFightStatus] = useState<PillowFightStatus | null>(null);
+  const [jobSummary, setJobSummary] = useState<{
+    status: string;
+    message?: string;
+    activeJobs: number;
+    runningTables: number;
+  } | null>(null);
+  const [tableCount, setTableCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,16 +47,19 @@ const Dashboard: React.FC = () => {
   const loadDashboardData = async () => {
     try {
       setLoading(true);
-      const [connectionsData, statusData] = await Promise.all([
+      const [connectionsData, jobsResponse, tablesData] = await Promise.all([
         connectionApi.list().catch(() => []),
-        pillowFightApi.getStatus().catch(() => null),
+        pillowFightApi.listJobs().catch(() => ({ jobs: [] })),
+        tableApi.list().catch(() => []),
       ]);
       setConnections(Array.isArray(connectionsData) ? connectionsData : []);
-      setPillowFightStatus(statusData);
+      const jobs = Array.isArray(jobsResponse?.jobs) ? jobsResponse.jobs : [];
+      setJobSummary(deriveJobSummary(jobs));
+      setTableCount(Array.isArray(tablesData) ? tablesData.length : 0);
       setError(null);
     } catch (err) {
-      setError('Failed to load dashboard data');
-      console.error('Dashboard error:', err);
+      setError("Failed to load dashboard data");
+      console.error("Dashboard error:", err);
     } finally {
       setLoading(false);
     }
@@ -52,37 +67,87 @@ const Dashboard: React.FC = () => {
 
   const loadStatus = async () => {
     try {
-      const status = await pillowFightApi.getStatus().catch(() => null);
-      setPillowFightStatus(status);
+      const response = await pillowFightApi
+        .listJobs()
+        .catch(() => ({ jobs: [] }));
+      const jobs = Array.isArray(response?.jobs) ? response.jobs : [];
+      setJobSummary(deriveJobSummary(jobs));
     } catch (err) {
-      console.error('Status update error:', err);
+      console.error("Status update error:", err);
     }
+  };
+
+  const deriveJobSummary = (jobs: PillowFightJobStatus[]) => {
+    if (!jobs.length) {
+      return {
+        status: "idle",
+        message: "No pillow fight jobs have been started yet.",
+        activeJobs: 0,
+        runningTables: 0,
+      };
+    }
+
+    const normalizedStatuses = jobs.map(
+      (job) => job.status?.toLowerCase() ?? "unknown"
+    );
+    const activeJobs = jobs.filter((job) =>
+      ["pending", "running"].includes(job.status?.toLowerCase() ?? "")
+    ).length;
+    const runningTables = jobs.reduce(
+      (sum, job) =>
+        sum +
+        job.tables.filter((table) =>
+          ["pending", "running"].includes(table.status?.toLowerCase() ?? "")
+        ).length,
+      0
+    );
+
+    let status = "completed";
+    let message = "All pillow fight jobs are completed.";
+
+    if (normalizedStatuses.includes("error")) {
+      status = "error";
+      message = "One or more jobs encountered errors.";
+    } else if (normalizedStatuses.includes("running")) {
+      status = "running";
+      message = "Jobs are currently running.";
+    } else if (normalizedStatuses.includes("pending")) {
+      status = "pending";
+      message = "Jobs are pending execution.";
+    }
+
+    return {
+      status,
+      message,
+      activeJobs,
+      runningTables,
+    };
   };
 
   const getStatusColor = (status: string) => {
     switch (status?.toLowerCase()) {
-      case 'running':
-        return 'success';
-      case 'idle':
-        return 'default';
-      case 'stopped':
-        return 'warning';
-      case 'error':
-        return 'error';
+      case "running":
+        return "success";
+      case "idle":
+        return "default";
+      case "stopped":
+        return "warning";
+      case "error":
+        return "error";
       default:
-        return 'default';
+        return "default";
     }
   };
 
   const getStatusIcon = (status: string) => {
     switch (status?.toLowerCase()) {
-      case 'running':
+      case "running":
         return <CheckCircleIcon />;
-      case 'idle':
+      case "idle":
         return <CheckCircleIcon />;
-      case 'stopped':
+      case "stopped":
         return <WarningIcon />;
-      case 'error':
+      case "error":
         return <ErrorIcon />;
       default:
         return <CheckCircleIcon />;
@@ -91,7 +156,7 @@ const Dashboard: React.FC = () => {
 
   if (loading) {
     return (
-      <Box sx={{ width: '100%', mt: 2 }}>
+      <Box sx={{ width: "100%", mt: 2 }}>
         <LinearProgress />
       </Box>
     );
@@ -116,21 +181,42 @@ const Dashboard: React.FC = () => {
         <Grid item xs={12} md={6} lg={4}>
           <Card>
             <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                <PlayIcon sx={{ mr: 1, color: 'primary.main' }} />
+              <Box sx={{ display: "flex", alignItems: "center", mb: 2 }}>
+                <PlayIcon sx={{ mr: 1, color: "primary.main" }} />
                 <Typography variant="h6">Pillow Fight Status</Typography>
               </Box>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                {pillowFightStatus && getStatusIcon(pillowFightStatus.status)}
+              <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                {jobSummary && getStatusIcon(jobSummary.status)}
                 <Chip
-                  label={pillowFightStatus?.status || 'Unknown'}
-                  color={getStatusColor(pillowFightStatus?.status || 'unknown')}
+                  label={
+                    jobSummary?.status
+                      ? jobSummary.status.toUpperCase()
+                      : "UNKNOWN"
+                  }
+                  color={getStatusColor(jobSummary?.status || "unknown")}
                   size="small"
                 />
               </Box>
-              {pillowFightStatus?.message && (
-                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                  {pillowFightStatus.message}
+              {jobSummary?.message && (
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ mt: 1 }}
+                >
+                  {jobSummary.message}
+                </Typography>
+              )}
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                Active jobs: {jobSummary?.activeJobs ?? 0} • Active tables:{" "}
+                {jobSummary?.runningTables ?? 0}
+              </Typography>
+              {jobSummary?.status === "idle" && (
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ mt: 1 }}
+                >
+                  Start a pillow fight job from the Pillow Fight console.
                 </Typography>
               )}
             </CardContent>
@@ -141,8 +227,8 @@ const Dashboard: React.FC = () => {
         <Grid item xs={12} md={6} lg={4}>
           <Card>
             <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                <StorageIcon sx={{ mr: 1, color: 'primary.main' }} />
+              <Box sx={{ display: "flex", alignItems: "center", mb: 2 }}>
+                <StorageIcon sx={{ mr: 1, color: "primary.main" }} />
                 <Typography variant="h6">Database Connections</Typography>
               </Box>
               <Typography variant="h3" color="primary.main">
@@ -159,12 +245,12 @@ const Dashboard: React.FC = () => {
         <Grid item xs={12} md={6} lg={4}>
           <Card>
             <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                <TableIcon sx={{ mr: 1, color: 'primary.main' }} />
+              <Box sx={{ display: "flex", alignItems: "center", mb: 2 }}>
+                <TableIcon sx={{ mr: 1, color: "primary.main" }} />
                 <Typography variant="h6">Configured Tables</Typography>
               </Box>
               <Typography variant="h3" color="primary.main">
-                0
+                {tableCount}
               </Typography>
               <Typography variant="body2" color="text.secondary">
                 Tables ready for automation
@@ -182,14 +268,17 @@ const Dashboard: React.FC = () => {
               </Typography>
               {safeConnections.length === 0 ? (
                 <Typography variant="body2" color="text.secondary">
-                  No connections configured yet. Create your first connection to get started.
+                  No connections configured yet. Create your first connection to
+                  get started.
                 </Typography>
               ) : (
-                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
                   {safeConnections.slice(0, 5).map((connection) => (
                     <Chip
                       key={connection?.id || Math.random()}
-                      label={`${connection?.name || 'Unknown'} (${connection?.db_type || 'unknown'})`}
+                      label={`${connection?.name || "Unknown"} (${
+                        connection?.db_type || "unknown"
+                      })`}
                       variant="outlined"
                       size="small"
                     />

@@ -155,8 +155,8 @@ class TableSchemaResponse(BaseModel):
 class TableOperationRequest(BaseModel):
     connection_id: int
     table_ids: List[int]
-    operation_type: OperationType = OperationType.ALL
-    operation_types: Optional[List[OperationType]] = None
+    operation_type: Optional[OperationType] = None
+    operation_types: List[OperationType] = Field(default_factory=list)
     operation_delay: float = 1.0
     batch_size: int = 1
 
@@ -164,8 +164,8 @@ class TableOperationRequest(BaseModel):
 class PillowFightJobRequest(BaseModel):
     connection_id: int
     table_ids: List[int]
-    operation_type: OperationType = OperationType.ALL
-    operation_types: Optional[List[OperationType]] = None
+    operation_type: Optional[OperationType] = None
+    operation_types: List[OperationType] = Field(default_factory=list)
     operation_delay: float = 1.0
     batch_size: int = 1
 
