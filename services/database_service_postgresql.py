@@ -149,6 +149,10 @@ class PostgreSQLDatabaseService(DatabaseServiceBase):
             password=connection.password
         )
         
+        # PostgreSQL statements always expect a schema parameter, so fall back to a
+        # sensible default (connection database or standard 'public') when none is provided.
+        target_schema = schema_name or connection.database or getattr(connection, "database_name", None) or "public"
+        
         try:
             # Connect to the database
             success = connector.connect()
@@ -162,10 +166,7 @@ class PostgreSQLDatabaseService(DatabaseServiceBase):
             # Get columns information
             columns_sql = self.sql_statements.get_columns_statement(schema_name, table_name)
             
-            if schema_name:
-                cursor.execute(columns_sql, (schema_name, table_name))
-            else:
-                cursor.execute(columns_sql, (table_name,))
+            cursor.execute(columns_sql, (target_schema, table_name))
             
             # Process columns
             columns = []
@@ -179,17 +180,14 @@ class PostgreSQLDatabaseService(DatabaseServiceBase):
             
             # Get primary keys
             pk_sql = self.sql_statements.get_primary_keys_statement(schema_name, table_name)
-            if schema_name:
-                cursor.execute(pk_sql, (schema_name, table_name))
-            else:
-                cursor.execute(pk_sql, (table_name,))
+            cursor.execute(pk_sql, (target_schema, table_name))
                 
             primary_keys = [row[0] for row in cursor.fetchall()]
             
             # Create the response
             schema_response = TableSchemaResponse(
                 table_name=table_name,
-                schema_name=schema_name,
+                schema_name=target_schema,
                 columns=columns,
                 primary_keys=primary_keys,
                 foreign_keys=[]
