@@ -276,7 +276,8 @@ class DatabaseServiceBase(ABC):
                     # Test that we can create a cursor
                     if hasattr(connector, 'connection') and connector.connection:
                         cursor = connector.connection.cursor()
-                        cursor.execute("SELECT 1")
+                        health_query, params = self._health_check_statement(connection)
+                        cursor.execute(health_query, params)
                         cursor.close()
                         return True
                 return False
@@ -284,6 +285,31 @@ class DatabaseServiceBase(ABC):
         except Exception as e:
             logger.error(f"Error testing connection: {str(e)}")
             return False
+
+    def _health_check_statement(self, connection: DatabaseConnection) -> tuple[str, list]:
+        """Return a lightweight statement that can run on the target database for health checks."""
+        db_type = connection.db_type
+        if isinstance(db_type, str):
+            try:
+                db_type = DatabaseType(db_type)
+            except ValueError:
+                try:
+                    db_type = DatabaseType[db_type.upper()]
+                except Exception:
+                    db_type = None
+        if db_type == DatabaseType.AS400:
+            return "SELECT 1 FROM SYSIBM.SYSDUMMY1", []
+        if db_type == DatabaseType.ORACLE:
+            return "SELECT 1 FROM DUAL", []
+        if db_type == DatabaseType.MSSQL:
+            return "SELECT 1", []
+        if db_type == DatabaseType.POSTGRESQL:
+            return "SELECT 1", []
+        if db_type == DatabaseType.MYSQL:
+            return "SELECT 1", []
+        if db_type == DatabaseType.SQLITE:
+            return "SELECT 1", []
+        return "SELECT 1", []
     
     @abstractmethod
     def get_schemas(self, connection_id: int) -> List[str]:
