@@ -119,6 +119,52 @@ class PillowFightService:
                 )
             self._schema_cache[cache_key] = schema
         return schema
+    
+    @staticmethod
+    def _safe_int(value: Any, default: int = 0) -> int:
+        """Best-effort conversion of various integer-like objects (str, BigInteger, etc.) to int."""
+        if value is None:
+            return default
+        if isinstance(value, int):
+            return value
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            try:
+                return int(str(value))
+            except Exception:
+                return default
+    
+    def _generate_sequential_primary_key(self, engine, table: TableConfig, column_name: str) -> int:
+        """Generate a unique numeric primary key by querying MAX(column) and adding a delta."""
+        table_name = table.table_name
+        if table.schema_name:
+            table_name = f"{table.schema_name}.{table_name}"
+        max_query = f"SELECT MAX({column_name}) AS max_id FROM {table_name}"
+        max_value = 0
+        try:
+            if hasattr(engine, "execute_query") and callable(engine.execute_query):
+                result = engine.execute_query(max_query)
+                if result and result[0].get("max_id") is not None:
+                    max_value = self._safe_int(result[0]["max_id"], 0)
+            elif hasattr(engine, "connection") and engine.connection:
+                cursor = engine.connection.cursor()
+                cursor.execute(max_query)
+                row = cursor.fetchone()
+                cursor.close()
+                if row and row[0] is not None:
+                    max_value = self._safe_int(row[0], 0)
+            elif hasattr(engine, "execute") and callable(engine.execute):
+                result = engine.execute(max_query)
+                row = result.fetchone()
+                if row:
+                    candidate = row[0] if isinstance(row, (list, tuple)) else row.get("max_id")
+                    if candidate is not None:
+                        max_value = self._safe_int(candidate, 0)
+        except Exception as e:
+            logger.warning(f"Unable to determine max value for {table_name}.{column_name}: {e}")
+        # Add random delta to reduce collisions when multiple threads insert concurrently
+        return max_value + random.randint(1, 100)
 
     def _ensure_resumed(self):
         """Resume any pending/running jobs after a restart."""
@@ -729,46 +775,31 @@ class PillowFightService:
             
             # Generate random data for each column
             data = {}
+            db_type_str = (
+                connection.db_type.value
+                if hasattr(connection.db_type, "value")
+                else str(connection.db_type)
+            ).lower() if connection.db_type else ""
+            
             for col_name, col_info in columns_dict.items():
-                # Skip auto-increment columns or primary keys
-                if col_name in primary_keys or col_info.get("primary_key", False):
-                    logger.info(f"Skipping primary key column: {col_name}")
-                    # For MSSQL, we need to generate a unique value for primary keys
-                    # instead of skipping them, as they might not be auto-increment
-                    if connection.db_type.lower() == 'mssql':
-                        import random
-                        
-                        # Get the max ID from the table to ensure we generate a unique ID
-                        table_name = table.table_name
-                        if table.schema_name:
-                            table_name = f"{table.schema_name}.{table_name}"
-                        
-                        try:
-                            # Query to get the max ID
-                            max_id_query = f"SELECT MAX({col_name}) as max_id FROM {table_name}"
-                            max_id_result = engine.execute_query(max_id_query)
-                            
-                            # Extract the max ID
-                            max_id = 0
-                            if max_id_result and len(max_id_result) > 0 and max_id_result[0].get('max_id') is not None:
-                                max_id = int(max_id_result[0].get('max_id', 0))
-                                
-                            # Generate a unique ID that's higher than the max ID
-                            new_id = max_id + random.randint(1, 100)
-                            logger.info(f"Generated unique ID {new_id} for primary key {col_name} (max existing ID: {max_id})")
-                            data[col_name] = new_id
-                        except Exception as e:
-                            logger.warning(f"Error getting max ID for {col_name}: {str(e)}")
-                            # Fallback to a large random number if we can't get the max ID
-                            data[col_name] = random.randint(10000, 99999)
+                is_primary = col_name in primary_keys or col_info.get("primary_key", False)
+                is_auto_increment = col_info.get("auto_increment", False)
+                
+                if is_primary and is_auto_increment:
+                    logger.info(f"Skipping auto-increment primary key column: {col_name}")
                     continue
                 
-                # Generate random data based on column type and name
-                column_type = col_info["type"]
-                # Add column name as an attribute to the column_type if it's an object
+                column_type = col_info.get("type")
                 if hasattr(column_type, '__dict__'):
                     column_type._col_name = col_name
-                data[col_name] = self._generate_random_data(column_type)
+                
+                if is_primary and not is_auto_increment:
+                    logger.info(f"Generating value for non auto-increment primary key: {col_name}")
+                    value = self._generate_sequential_primary_key(engine, table, col_name)
+                else:
+                    value = self._generate_random_data(column_type)
+                
+                data[col_name] = value
             
             logger.info(f"Generated data for insert: {data}")
             
@@ -805,7 +836,7 @@ class PillowFightService:
                     engine.execute_query(stmt, list(data.values()))
                 except Exception as e:
                     logger.error(f"Error executing insert query: {str(e)}")
-                    # Continue despite errors - we've logged the issue
+                    raise
             else:
                 # For SQLAlchemy engine
                 logger.info(f"Using SQLAlchemy engine for insert operation")
@@ -1142,9 +1173,9 @@ class PillowFightService:
                     # For JDBC, count_result is already a list of dictionaries
                     if len(count_result) > 0:
                         # Extract count value from the first row
-                        count_value = count_result[0].get('cnt', 0)
+                        count_value = self._safe_int(count_result[0].get('cnt', 0), 0)
                         
-                        if count_value == 0:
+                        if count_value <= 0:
                             logger.info(f"No records found in {table_name}")
                             return None
                         
@@ -1198,13 +1229,13 @@ class PillowFightService:
                             cursor = db_connector.connection.cursor()
                             cursor.execute(count_stmt)
                             row = cursor.fetchone()
-                            count_value = row[0] if row else 0
+                            count_value = self._safe_int(row[0] if row else 0, 0)
                             cursor.close()
                         except Exception as e:
                             logger.error(f"Error executing count query for {table_name}: {str(e)}")
                             return None
                         
-                        if count_value == 0:
+                        if count_value <= 0:
                             logger.info(f"No records found in {table_name}")
                             return None
                         
@@ -1256,9 +1287,10 @@ class PillowFightService:
                             row = count_result.fetchone()
                             if row:
                                 # Extract count value - might be at index 0 or might have a name 'cnt'
-                                count_value = row[0] if isinstance(row, (list, tuple)) else row.get('cnt', 0)
+                                raw_count = row[0] if isinstance(row, (list, tuple)) else row.get('cnt', 0)
+                                count_value = self._safe_int(raw_count, 0)
                                 
-                                if count_value == 0:
+                                if count_value <= 0:
                                     logger.info(f"No records found in {table_name}")
                                     return None
                                 
