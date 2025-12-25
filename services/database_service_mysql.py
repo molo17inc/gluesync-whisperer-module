@@ -179,11 +179,17 @@ class MySQLDatabaseService(DatabaseServiceBase):
             logger.debug(f"MySQL schema raw column rows count: {len(column_rows)}")
             for row in column_rows:
                 column_name = str(row[0])
+                data_type = row[2] if len(row) > 2 else None
+                column_type = row[9] if len(row) > 9 else data_type
+                extra_info = row[11] if len(row) > 11 else ""
+                type_str = str(column_type) if column_type is not None else str(data_type or "")
+                extra_str = str(extra_info or "")
                 columns_dict[column_name] = {
                     'name': column_name,
-                    'type': row[3],
+                    'type': type_str,
                     'nullable': row[13] == 'YES' if len(row) > 13 else True,
                     'primary_key': row[12] == 1 if len(row) > 12 else False,
+                    'auto_increment': 'auto_increment' in extra_str.lower(),
                 }
             
             # Get primary keys
