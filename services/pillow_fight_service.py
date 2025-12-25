@@ -32,7 +32,7 @@ import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from models import (
+from schemas import (
     ConnectionStatus,
     DatabaseConnection,
     DatabaseType,
@@ -40,6 +40,7 @@ from models import (
     PillowFightJobStatus as JobStatus,
     PillowFightTableStatus,
     TableConfig,
+    TableSchemaResponse,
 )
 from services.database_service import DatabaseService
 from services.pillow_fight_job_store import PillowFightJobStore
@@ -69,12 +70,56 @@ class PillowFightService:
         self.status = {}  # {(job_id, table_id): status_dict}
         self._job_threads: Dict[str, Dict[int, threading.Thread]] = {}
         self._active_jobs: Dict[str, Dict[str, Any]] = {}
-        self._schema_cache = {}  # {(connection_id, table_name, schema_name): TableSchemaResponse}
+        self._schema_cache: Dict[Tuple[int, str, Optional[str]], TableSchemaResponse] = {}
         self._resume_lock = threading.Lock()
         self._job_lock = threading.Lock()
         self._resumed = False
         self.error_threshold = int(os.getenv("PILLOW_FIGHT_TABLE_ERROR_THRESHOLD", "5"))
     
+    def _schema_cache_key(self, connection: DatabaseConnection, table: TableConfig) -> Tuple[int, str, Optional[str]]:
+        return (connection.id, table.table_name, table.schema_name)
+
+    def _schema_is_valid(self, schema: Optional[TableSchemaResponse]) -> bool:
+        if not schema:
+            return False
+        columns = getattr(schema, "columns", None)
+        return isinstance(columns, dict) and bool(columns)
+
+    def _sanitize_schema(self, schema: TableSchemaResponse) -> TableSchemaResponse:
+        columns = getattr(schema, "columns", {}) or {}
+        if isinstance(columns, list):
+            column_dict: Dict[str, Any] = {}
+            for entry in columns:
+                if isinstance(entry, dict):
+                    name = entry.get("name")
+                    if name:
+                        column_dict[str(name)] = entry
+            columns = column_dict
+        elif isinstance(columns, dict):
+            columns = {str(name): definition for name, definition in columns.items()}
+        schema.columns = columns  # type: ignore[assignment]
+        schema.primary_keys = [str(pk) for pk in getattr(schema, "primary_keys", []) if pk is not None]  # type: ignore[assignment]
+        return schema
+
+    def _load_table_schema(self, connection: DatabaseConnection, table: TableConfig) -> TableSchemaResponse:
+        cache_key = self._schema_cache_key(connection, table)
+        schema = self._schema_cache.get(cache_key)
+        if schema and not self._schema_is_valid(schema):
+            logger.warning(
+                f"Cached schema for {table.schema_name}.{table.table_name} is empty; refreshing from database"
+            )
+            self._schema_cache.pop(cache_key, None)
+            schema = None
+        if not schema:
+            fresh_schema = self.db_service.get_table_schema(connection.id, table.table_name, table.schema_name)
+            schema = self._sanitize_schema(fresh_schema)
+            if not self._schema_is_valid(schema):
+                raise ValueError(
+                    f"Schema introspection returned no columns for {table.schema_name}.{table.table_name}"
+                )
+            self._schema_cache[cache_key] = schema
+        return schema
+
     def _ensure_resumed(self):
         """Resume any pending/running jobs after a restart."""
         with self._resume_lock:
