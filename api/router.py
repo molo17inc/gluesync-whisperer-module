@@ -178,10 +178,20 @@ def test_connection(connection_id: int, db = Depends(get_db)):
     
     # Test connection
     try:
-        result = db_service.test_connection(connection_id)
-        return result
+        success = db_service.test_connection(connection_id)
+        status_value = ConnectionStatus.CONNECTED if success else ConnectionStatus.ERROR
+        message = "Connection successful." if success else "Unable to establish connection with provided settings."
+        try:
+            db_service.update_connection_status(connection_id, status_value)
+        except Exception as status_error:
+            logger.warning(f"Unable to update connection status after test: {status_error}")
+        return ConnectionTestResponse(success=success, message=message)
     except Exception as e:
         logger.error(f"Error testing connection: {str(e)}")
+        try:
+            db_service.update_connection_status(connection_id, ConnectionStatus.ERROR)
+        except Exception:
+            pass
         return ConnectionTestResponse(success=False, message=str(e))
 
 

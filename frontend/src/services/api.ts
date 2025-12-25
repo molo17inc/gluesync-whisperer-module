@@ -109,6 +109,11 @@ export interface QueryRequest {
   query: string;
 }
 
+export interface ConnectionTestResponse {
+  success: boolean;
+  message: string;
+}
+
 // API Methods
 export const connectionApi = {
   // Create a new connection
@@ -137,6 +142,12 @@ export const connectionApi = {
   // Update connection status
   updateStatus: async (id: number, status: string): Promise<void> => {
     await api.put(`/connections/${id}/status`, { status });
+  },
+
+  // Test a connection
+  test: async (id: number): Promise<ConnectionTestResponse> => {
+    const response = await api.post(`/connections/${id}/test`);
+    return response.data;
   },
 
   // Get schemas for a connection
