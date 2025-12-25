@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   Box,
   Typography,
@@ -26,6 +26,8 @@ import {
   IconButton,
   Alert,
   Snackbar,
+  Stack,
+  LinearProgress,
 } from "@mui/material";
 import {
   Add as AddIcon,
@@ -76,6 +78,9 @@ const Tables: React.FC = () => {
     connectionId: number | null;
     message: string;
   } | null>(null);
+  const [connectionFilter, setConnectionFilter] = useState<"all" | number>(
+    "all"
+  );
 
   useEffect(() => {
     loadData();
@@ -358,11 +363,192 @@ const Tables: React.FC = () => {
     setOpen(true);
   };
 
-  const getConnectionName = (connectionId: number) => {
-    const connection = (Array.isArray(connections) ? connections : []).find(
-      (c) => c.id === connectionId
+  const connectionLookup = useMemo(() => {
+    const map: Record<number, Connection> = {};
+    (Array.isArray(connections) ? connections : []).forEach((connection) => {
+      if (connection.id != null) {
+        map[connection.id] = connection;
+      }
+    });
+    return map;
+  }, [connections]);
+
+  const filteredTableConfigs = useMemo(() => {
+    const configs = Array.isArray(tableConfigs) ? tableConfigs : [];
+    if (connectionFilter === "all") {
+      return configs;
+    }
+    return configs.filter(
+      (config) => config.connection_id === Number(connectionFilter)
     );
-    return connection ? connection.name : "Unknown";
+  }, [tableConfigs, connectionFilter]);
+
+  const groupedTableConfigs = useMemo(() => {
+    const groups: Record<number, TableConfig[]> = {};
+    filteredTableConfigs.forEach((config) => {
+      const key = config.connection_id;
+      if (!groups[key]) {
+        groups[key] = [];
+      }
+      groups[key].push(config);
+    });
+    return groups;
+  }, [filteredTableConfigs]);
+
+  const connectionColorMap = useMemo(() => {
+    const palette = [
+      "primary",
+      "secondary",
+      "success",
+      "info",
+      "warning",
+      "default",
+    ] as const;
+    const map: Record<number, (typeof palette)[number]> = {};
+    (Array.isArray(connections) ? connections : []).forEach(
+      (connection, index) => {
+        if (connection.id != null) {
+          map[connection.id] = palette[index % palette.length];
+        }
+      }
+    );
+    return map;
+  }, [connections]);
+
+  const connectionFilterChips = (
+    <Stack direction="row" spacing={1} flexWrap="wrap" mb={2} rowGap={1}>
+      <Chip
+        label="All connections"
+        color={connectionFilter === "all" ? "primary" : "default"}
+        variant={connectionFilter === "all" ? "filled" : "outlined"}
+        onClick={() => setConnectionFilter("all")}
+      />
+      {(Array.isArray(connections) ? connections : []).map((connection) => {
+        if (connection.id == null) {
+          return null;
+        }
+        const isSelected = connectionFilter === connection.id;
+        return (
+          <Chip
+            key={`filter-chip-${connection.id}`}
+            label={connection.name}
+            color={isSelected ? "primary" : "default"}
+            variant={isSelected ? "filled" : "outlined"}
+            onClick={() => setConnectionFilter(connection.id!)}
+          />
+        );
+      })}
+    </Stack>
+  );
+
+  const renderGroupedRows = () => {
+    const entries = Object.entries(groupedTableConfigs);
+    if (entries.length === 0) {
+      return (
+        <TableRow>
+          <TableCell colSpan={5} align="center" sx={{ py: 4 }}>
+            <Typography variant="body2" color="text.secondary">
+              {connectionFilter === "all"
+                ? "No table configurations found. Configure your first table to get started."
+                : "No table configurations match the selected connection filter."}
+            </Typography>
+          </TableCell>
+        </TableRow>
+      );
+    }
+
+    return entries.map(([connectionId, configs]) => {
+      const numericId = Number(connectionId);
+      const connection = connectionLookup[numericId];
+      const connectionColor = connectionColorMap[numericId] ?? "default";
+
+      return (
+        <React.Fragment key={`group-${connectionId}`}>
+          <TableRow sx={{ backgroundColor: "grey.50" }}>
+            <TableCell colSpan={5}>
+              <Stack
+                direction={{ xs: "column", sm: "row" }}
+                spacing={1}
+                alignItems={{ xs: "flex-start", sm: "center" }}
+                justifyContent="space-between"
+              >
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <Typography variant="subtitle1" fontWeight="bold">
+                    {connection?.name || "Unknown Connection"}
+                  </Typography>
+                  {connection?.db_type && (
+                    <Chip
+                      label={connection.db_type.toUpperCase()}
+                      size="small"
+                      color={connectionColor}
+                      variant="outlined"
+                    />
+                  )}
+                </Stack>
+                {connection && (
+                  <Typography variant="body2" color="text.secondary">
+                    {connection.host}:{connection.port}
+                  </Typography>
+                )}
+              </Stack>
+            </TableCell>
+          </TableRow>
+          {configs.map((config) => (
+            <TableRow key={config.id}>
+              <TableCell>
+                <Stack spacing={0.5}>
+                  <Stack direction="row" alignItems="center" spacing={1}>
+                    <TableIcon sx={{ color: "primary.main" }} />
+                    <Typography variant="body1" fontWeight="medium">
+                      {config.table_name}
+                    </Typography>
+                  </Stack>
+                  <Chip
+                    label={connection?.name || "Unknown"}
+                    size="small"
+                    color={connectionColor}
+                    variant="outlined"
+                    sx={{ alignSelf: "flex-start" }}
+                  />
+                </Stack>
+              </TableCell>
+              <TableCell>{config.schema_name}</TableCell>
+              <TableCell>
+                <Typography variant="body2">
+                  Delay: {config.operation_delay}s
+                </Typography>
+                <Typography variant="body2">
+                  Batch: {config.batch_size}
+                </Typography>
+              </TableCell>
+              <TableCell>
+                <Chip
+                  label={config.enabled ? "Enabled" : "Disabled"}
+                  size="small"
+                  color={config.enabled ? "success" : "warning"}
+                />
+              </TableCell>
+              <TableCell align="right">
+                <IconButton
+                  size="small"
+                  onClick={() => handleEdit(config)}
+                  color="primary"
+                >
+                  <EditIcon />
+                </IconButton>
+                <IconButton
+                  size="small"
+                  onClick={() => handleDelete(config.id!)}
+                  color="error"
+                >
+                  <DeleteIcon />
+                </IconButton>
+              </TableCell>
+            </TableRow>
+          ))}
+        </React.Fragment>
+      );
+    });
   };
 
   return (
@@ -393,6 +579,8 @@ const Tables: React.FC = () => {
         </Alert>
       )}
 
+      {connections.length > 0 && connectionFilterChips}
+
       <Card>
         <CardContent>
           <TableContainer component={Paper}>
@@ -406,64 +594,16 @@ const Tables: React.FC = () => {
                   <TableCell align="right">Actions</TableCell>
                 </TableRow>
               </TableHead>
-              <TableBody>
-                {(Array.isArray(tableConfigs) ? tableConfigs : []).map(
-                  (config) => (
-                    <TableRow key={config.id}>
-                      <TableCell>
-                        <Box sx={{ display: "flex", alignItems: "center" }}>
-                          <TableIcon sx={{ mr: 1, color: "primary.main" }} />
-                          <Typography variant="body1" fontWeight="medium">
-                            {config.table_name}
-                          </Typography>
-                        </Box>
-                      </TableCell>
-                      <TableCell>{config.schema_name}</TableCell>
-                      <TableCell>
-                        <Typography variant="body2">
-                          Delay: {config.operation_delay}s
-                        </Typography>
-                        <Typography variant="body2">
-                          Batch: {config.batch_size}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Chip
-                          label={config.enabled ? "Enabled" : "Disabled"}
-                          size="small"
-                          color={config.enabled ? "success" : "warning"}
-                        />
-                      </TableCell>
-                      <TableCell align="right">
-                        <IconButton
-                          size="small"
-                          onClick={() => handleEdit(config)}
-                          color="primary"
-                        >
-                          <EditIcon />
-                        </IconButton>
-                        <IconButton
-                          size="small"
-                          onClick={() => handleDelete(config.id!)}
-                          color="error"
-                        >
-                          <DeleteIcon />
-                        </IconButton>
-                      </TableCell>
-                    </TableRow>
-                  )
-                )}
-                {tableConfigs.length === 0 && !loading && (
+              {loading && (
+                <TableBody>
                   <TableRow>
-                    <TableCell colSpan={5} align="center" sx={{ py: 4 }}>
-                      <Typography variant="body2" color="text.secondary">
-                        No table configurations found. Configure your first
-                        table to get started with automation.
-                      </Typography>
+                    <TableCell colSpan={5} sx={{ p: 0 }}>
+                      <LinearProgress />
                     </TableCell>
                   </TableRow>
-                )}
-              </TableBody>
+                </TableBody>
+              )}
+              <TableBody>{renderGroupedRows()}</TableBody>
             </Table>
           </TableContainer>
         </CardContent>

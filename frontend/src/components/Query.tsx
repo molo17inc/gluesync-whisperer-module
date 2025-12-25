@@ -6,7 +6,11 @@ import React, {
   useCallback,
 } from "react";
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Alert,
+  Autocomplete,
   Box,
   Button,
   Chip,
@@ -15,10 +19,10 @@ import {
   FormControl,
   IconButton,
   InputLabel,
+  LinearProgress,
   List,
   ListItemButton,
-  ListItemText,
-  ListSubheader,
+  Menu,
   MenuItem,
   Paper,
   Select,
@@ -27,16 +31,16 @@ import {
   TextField,
   Tooltip,
   Typography,
-  LinearProgress,
 } from "@mui/material";
 import {
   PlayArrow as ExecuteIcon,
   Clear as ClearIcon,
   History as HistoryIcon,
   Refresh as RefreshIcon,
-  TableRows as TableRowsIcon,
   AutoAwesome as AutoAwesomeIcon,
   ContentCopy as ContentCopyIcon,
+  ExpandMore as ExpandMoreIcon,
+  KeyboardArrowDown as ArrowDropDownIcon,
 } from "@mui/icons-material";
 import { DataGrid, GridColDef } from "@mui/x-data-grid";
 import Editor from "@monaco-editor/react";
@@ -129,25 +133,18 @@ const Query: React.FC = () => {
     message: "",
     severity: "success",
   });
-  const [tableFilter, setTableFilter] = useState("");
   const [history, setHistory] = useState<QueryHistoryEntry[]>([]);
+  const [tablePickerSelection, setTablePickerSelection] =
+    useState<Table | null>(null);
+  const [sampleMenuAnchor, setSampleMenuAnchor] = useState<null | HTMLElement>(
+    null
+  );
+  const [historyExpanded, setHistoryExpanded] = useState(false);
 
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
   const completionDisposableRef = useRef<Monaco.IDisposable | null>(null);
   const executeCommandRef = useRef<() => void>(() => undefined);
-
-  const filteredTables = useMemo(() => {
-    if (!tableFilter.trim()) {
-      return tables;
-    }
-    const filter = tableFilter.toLowerCase();
-    return tables.filter(
-      (table) =>
-        table.name.toLowerCase().includes(filter) ||
-        (table.schema && table.schema.toLowerCase().includes(filter))
-    );
-  }, [tables, tableFilter]);
 
   const gridColumns: GridColDef[] = useMemo(() => {
     if (!result?.columns) {
@@ -219,6 +216,21 @@ const Query: React.FC = () => {
     [showSnackbar]
   );
 
+  const handleTablePickerChange = (_: any, value: Table | null) => {
+    setTablePickerSelection(value);
+    if (value) {
+      handleTableSnippet(value);
+    }
+  };
+
+  const handleSampleMenuToggle = (event: React.MouseEvent<HTMLElement>) => {
+    setSampleMenuAnchor(event.currentTarget);
+  };
+
+  const handleSampleMenuClose = () => {
+    setSampleMenuAnchor(null);
+  };
+
   const loadTables = useCallback(
     async (connectionId: number, schema?: string) => {
       if (!schema) {
@@ -244,29 +256,44 @@ const Query: React.FC = () => {
     completionDisposableRef.current?.dispose();
 
     const monaco = monacoRef.current;
-    const keywordSuggestions = SQL_KEYWORDS.map((keyword) => ({
-      label: keyword,
-      kind: monaco.languages.CompletionItemKind.Keyword,
-      insertText: keyword,
-    }));
-
-    const tableSuggestions = tables.map((table) => {
-      const qualifiedName = table.schema
-        ? `${table.schema}.${table.name}`
-        : table.name;
-      return {
-        label: qualifiedName,
-        kind: monaco.languages.CompletionItemKind.Field,
-        detail: "Table",
-        insertText: qualifiedName,
-      };
-    });
 
     completionDisposableRef.current =
       monaco.languages.registerCompletionItemProvider("sql", {
-        provideCompletionItems: () => ({
-          suggestions: [...keywordSuggestions, ...tableSuggestions],
-        }),
+        provideCompletionItems: (model, position) => {
+          const word = model.getWordUntilPosition(position);
+          const range = {
+            startLineNumber: position.lineNumber,
+            endLineNumber: position.lineNumber,
+            startColumn: word.startColumn,
+            endColumn: word.endColumn,
+          };
+
+          const keywordSuggestions: Monaco.languages.CompletionItem[] =
+            SQL_KEYWORDS.map((keyword) => ({
+              label: keyword,
+              kind: monaco.languages.CompletionItemKind.Keyword,
+              insertText: keyword,
+              range,
+            }));
+
+          const tableSuggestions: Monaco.languages.CompletionItem[] =
+            tables.map((table) => {
+              const qualifiedName = table.schema
+                ? `${table.schema}.${table.name}`
+                : table.name;
+              return {
+                label: qualifiedName,
+                kind: monaco.languages.CompletionItemKind.Field,
+                detail: "Table",
+                insertText: qualifiedName,
+                range,
+              };
+            });
+
+          return {
+            suggestions: [...keywordSuggestions, ...tableSuggestions],
+          };
+        },
       });
   }, [tables]);
 
@@ -408,6 +435,10 @@ const Query: React.FC = () => {
   }, [selectedConnection, selectedSchema, loadTables]);
 
   useEffect(() => {
+    setTablePickerSelection(null);
+  }, [selectedConnection, selectedSchema]);
+
+  useEffect(() => {
     registerCompletionProvider();
   }, [registerCompletionProvider]);
 
@@ -421,263 +452,6 @@ const Query: React.FC = () => {
   const selectedConnectionMeta = useMemo(
     () => connections.find((conn) => conn.id === Number(selectedConnection)),
     [connections, selectedConnection]
-  );
-
-  const renderMetadataPanel = () => (
-    <Stack spacing={2} sx={{ height: "100%", overflow: "auto", pr: 1 }}>
-      <Paper variant="outlined">
-        <Stack spacing={2} p={2}>
-          <Box>
-            <Typography variant="subtitle2" color="text.secondary">
-              Connection
-            </Typography>
-            <FormControl fullWidth size="small" sx={{ mt: 1 }}>
-              <InputLabel>Database Connection</InputLabel>
-              <Select
-                label="Database Connection"
-                value={selectedConnection}
-                onChange={(e) => {
-                  setSelectedConnection(e.target.value as number | "");
-                  setSelectedSchema("");
-                  setTables([]);
-                }}
-              >
-                {connections.map((connection) => (
-                  <MenuItem key={connection.id} value={connection.id}>
-                    <Box
-                      sx={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        width: "100%",
-                        gap: 2,
-                      }}
-                    >
-                      <span>{connection.name}</span>
-                      <Typography variant="caption" color="text.secondary">
-                        {connection.db_type?.toUpperCase()}
-                      </Typography>
-                    </Box>
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-          </Box>
-
-          <Stack
-            direction="row"
-            spacing={1}
-            alignItems="center"
-            justifyContent="space-between"
-          >
-            <Typography variant="subtitle2" color="text.secondary">
-              Schema
-            </Typography>
-            <Tooltip title="Reload schemas">
-              <span>
-                <IconButton
-                  size="small"
-                  onClick={() =>
-                    selectedConnection &&
-                    loadSchemas(Number(selectedConnection))
-                  }
-                  disabled={!selectedConnection || schemasLoading}
-                >
-                  <RefreshIcon fontSize="small" />
-                </IconButton>
-              </span>
-            </Tooltip>
-          </Stack>
-          <FormControl fullWidth size="small">
-            <InputLabel>Schema</InputLabel>
-            <Select
-              label="Schema"
-              value={selectedSchema}
-              onChange={(e) => setSelectedSchema(e.target.value)}
-              disabled={!selectedConnection || schemas.length === 0}
-            >
-              {schemas.map((schema) => (
-                <MenuItem key={schema} value={schema}>
-                  {schema}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-          {schemasLoading && <LinearProgress />}
-        </Stack>
-      </Paper>
-
-      <Paper variant="outlined" sx={{ flex: 1, minHeight: 260 }}>
-        <Stack spacing={1.5} p={2} sx={{ height: "100%" }}>
-          <Stack
-            direction="row"
-            justifyContent="space-between"
-            alignItems="center"
-          >
-            <Stack direction="row" spacing={1} alignItems="center">
-              <TableRowsIcon fontSize="small" color="action" />
-              <Typography variant="subtitle2">Tables</Typography>
-            </Stack>
-            <Tooltip title="Reload tables for schema">
-              <span>
-                <IconButton
-                  size="small"
-                  onClick={() =>
-                    selectedConnection &&
-                    selectedSchema &&
-                    loadTables(Number(selectedConnection), selectedSchema)
-                  }
-                  disabled={
-                    !selectedConnection || !selectedSchema || tablesLoading
-                  }
-                >
-                  <RefreshIcon fontSize="small" />
-                </IconButton>
-              </span>
-            </Tooltip>
-          </Stack>
-          <TextField
-            size="small"
-            placeholder="Filter tables"
-            value={tableFilter}
-            onChange={(e) => setTableFilter(e.target.value)}
-          />
-          <Divider />
-          <Box sx={{ flex: 1, overflow: "auto" }}>
-            {tablesLoading ? (
-              <Stack
-                spacing={2}
-                alignItems="center"
-                justifyContent="center"
-                sx={{ height: "100%" }}
-              >
-                <CircularProgress size={24} />
-                <Typography variant="caption" color="text.secondary">
-                  Loading tables...
-                </Typography>
-              </Stack>
-            ) : filteredTables.length === 0 ? (
-              <Typography variant="body2" color="text.secondary">
-                {selectedSchema
-                  ? "No tables match this filter"
-                  : "Select a schema to browse tables"}
-              </Typography>
-            ) : (
-              <List dense>
-                {filteredTables.map((table) => (
-                  <ListItemButton
-                    key={`${table.schema}-${table.name}`}
-                    onClick={() => handleTableSnippet(table)}
-                  >
-                    <ListItemText
-                      primary={table.name}
-                      secondary={table.schema || selectedSchema}
-                      primaryTypographyProps={{
-                        fontSize: "0.9rem",
-                        fontWeight: 500,
-                      }}
-                      secondaryTypographyProps={{ fontSize: "0.75rem" }}
-                    />
-                    <Tooltip title="Insert SELECT * snippet">
-                      <IconButton
-                        size="small"
-                        edge="end"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          handleTableSnippet(table);
-                        }}
-                      >
-                        <ContentCopyIcon fontSize="inherit" />
-                      </IconButton>
-                    </Tooltip>
-                  </ListItemButton>
-                ))}
-              </List>
-            )}
-          </Box>
-        </Stack>
-      </Paper>
-
-      <Paper variant="outlined">
-        <Stack spacing={1.5} p={2}>
-          <Stack direction="row" spacing={1} alignItems="center">
-            <AutoAwesomeIcon fontSize="small" color="action" />
-            <Typography variant="subtitle2">Sample Queries</Typography>
-          </Stack>
-          <Stack spacing={1}>
-            {SAMPLE_QUERIES.map((sample) => (
-              <Button
-                key={sample.label}
-                size="small"
-                variant="outlined"
-                onClick={() => handleSampleQuery(sample.query)}
-              >
-                {sample.label}
-              </Button>
-            ))}
-          </Stack>
-        </Stack>
-      </Paper>
-
-      <Paper variant="outlined">
-        <Stack spacing={1} p={2}>
-          <Stack direction="row" spacing={1} alignItems="center">
-            <HistoryIcon fontSize="small" color="action" />
-            <Typography variant="subtitle2">Recent Runs</Typography>
-          </Stack>
-          {history.length === 0 ? (
-            <Typography variant="body2" color="text.secondary">
-              Execute a query to start tracking history.
-            </Typography>
-          ) : (
-            <List
-              dense
-              subheader={
-                <ListSubheader disableSticky disableGutters>
-                  Latest 25 statements
-                </ListSubheader>
-              }
-              sx={{ maxHeight: 180, overflow: "auto" }}
-            >
-              {history.map((entry) => (
-                <ListItemButton
-                  key={entry.id}
-                  onClick={() => handleHistorySelect(entry)}
-                >
-                  <Stack
-                    direction="row"
-                    spacing={1}
-                    alignItems="center"
-                    sx={{ width: "100%" }}
-                  >
-                    <Chip
-                      size="small"
-                      label={entry.status === "success" ? "OK" : "ERR"}
-                      color={entry.status === "success" ? "success" : "error"}
-                      sx={{ minWidth: 56 }}
-                    />
-                    <Box sx={{ flex: 1, minWidth: 0 }}>
-                      <Typography
-                        variant="body2"
-                        noWrap
-                        sx={{ fontWeight: 500 }}
-                      >
-                        {entry.query.replace(/\s+/g, " ").slice(0, 80)}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {new Date(entry.timestamp).toLocaleTimeString()} ·{" "}
-                        {entry.executionTime
-                          ? `${entry.executionTime} ms`
-                          : "—"}
-                      </Typography>
-                    </Box>
-                  </Stack>
-                </ListItemButton>
-              ))}
-            </List>
-          )}
-        </Stack>
-      </Paper>
-    </Stack>
   );
 
   return (
@@ -716,159 +490,384 @@ const Query: React.FC = () => {
         </Stack>
       </Stack>
 
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <Stack
+          direction={{ xs: "column", lg: "row" }}
+          spacing={2}
+          alignItems={{ lg: "center" }}
+          flexWrap="wrap"
+        >
+          <FormControl size="small" sx={{ minWidth: 220 }}>
+            <InputLabel>Database Connection</InputLabel>
+            <Select
+              label="Database Connection"
+              value={selectedConnection}
+              onChange={(e) => {
+                setSelectedConnection(e.target.value as number | "");
+                setSelectedSchema("");
+                setTables([]);
+              }}
+            >
+              {connections.map((connection) => (
+                <MenuItem key={connection.id} value={connection.id}>
+                  <Box
+                    sx={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      width: "100%",
+                      gap: 2,
+                    }}
+                  >
+                    <span>{connection.name}</span>
+                    <Typography variant="caption" color="text.secondary">
+                      {connection.db_type?.toUpperCase()}
+                    </Typography>
+                  </Box>
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <Stack direction="row" spacing={1} alignItems="center">
+            <FormControl size="small" sx={{ minWidth: 200 }}>
+              <InputLabel>Schema</InputLabel>
+              <Select
+                label="Schema"
+                value={selectedSchema}
+                onChange={(e) => setSelectedSchema(e.target.value)}
+                disabled={!selectedConnection || schemas.length === 0}
+              >
+                {schemas.map((schema) => (
+                  <MenuItem key={schema} value={schema}>
+                    {schema}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <Tooltip title="Reload schemas">
+              <span>
+                <IconButton
+                  size="small"
+                  onClick={() =>
+                    selectedConnection &&
+                    loadSchemas(Number(selectedConnection))
+                  }
+                  disabled={!selectedConnection || schemasLoading}
+                >
+                  <RefreshIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+          </Stack>
+          <Stack
+            direction="row"
+            spacing={1}
+            alignItems="center"
+            sx={{ flex: 1, minWidth: 240 }}
+          >
+            <Autocomplete
+              size="small"
+              sx={{ flex: 1 }}
+              options={tables}
+              value={tablePickerSelection}
+              onChange={handleTablePickerChange}
+              getOptionLabel={(option) =>
+                option.schema
+                  ? `${option.schema}.${option.name}`
+                  : option.name ?? ""
+              }
+              isOptionEqualToValue={(option, value) =>
+                option.schema === value?.schema && option.name === value?.name
+              }
+              loading={tablesLoading}
+              disabled={
+                !selectedConnection || !selectedSchema || tables.length === 0
+              }
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Table"
+                  placeholder={
+                    !selectedSchema ? "Select a schema first" : "Search tables"
+                  }
+                  InputProps={{
+                    ...params.InputProps,
+                    endAdornment: (
+                      <>
+                        {tablesLoading ? (
+                          <CircularProgress color="inherit" size={16} />
+                        ) : null}
+                        {params.InputProps.endAdornment}
+                      </>
+                    ),
+                  }}
+                />
+              )}
+            />
+            <Tooltip title="Reload tables for schema">
+              <span>
+                <IconButton
+                  size="small"
+                  onClick={() =>
+                    selectedConnection &&
+                    selectedSchema &&
+                    loadTables(Number(selectedConnection), selectedSchema)
+                  }
+                  disabled={
+                    !selectedConnection || !selectedSchema || tablesLoading
+                  }
+                >
+                  <RefreshIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Tooltip title="Insert SELECT * for highlighted table">
+              <span>
+                <IconButton
+                  size="small"
+                  onClick={() => {
+                    if (tablePickerSelection) {
+                      handleTableSnippet(tablePickerSelection);
+                    }
+                  }}
+                  disabled={!tablePickerSelection}
+                >
+                  <ContentCopyIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+          </Stack>
+        </Stack>
+        {(schemasLoading || tablesLoading) && <LinearProgress sx={{ mt: 2 }} />}
+      </Paper>
+
       <Box
         sx={{
           flex: 1,
-          display: "grid",
-          gridTemplateColumns: { xs: "1fr", lg: "320px 1fr" },
+          display: "flex",
+          flexDirection: "column",
           gap: 2,
           minHeight: 0,
         }}
       >
-        {renderMetadataPanel()}
-
-        <Box
+        <Paper
+          variant="outlined"
           sx={{
+            flex: 1,
+            minHeight: 280,
             display: "flex",
             flexDirection: "column",
-            gap: 2,
-            minHeight: 0,
           }}
         >
-          <Paper
-            variant="outlined"
-            sx={{
-              flex: 1,
-              minHeight: 280,
-              display: "flex",
-              flexDirection: "column",
-            }}
-          >
-            <Stack direction="row" alignItems="center" spacing={1} p={2}>
-              <Tooltip title="Run (⌘ / Ctrl + Enter)">
-                <span>
-                  <Button
-                    variant="contained"
-                    startIcon={
-                      loading ? (
-                        <CircularProgress size={18} color="inherit" />
-                      ) : (
-                        <ExecuteIcon />
-                      )
-                    }
-                    onClick={handleExecuteQuery}
-                    disabled={loading || !selectedConnection || !query.trim()}
-                  >
-                    {loading ? "Executing" : "Run"}
-                  </Button>
-                </span>
-              </Tooltip>
-              <Button
-                variant="outlined"
-                startIcon={<ClearIcon />}
-                onClick={handleClear}
-              >
-                Clear
-              </Button>
-              <Box sx={{ flex: 1 }} />
-              {result?.execution_time && (
-                <Chip
-                  size="small"
-                  label={`Execution: ${result.execution_time} ms`}
-                />
-              )}
-              {result?.rows && (
-                <Chip
-                  size="small"
-                  label={`${result.rows.length} rows`}
-                  variant="outlined"
-                />
-              )}
-            </Stack>
-            <Divider />
-            <Box sx={{ flex: 1, minHeight: 0 }}>
-              <Editor
-                height="100%"
-                defaultLanguage="sql"
-                theme="vs-dark"
-                options={{
-                  minimap: { enabled: false },
-                  fontFamily: '"JetBrains Mono", Menlo, monospace',
-                  fontSize: 14,
-                  automaticLayout: true,
-                  scrollBeyondLastLine: false,
-                  wordWrap: "on",
-                  renderLineHighlight: "all",
-                  suggestOnTriggerCharacters: true,
-                }}
-                value={query}
-                onChange={(value) => setQuery(value ?? "")}
-                onMount={handleEditorMount}
-              />
-            </Box>
-          </Paper>
-
-          <Paper
-            variant="outlined"
-            sx={{
-              flex: 1,
-              minHeight: 260,
-              display: "flex",
-              flexDirection: "column",
-            }}
-          >
-            <Stack
-              direction="row"
-              alignItems="center"
-              justifyContent="space-between"
-              p={2}
-            >
-              <Typography variant="subtitle1">Result Grid</Typography>
-              {loading && (
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <CircularProgress size={16} />
-                  <Typography variant="body2" color="text.secondary">
-                    Running query...
-                  </Typography>
-                </Stack>
-              )}
-            </Stack>
-            <Divider />
-            <Box sx={{ flex: 1, minHeight: 0 }}>
-              {loading ? (
-                <LinearProgress />
-              ) : result?.error ? (
-                <Alert severity="error" sx={{ m: 2 }}>
-                  {result.error}
-                </Alert>
-              ) : gridRows.length > 0 ? (
-                <DataGrid
-                  rows={gridRows}
-                  columns={gridColumns}
-                  density="compact"
-                  disableRowSelectionOnClick
-                  sx={{ border: "none" }}
-                />
-              ) : result ? (
-                <Alert severity="info" sx={{ m: 2 }}>
-                  Query executed successfully. No rows returned.
-                </Alert>
-              ) : (
-                <Stack
-                  spacing={1}
-                  alignItems="center"
-                  justifyContent="center"
-                  sx={{ height: "100%" }}
+          <Stack direction="row" alignItems="center" spacing={1} p={2}>
+            <Tooltip title="Run (⌘ / Ctrl + Enter)">
+              <span>
+                <Button
+                  variant="contained"
+                  startIcon={
+                    loading ? (
+                      <CircularProgress size={18} color="inherit" />
+                    ) : (
+                      <ExecuteIcon />
+                    )
+                  }
+                  onClick={handleExecuteQuery}
+                  disabled={loading || !selectedConnection || !query.trim()}
                 >
-                  <Typography variant="body2" color="text.secondary">
-                    Run a query to see results here.
-                  </Typography>
-                </Stack>
-              )}
-            </Box>
-          </Paper>
-        </Box>
+                  {loading ? "Executing" : "Run"}
+                </Button>
+              </span>
+            </Tooltip>
+            <Button
+              variant="outlined"
+              startIcon={<ClearIcon />}
+              onClick={handleClear}
+            >
+              Clear
+            </Button>
+            <Button
+              variant="text"
+              startIcon={<AutoAwesomeIcon />}
+              endIcon={<ArrowDropDownIcon />}
+              onClick={handleSampleMenuToggle}
+            >
+              Sample queries
+            </Button>
+            <Menu
+              anchorEl={sampleMenuAnchor}
+              open={Boolean(sampleMenuAnchor)}
+              onClose={handleSampleMenuClose}
+            >
+              {SAMPLE_QUERIES.map((sample) => (
+                <MenuItem
+                  key={sample.label}
+                  onClick={() => {
+                    handleSampleQuery(sample.query);
+                    handleSampleMenuClose();
+                  }}
+                >
+                  {sample.label}
+                </MenuItem>
+              ))}
+            </Menu>
+            <Box sx={{ flex: 1 }} />
+            {result?.execution_time && (
+              <Chip
+                size="small"
+                label={`Execution: ${result.execution_time} ms`}
+              />
+            )}
+            {result?.rows && (
+              <Chip
+                size="small"
+                label={`${result.rows.length} rows`}
+                variant="outlined"
+              />
+            )}
+          </Stack>
+          <Divider />
+          <Box sx={{ flex: 1, minHeight: 0 }}>
+            <Editor
+              height="100%"
+              defaultLanguage="sql"
+              theme="vs-dark"
+              options={{
+                minimap: { enabled: false },
+                fontFamily: '"JetBrains Mono", Menlo, monospace',
+                fontSize: 14,
+                automaticLayout: true,
+                scrollBeyondLastLine: false,
+                wordWrap: "on",
+                renderLineHighlight: "all",
+                suggestOnTriggerCharacters: true,
+              }}
+              value={query}
+              onChange={(value) => setQuery(value ?? "")}
+              onMount={handleEditorMount}
+            />
+          </Box>
+        </Paper>
+
+        <Paper
+          variant="outlined"
+          sx={{
+            flex: 1,
+            minHeight: 260,
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <Stack
+            direction="row"
+            alignItems="center"
+            justifyContent="space-between"
+            p={2}
+          >
+            <Typography variant="subtitle1">Result Grid</Typography>
+            {loading && (
+              <Stack direction="row" spacing={1} alignItems="center">
+                <CircularProgress size={16} />
+                <Typography variant="body2" color="text.secondary">
+                  Running query...
+                </Typography>
+              </Stack>
+            )}
+          </Stack>
+          <Divider />
+          <Box sx={{ flex: 1, minHeight: 0 }}>
+            {loading ? (
+              <LinearProgress />
+            ) : result?.error ? (
+              <Alert severity="error" sx={{ m: 2 }}>
+                {result.error}
+              </Alert>
+            ) : gridRows.length > 0 ? (
+              <DataGrid
+                rows={gridRows}
+                columns={gridColumns}
+                density="compact"
+                disableRowSelectionOnClick
+                sx={{ border: "none" }}
+              />
+            ) : result ? (
+              <Alert severity="info" sx={{ m: 2 }}>
+                Query executed successfully. No rows returned.
+              </Alert>
+            ) : (
+              <Stack
+                spacing={1}
+                alignItems="center"
+                justifyContent="center"
+                sx={{ height: "100%" }}
+              >
+                <Typography variant="body2" color="text.secondary">
+                  Run a query to see results here.
+                </Typography>
+              </Stack>
+            )}
+          </Box>
+        </Paper>
       </Box>
+
+      <Accordion
+        expanded={historyExpanded}
+        onChange={(_, expanded) => setHistoryExpanded(expanded)}
+        disableGutters
+        sx={{ borderRadius: 1, border: "1px solid", borderColor: "divider" }}
+      >
+        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+          <Stack direction="row" spacing={1} alignItems="center">
+            <HistoryIcon fontSize="small" color="action" />
+            <Typography variant="subtitle2">
+              Recent Runs ({history.length})
+            </Typography>
+          </Stack>
+        </AccordionSummary>
+        <AccordionDetails>
+          {history.length === 0 ? (
+            <Typography variant="body2" color="text.secondary">
+              Execute a query to start tracking history.
+            </Typography>
+          ) : (
+            <List dense sx={{ maxHeight: 240, overflow: "auto" }}>
+              {history.map((entry) => (
+                <ListItemButton
+                  key={entry.id}
+                  onClick={() => handleHistorySelect(entry)}
+                >
+                  <Stack
+                    direction="row"
+                    spacing={1}
+                    alignItems="center"
+                    sx={{ width: "100%" }}
+                  >
+                    <Chip
+                      size="small"
+                      label={entry.status === "success" ? "OK" : "ERR"}
+                      color={entry.status === "success" ? "success" : "error"}
+                      sx={{ minWidth: 56 }}
+                    />
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Typography
+                        variant="body2"
+                        noWrap
+                        sx={{ fontWeight: 500 }}
+                      >
+                        {entry.query.replace(/\s+/g, " ").slice(0, 80)}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {new Date(entry.timestamp).toLocaleTimeString()} ·{" "}
+                        {entry.executionTime
+                          ? `${entry.executionTime} ms`
+                          : "—"}
+                      </Typography>
+                    </Box>
+                  </Stack>
+                </ListItemButton>
+              ))}
+            </List>
+          )}
+        </AccordionDetails>
+      </Accordion>
 
       <Snackbar
         open={snackbar.open}
