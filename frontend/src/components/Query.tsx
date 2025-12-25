@@ -470,9 +470,9 @@ const Query: React.FC = () => {
         spacing={1}
       >
         <Box>
-          <Typography variant="h4">Query Browser</Typography>
+          <Typography variant="h4">Query browser</Typography>
           <Typography variant="body2" color="text.secondary">
-            DataGrip-inspired workspace with full-page editor, autocomplete, and
+            Query editor workspace with full-page editor, autocomplete, and
             result grids.
           </Typography>
         </Box>
@@ -527,22 +527,46 @@ const Query: React.FC = () => {
               ))}
             </Select>
           </FormControl>
-          <Stack direction="row" spacing={1} alignItems="center">
-            <FormControl size="small" sx={{ minWidth: 200 }}>
-              <InputLabel>Schema</InputLabel>
-              <Select
-                label="Schema"
-                value={selectedSchema}
-                onChange={(e) => setSelectedSchema(e.target.value)}
-                disabled={!selectedConnection || schemas.length === 0}
-              >
-                {schemas.map((schema) => (
-                  <MenuItem key={schema} value={schema}>
-                    {schema}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+          <Stack
+            direction="row"
+            spacing={1}
+            alignItems="center"
+            sx={{ flex: 1 }}
+          >
+            <Autocomplete
+              size="small"
+              sx={{ minWidth: 200, flex: 1 }}
+              options={schemas}
+              value={selectedSchema}
+              onChange={(_, value) => setSelectedSchema(value ?? "")}
+              loading={schemasLoading}
+              disabled={!selectedConnection || schemas.length === 0}
+              getOptionLabel={(option) => option}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Schema"
+                  placeholder={
+                    !selectedConnection
+                      ? "Select a connection first"
+                      : schemas.length === 0
+                      ? "No schemas found"
+                      : "Search schemas"
+                  }
+                  InputProps={{
+                    ...params.InputProps,
+                    endAdornment: (
+                      <>
+                        {schemasLoading ? (
+                          <CircularProgress color="inherit" size={16} />
+                        ) : null}
+                        {params.InputProps.endAdornment}
+                      </>
+                    ),
+                  }}
+                />
+              )}
+            />
             <Tooltip title="Reload schemas">
               <span>
                 <IconButton

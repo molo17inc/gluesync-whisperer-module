@@ -47,6 +47,147 @@ class WhispererService:
         self.db = db
         self.stop_events = {}  # Connection ID -> threading.Event
         
+    def _ensure_jdbc_connection(self, engine):
+        """Ensure a JDBC-based engine exposes an active connection."""
+        if not hasattr(engine, "connection"):
+            return None
+        if engine.connection:
+            return engine.connection
+        connect_method = getattr(engine, "connect", None)
+        if callable(connect_method):
+            connect_result = connect_method()
+            if connect_result is False:
+                raise RuntimeError("Unable to establish JDBC connection for whisperer operation")
+        if not engine.connection:
+            raise RuntimeError("JDBC engine failed to establish a connection")
+        return engine.connection
+    
+    def _execute_sqlalchemy(
+        self,
+        engine,
+        stmt,
+        params=None,
+        fetch=False,
+        fetchone=False,
+        as_dict=False,
+    ):
+        """Execute a statement using a SQLAlchemy-style engine."""
+        if not hasattr(engine, "connect"):
+            raise RuntimeError("Engine does not expose SQLAlchemy connect()")
+        
+        conn_candidate = engine.connect()
+        if isinstance(conn_candidate, bool):
+            raise RuntimeError(
+                "Engine.connect() returned a boolean result. "
+                "This indicates a JDBC connector path should be used instead."
+            )
+        
+        if hasattr(conn_candidate, "__enter__"):
+            with conn_candidate as conn:
+                return self._run_sqlalchemy_statement(conn, stmt, params, fetch, fetchone, as_dict)
+        
+        conn = conn_candidate
+        close_after = hasattr(conn, "close")
+        try:
+            return self._run_sqlalchemy_statement(conn, stmt, params, fetch, fetchone, as_dict)
+        finally:
+            if close_after:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+    
+    def _run_sqlalchemy_statement(
+        self,
+        conn,
+        stmt,
+        params=None,
+        fetch=False,
+        fetchone=False,
+        as_dict=False,
+    ):
+        bound_params = params or []
+        result = conn.execute(stmt, bound_params)
+        if not fetch:
+            return None
+        
+        keys = result.keys() if as_dict else None
+        if fetchone:
+            row = result.fetchone()
+            if not row:
+                return None
+            if as_dict and keys:
+                return {key: row[idx] for idx, key in enumerate(keys)}
+            return row
+        
+        rows = result.fetchall()
+        if as_dict and keys:
+            return [
+                {key: row[idx] for idx, key in enumerate(keys)}
+                for row in rows
+            ]
+        return rows
+    
+    def _format_row(self, row, columns, as_dict):
+        if not as_dict or not columns:
+            return row
+        return {
+            str(columns[i]): row[i]
+            for i in range(min(len(columns), len(row)))
+        }
+    
+    def _execute_statement(
+        self,
+        engine,
+        stmt,
+        params=None,
+        fetch=False,
+        fetchone=False,
+        as_dict=False,
+    ):
+        params = params or []
+        if hasattr(engine, "execute_query") and callable(engine.execute_query):
+            result = engine.execute_query(stmt, params)
+            if fetchone:
+                return result[0] if result else None
+            if fetch:
+                return result
+            return None
+        
+        jdbc_conn = self._ensure_jdbc_connection(engine)
+        if jdbc_conn:
+            cursor = jdbc_conn.cursor()
+            try:
+                cursor.execute(stmt, params)
+                columns = [desc[0] for desc in cursor.description] if cursor.description else []
+                if fetchone:
+                    row = cursor.fetchone()
+                    if not row:
+                        return None
+                    return self._format_row(row, columns, as_dict)
+                if fetch:
+                    rows = cursor.fetchall()
+                    return [
+                        self._format_row(row, columns, as_dict)
+                        for row in rows
+                    ]
+                jdbc_conn.commit()
+                return None
+            finally:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
+        
+        return self._execute_sqlalchemy(
+            engine,
+            stmt,
+            params=params,
+            fetch=fetch,
+            fetchone=fetchone,
+            as_dict=as_dict,
+        )
+        
     def start_whisperer(self, connection_id: int) -> None:
         """Start a whisperer for a connection."""
         # Check if the whisperer is already running
@@ -287,9 +428,15 @@ class WhispererService:
             stmt = f"INSERT INTO {table_name} ({', '.join(data.keys())}) VALUES ({placeholders})"
             
             # Execute the insert
-            with engine.connect() as conn:
-                result = conn.execute(stmt, list(data.values()))
-                inserted_id = result.lastrowid if hasattr(result, 'lastrowid') else None
+            result = self._execute_statement(
+                engine,
+                stmt,
+                params=list(data.values()),
+                return_sqlalchemy_result=True,
+            )
+            inserted_id = None
+            if result is not None and hasattr(result, "lastrowid"):
+                inserted_id = result.lastrowid
             
             # Log the operation
             operation_log = {
@@ -359,8 +506,11 @@ class WhispererService:
             stmt = f"UPDATE {table_name} SET {', '.join(set_clauses)} WHERE {' AND '.join(where_clauses)}"
             
             # Execute the update
-            with engine.connect() as conn:
-                conn.execute(stmt, list(data.values()) + where_values)
+            self._execute_statement(
+                engine,
+                stmt,
+                params=list(data.values()) + where_values,
+            )
             
             # Log the operation
             operation_log = {
@@ -419,8 +569,11 @@ class WhispererService:
             stmt = f"DELETE FROM {table_name} WHERE {' AND '.join(where_clauses)}"
             
             # Execute the delete
-            with engine.connect() as conn:
-                conn.execute(stmt, where_values)
+            self._execute_statement(
+                engine,
+                stmt,
+                params=where_values,
+            )
             
             # Log the operation
             operation_log = {
@@ -456,20 +609,32 @@ class WhispererService:
             # First, count the total number of records
             count_stmt = f"SELECT COUNT(*) as cnt FROM {table_name}"
             
-            with engine.connect() as conn:
-                count_result = conn.execute(count_stmt).scalar()
+            count_result = self._execute_statement(
+                engine,
+                count_stmt,
+                fetchone=True,
+                as_dict=True,
+            )
             
-            if not count_result or count_result == 0:
+            if not count_result:
+                return None, None
+            total = count_result.get("cnt") if isinstance(count_result, dict) else None
+            total = total if isinstance(total, int) else self._safe_int(total, 0)
+            if total <= 0:
                 return None, None
             
             # Get a random offset
-            offset = random.randint(0, count_result - 1)
+            offset = random.randint(0, total - 1)
             
             # Query a random record
             select_stmt = f"SELECT * FROM {table_name} LIMIT 1 OFFSET {offset}"
             
-            with engine.connect() as conn:
-                result = conn.execute(select_stmt).mappings().first()
+            result = self._execute_statement(
+                engine,
+                select_stmt,
+                fetchone=True,
+                as_dict=True,
+            )
             
             if not result:
                 return None, None

@@ -445,7 +445,7 @@ const PillowFight: React.FC = () => {
       >
         <Box>
           <Typography variant="h4" gutterBottom>
-            Pillow Fight Control
+            Pillow fight control
           </Typography>
           <Typography variant="body2" color="text.secondary">
             Manage multi-table pillow fight jobs, track per-table operations,
@@ -460,7 +460,7 @@ const PillowFight: React.FC = () => {
             onClick={handleOpenStartDialog}
             disabled={loadingData || connections.length === 0}
           >
-            Start Pillow Fight
+            Start pillow fight
           </Button>
           <Button
             variant="outlined"
@@ -468,7 +468,7 @@ const PillowFight: React.FC = () => {
             onClick={() => loadJobs()}
             disabled={jobsLoading}
           >
-            Refresh Jobs
+            Refresh jobs
           </Button>
         </Stack>
       </Stack>

@@ -76,6 +76,170 @@ class PillowFightService:
         self._resumed = False
         self.error_threshold = int(os.getenv("PILLOW_FIGHT_TABLE_ERROR_THRESHOLD", "5"))
     
+    def _ensure_jdbc_connection(self, engine):
+        """Ensure a JDBC-based engine has an active connection and return it."""
+        if not hasattr(engine, "connection"):
+            return None
+        if engine.connection:
+            return engine.connection
+        connect_method = getattr(engine, "connect", None)
+        if callable(connect_method):
+            connect_result = connect_method()
+            if connect_result is False:
+                raise RuntimeError("Unable to establish JDBC connection for pillow fight operation")
+        if not engine.connection:
+            raise RuntimeError("JDBC engine failed to expose a valid connection after connect()")
+        return engine.connection
+    
+    def _execute_sqlalchemy(
+        self,
+        engine,
+        stmt,
+        params=None,
+        fetch=False,
+        fetchone=False,
+        as_dict=False,
+        return_result=False,
+    ):
+        """Execute a statement using a SQLAlchemy-style engine/connection."""
+        if not hasattr(engine, "connect"):
+            raise RuntimeError("Engine does not expose a SQLAlchemy-compatible connect() method")
+        
+        conn_candidate = engine.connect()
+        if isinstance(conn_candidate, bool):
+            raise RuntimeError(
+                "Engine.connect() returned a boolean result. "
+                "This likely indicates a JDBC connector path should be used instead."
+            )
+        
+        if hasattr(conn_candidate, "__enter__"):
+            with conn_candidate as conn:
+                return self._run_sqlalchemy_statement(
+                    conn,
+                    stmt,
+                    params,
+                    fetch,
+                    fetchone,
+                    as_dict,
+                    return_result,
+                )
+        
+        conn = conn_candidate
+        close_after = hasattr(conn, "close")
+        try:
+            return self._run_sqlalchemy_statement(
+                conn,
+                stmt,
+                params,
+                fetch,
+                fetchone,
+                as_dict,
+                return_result,
+            )
+        finally:
+            if close_after:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+    
+    def _run_sqlalchemy_statement(
+        self,
+        conn,
+        stmt,
+        params=None,
+        fetch=False,
+        fetchone=False,
+        as_dict=False,
+        return_result=False,
+    ):
+        """Execute a statement on an open SQLAlchemy connection."""
+        bound_params = params or []
+        result = conn.execute(stmt, bound_params)
+        if return_result:
+            return result
+        if not fetch:
+            return None
+        
+        keys = result.keys() if as_dict else None
+        if fetchone:
+            row = result.fetchone()
+            if not row:
+                return None
+            if as_dict and keys:
+                return {key: row[idx] for idx, key in enumerate(keys)}
+            return row
+        
+        rows = result.fetchall()
+        if as_dict and keys:
+            return [
+                {key: row[idx] for idx, key in enumerate(keys)}
+                for row in rows
+            ]
+        return rows
+    
+    def _format_row(self, row, columns, as_dict):
+        if not as_dict or not columns:
+            return row
+        return {
+            str(columns[i]): row[i]
+            for i in range(min(len(columns), len(row)))
+        }
+    
+    def _execute_statement(
+        self,
+        engine,
+        stmt,
+        params=None,
+        fetch=False,
+        fetchone=False,
+        as_dict=False,
+        return_sqlalchemy_result=False,
+    ):
+        params = params or []
+        if hasattr(engine, "execute_query") and callable(engine.execute_query):
+            result = engine.execute_query(stmt, params)
+            if fetchone:
+                return result[0] if result else None
+            if fetch:
+                return result
+            return None
+        
+        jdbc_conn = self._ensure_jdbc_connection(engine)
+        if jdbc_conn:
+            cursor = jdbc_conn.cursor()
+            try:
+                cursor.execute(stmt, params)
+                columns = [desc[0] for desc in cursor.description] if cursor.description else []
+                if fetchone:
+                    row = cursor.fetchone()
+                    if not row:
+                        return None
+                    return self._format_row(row, columns, as_dict)
+                if fetch:
+                    rows = cursor.fetchall()
+                    return [
+                        self._format_row(row, columns, as_dict)
+                        for row in rows
+                    ]
+                jdbc_conn.commit()
+                return None
+            finally:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
+        
+        return self._execute_sqlalchemy(
+            engine,
+            stmt,
+            params=params,
+            fetch=fetch,
+            fetchone=fetchone,
+            as_dict=as_dict,
+            return_result=return_sqlalchemy_result,
+        )
+    
     def _schema_cache_key(self, connection: DatabaseConnection, table: TableConfig) -> Tuple[int, str, Optional[str]]:
         return (connection.id, table.table_name, table.schema_name)
 
@@ -825,32 +989,12 @@ class PillowFightService:
             logger.info(f"Prepared insert statement: {stmt}")
             logger.info(f"With values: {list(data.values())}")
             
-            # Check if we're using a JDBC engine (has connection attribute) or SQLAlchemy engine
-            if hasattr(engine, 'connection'):
-                # Ensure the JDBC engine is connected before trying to run statements
-                if not engine.connection:
-                    logger.info("No active JDBC connection detected; attempting to connect before insert")
-                    connect_result = engine.connect() if callable(getattr(engine, "connect", None)) else False
-                    if not connect_result or not engine.connection:
-                        raise RuntimeError(f"Failed to establish JDBC connection for insert on {table.table_name}")
-
-                logger.info(f"Using JDBC engine for insert operation")
-                try:
-                    if hasattr(engine, "execute_query") and callable(engine.execute_query):
-                        engine.execute_query(stmt, list(data.values()))
-                    else:
-                        cursor = engine.connection.cursor()
-                        cursor.execute(stmt, list(data.values()))
-                        engine.connection.commit()
-                        cursor.close()
-                except Exception as e:
-                    logger.error(f"Error executing insert query: {str(e)}")
-                    raise
-            else:
-                # For SQLAlchemy engine
-                logger.info(f"Using SQLAlchemy engine for insert operation")
-                with engine.connect() as conn:
-                    conn.execute(stmt, list(data.values()))
+            # Execute through the unified helper (JDBC or SQLAlchemy)
+            self._execute_statement(
+                engine,
+                stmt,
+                params=list(data.values()),
+            )
             
             logger.info(f"Successfully inserted record into {table.table_name}")
         
@@ -969,22 +1113,11 @@ class PillowFightService:
             logger.info(f"Prepared update statement: {stmt}")
             logger.info(f"With set values: {list(data.values())} and where values: {where_values}")
             
-            # Check if we're using a JDBC engine (has connection attribute) or SQLAlchemy engine
-            if hasattr(engine, 'connection') and engine.connection:
-                # For JDBC engine
-                logger.debug(f"Executing JDBC update: {stmt}")
-                
-                # For all database types, use the standard approach
-                # We're avoiding complex transaction handling as it's causing issues with JDBC
-                try:
-                    engine.execute_query(stmt, list(data.values()) + where_values)
-                except Exception as e:
-                    logger.error(f"Error executing update query: {str(e)}")
-                    # Continue despite errors - we've logged the issue
-            else:
-                # For SQLAlchemy engine
-                with engine.connect() as conn:
-                    conn.execute(stmt, list(data.values()) + where_values)
+            self._execute_statement(
+                engine,
+                stmt,
+                params=list(data.values()) + where_values,
+            )
             
             logger.info(f"Updated record in {table.table_name}")
         
@@ -1078,58 +1211,39 @@ class PillowFightService:
             logger.info(f"Prepared delete statement: {stmt}")
             logger.info(f"With where values: {where_values}")
             
-            # Check if we're using a JDBC engine (has connection attribute) or SQLAlchemy engine
-            if hasattr(engine, 'connection') and engine.connection:
-                # For JDBC engine
-                logger.debug(f"Executing JDBC delete: {stmt}")
-                
-                # If cascade_delete is enabled and we're using MS SQL Server, we need a different approach
-                if hasattr(table, 'cascade_delete') and table.cascade_delete and is_mssql:
+            if hasattr(engine, "connection") and engine.connection and hasattr(table, "cascade_delete") and table.cascade_delete and is_mssql:
+                try:
                     try:
-                        # For MS SQL Server with cascade delete, we'll use a simpler approach
-                        # First disable foreign key constraints
-                        try:
-                            engine.execute_query("EXEC sp_MSforeachtable @command1='ALTER TABLE ? NOCHECK CONSTRAINT ALL'", [])
-                        except Exception as e:
-                            logger.warning(f"Error disabling constraints: {str(e)}")
-                        
-                        # Execute the delete
-                        try:
-                            engine.execute_query(stmt, where_values)
-                        except Exception as e:
-                            logger.error(f"Error executing delete: {str(e)}")
-                        
-                        # Re-enable foreign key constraints
+                        engine.execute_query("EXEC sp_MSforeachtable @command1='ALTER TABLE ? NOCHECK CONSTRAINT ALL'", [])
+                    except Exception as e:
+                        logger.warning(f"Error disabling constraints: {str(e)}")
+                    
+                    try:
+                        engine.execute_query(stmt, where_values)
+                        return
+                    except Exception as e:
+                        logger.error(f"Error executing cascade delete statement: {str(e)}")
+                        raise
+                    finally:
                         try:
                             engine.execute_query("EXEC sp_MSforeachtable @command1='ALTER TABLE ? CHECK CONSTRAINT ALL'", [])
                         except Exception as e:
                             logger.warning(f"Error re-enabling constraints: {str(e)}")
-                        
-                        logger.info(f"Executed cascade delete for {table_name}")
-                    except Exception as e:
-                        logger.error(f"Error executing cascade delete for {table_name}: {str(e)}")
-                        # Log the error but continue with the pillow fight
-                        # This makes the process more resilient to individual failures
-                        logger.info(f"Successfully performed DELETE on {table_name}")
-                else:
-                    # Standard delete without cascade
-                    try:
-                        engine.execute_query(stmt, where_values)
-                    except Exception as e:
-                        # Check if it's a foreign key constraint error
-                        error_str = str(e).lower()
-                        if 'foreign key' in error_str or 'reference constraint' in error_str or 'constraint' in error_str:
-                            logger.warning(f"Foreign key constraint error detected for {table_name}. Consider enabling cascade_delete for this table.")
-                            # Try to continue with the operation despite the error
-                            # This allows the pillow fight to continue even if some deletes fail
-                            return
-                        else:
-                            # Re-raise if it's not a foreign key constraint error
-                            raise
-            else:
-                # For SQLAlchemy engine
-                with engine.connect() as conn:
-                    conn.execute(stmt, where_values)
+                except Exception:
+                    logger.exception(f"Failed cascade delete path for {table_name}; falling back to standard execution")
+            
+            try:
+                self._execute_statement(
+                    engine,
+                    stmt,
+                    params=where_values,
+                )
+            except Exception as e:
+                error_str = str(e).lower()
+                if 'foreign key' in error_str or 'reference constraint' in error_str or 'constraint' in error_str:
+                    logger.warning(f"Foreign key constraint error detected for {table_name}. Consider enabling cascade_delete for this table.")
+                    return
+                raise
             
             logger.info(f"Deleted record from {table.table_name}")
         

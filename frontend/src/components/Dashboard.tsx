@@ -216,7 +216,7 @@ const Dashboard: React.FC = () => {
                   color="text.secondary"
                   sx={{ mt: 1 }}
                 >
-                  Start a pillow fight job from the Pillow Fight console.
+                  Start a pillow fight job from the Pillow fight console.
                 </Typography>
               )}
             </CardContent>

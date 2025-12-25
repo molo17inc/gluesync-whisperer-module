@@ -4,13 +4,13 @@ A modern React frontend for the Whisperer database automation platform.
 
 ## Features
 
-- **Connection Management**: Create and manage database connections (MS SQL, AS400, SQLite)
-- **Table Configuration**: Configure tables for automated operations
-- **Pillow Fight Control**: Start and monitor automated database operations
-- **SQL Query Executor**: Execute custom SQL queries against your databases
+- **Connection management**: Create and manage database connections (MS SQL, AS400, SQLite)
+- **Table configuration**: Configure tables for automated operations
+- **Pillow fight control**: Start and monitor automated database operations
+- **SQL query executor**: Execute custom SQL queries against your databases
 - **Dashboard**: Overview of system status and configurations
 
-## Technology Stack
+## Technology stack
 
 - **React 18** with TypeScript
 - **Material-UI (MUI)** for professional UI components
@@ -56,39 +56,39 @@ The frontend communicates with the Whisperer backend API. By default, it expects
 
 ## Usage
 
-### Creating a Database Connection
+### Creating a database connection
 
 1. Go to the "Connections" tab
 2. Click "New Connection"
 3. Fill in the connection details (host, port, credentials, database type)
 4. Click "Create"
 
-### Configuring Tables
+### Configuring tables
 
 1. Go to the "Tables" tab
-2. Click "Configure Table"
+2. Click "Configure table"
 3. Select a connection and browse schemas/tables
 4. Set operation type and timing parameters
-5. Click "Configure Table"
+5. Click "Configure table"
 
-### Running Pillow Fight
+### Running pillow fight
 
-1. Go to the "Pillow Fight" tab
-2. Click "Start Pillow Fight"
+1. Go to the "Pillow fight" tab
+2. Click "Start pillow fight"
 3. Select connection and tables
 4. Configure operation settings
-5. Click "Start Pillow Fight"
+5. Click "Start pillow fight"
 
-### Executing Queries
+### Executing queries
 
 1. Go to the "Query" tab
 2. Select a database connection
 3. Enter your SQL query
-4. Click "Execute Query"
+4. Click "Execute query"
 
 ## Development
 
-### Project Structure
+### Project structure
 
 ```
 src/
