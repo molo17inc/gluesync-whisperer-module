@@ -32,14 +32,13 @@ import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
+from models import DatabaseConnection, TableConfig
 from schemas import (
     ConnectionStatus,
-    DatabaseConnection,
     DatabaseType,
     OperationType,
     PillowFightJobStatus as JobStatus,
     PillowFightTableStatus,
-    TableConfig,
     TableSchemaResponse,
 )
 from services.database_service import DatabaseService
