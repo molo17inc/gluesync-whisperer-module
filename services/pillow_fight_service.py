@@ -826,14 +826,23 @@ class PillowFightService:
             logger.info(f"With values: {list(data.values())}")
             
             # Check if we're using a JDBC engine (has connection attribute) or SQLAlchemy engine
-            if hasattr(engine, 'connection') and engine.connection:
-                # For JDBC engine
+            if hasattr(engine, 'connection'):
+                # Ensure the JDBC engine is connected before trying to run statements
+                if not engine.connection:
+                    logger.info("No active JDBC connection detected; attempting to connect before insert")
+                    connect_result = engine.connect() if callable(getattr(engine, "connect", None)) else False
+                    if not connect_result or not engine.connection:
+                        raise RuntimeError(f"Failed to establish JDBC connection for insert on {table.table_name}")
+
                 logger.info(f"Using JDBC engine for insert operation")
-                
-                # For all database types, use the standard approach
-                # We're avoiding complex transaction handling as it's causing issues with JDBC
                 try:
-                    engine.execute_query(stmt, list(data.values()))
+                    if hasattr(engine, "execute_query") and callable(engine.execute_query):
+                        engine.execute_query(stmt, list(data.values()))
+                    else:
+                        cursor = engine.connection.cursor()
+                        cursor.execute(stmt, list(data.values()))
+                        engine.connection.commit()
+                        cursor.close()
                 except Exception as e:
                     logger.error(f"Error executing insert query: {str(e)}")
                     raise
