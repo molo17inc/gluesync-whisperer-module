@@ -183,7 +183,7 @@ const Dashboard: React.FC = () => {
             <CardContent>
               <Box sx={{ display: "flex", alignItems: "center", mb: 2 }}>
                 <PlayIcon sx={{ mr: 1, color: "primary.main" }} />
-                <Typography variant="h6">Pillow Fight Status</Typography>
+                <Typography variant="h6">Pillow fight Status</Typography>
               </Box>
               <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                 {jobSummary && getStatusIcon(jobSummary.status)}

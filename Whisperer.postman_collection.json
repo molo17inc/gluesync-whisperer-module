@@ -387,7 +387,7 @@
 			"response": []
 		},
 		{
-			"name": "Start the Pillow Fight",
+			"name": "Start the Pillow fight",
 			"request": {
 				"auth": {
 					"type": "noauth"
@@ -426,7 +426,7 @@
 			"response": []
 		},
 		{
-			"name": "Start the Pillow Fight (local)",
+			"name": "Start the Pillow fight (local)",
 			"request": {
 				"auth": {
 					"type": "noauth"
@@ -465,7 +465,7 @@
 			"response": []
 		},
 		{
-			"name": "Start the Pillow Fight (avoid DELETEs)",
+			"name": "Start the Pillow fight (avoid DELETEs)",
 			"request": {
 				"auth": {
 					"type": "noauth"

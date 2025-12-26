@@ -151,7 +151,12 @@ const Query: React.FC = () => {
   const [metadataLoadingSchema, setMetadataLoadingSchema] = useState<
     string | null
   >(null);
-  const [expandedSchemas, setExpandedSchemas] = useState<string[]>([]);
+  const [expandedItems, setExpandedItems] = useState<string[]>([]);
+  const [tableDetailsBySchemaAndTable, setTableDetailsBySchemaAndTable] =
+    useState<Record<string, Record<string, TableMetadata>>>({});
+  const [tableDetailsLoading, setTableDetailsLoading] = useState<string | null>(
+    null
+  );
   const [metadataFilter, setMetadataFilter] = useState("");
   const [tableMetadata, setTableMetadata] = useState<TableMetadata | null>(
     null
@@ -246,6 +251,30 @@ const Query: React.FC = () => {
       }
     },
     [showSnackbar]
+  );
+
+  const loadTableDetails = useCallback(
+    async (schema: string, table: string) => {
+      const key = `${schema}.${table}`;
+      if (tableDetailsBySchemaAndTable[schema]?.[table]) return;
+      setTableDetailsLoading(key);
+      try {
+        const data = await metadataApi.getTableMetadata(
+          Number(selectedConnection),
+          table,
+          schema
+        );
+        setTableDetailsBySchemaAndTable((prev) => ({
+          ...prev,
+          [schema]: { ...prev[schema], [table]: data },
+        }));
+      } catch (error) {
+        showSnackbar("Unable to load table details", "error");
+      } finally {
+        setTableDetailsLoading(null);
+      }
+    },
+    [selectedConnection, showSnackbar, tableDetailsBySchemaAndTable]
   );
 
   const handleSampleMenuToggle = (event: React.MouseEvent<HTMLElement>) => {
@@ -486,24 +515,31 @@ const Query: React.FC = () => {
     return result;
   }, [availableSchemas, metadataBySchema, metadataFilter]);
 
-  const handleSchemaToggle = useCallback(
+  const handleTreeExpansion = useCallback(
     async (_event: React.SyntheticEvent, itemIds: string[]) => {
-      const newlyExpanded = itemIds.filter(
-        (id) => !expandedSchemas.includes(id)
-      );
-      setExpandedSchemas(itemIds);
-      const schemaToLoad = newlyExpanded.find((id) =>
-        availableSchemas.includes(id)
-      );
-      if (schemaToLoad && selectedConnection) {
-        await loadMetadataForSchema(Number(selectedConnection), schemaToLoad);
+      const newlyExpanded = itemIds.filter((id) => !expandedItems.includes(id));
+      setExpandedItems(itemIds);
+      for (const id of newlyExpanded) {
+        if (availableSchemas.includes(id)) {
+          if (selectedConnection) {
+            await loadMetadataForSchema(Number(selectedConnection), id);
+          }
+        } else {
+          const parts = id.split(":");
+          if (parts.length === 3 && parts[1] === "table") {
+            const schema = parts[0];
+            const table = parts[2];
+            await loadTableDetails(schema, table);
+          }
+        }
       }
     },
     [
       availableSchemas,
-      expandedSchemas,
+      expandedItems,
       loadMetadataForSchema,
       selectedConnection,
+      loadTableDetails,
     ]
   );
 
@@ -705,8 +741,8 @@ const Query: React.FC = () => {
                   collapseIcon: ExpandMoreIcon,
                   expandIcon: ArrowDropDownIcon,
                 }}
-                expandedItems={expandedSchemas}
-                onExpandedItemsChange={handleSchemaToggle}
+                expandedItems={expandedItems}
+                onExpandedItemsChange={handleTreeExpansion}
               >
                 {availableSchemas.map((schema) => {
                   const items = filteredMetadataBySchema[schema] || [];
@@ -746,24 +782,130 @@ const Query: React.FC = () => {
                             </Typography>
                           }
                         >
-                          {objs.map((obj) => (
-                            <TreeItem
-                              itemId={`${schema}:${type}:${obj.name}`}
-                              key={`${schema}:${type}:${obj.name}`}
-                              label={
-                                <Typography variant="body2">
-                                  {obj.name}
-                                </Typography>
-                              }
-                              onClick={() => handleMetadataSelect(obj)}
-                              onContextMenu={(e) =>
-                                handleMetadataContextMenu(
-                                  e as React.MouseEvent<HTMLElement>,
-                                  obj
-                                )
-                              }
-                            />
-                          ))}
+                          {objs.map((obj) => {
+                            if (obj.type === "table") {
+                              const details =
+                                tableDetailsBySchemaAndTable[
+                                  obj.schema || ""
+                                ]?.[obj.name];
+                              const loading =
+                                tableDetailsLoading ===
+                                `${obj.schema || ""}.${obj.name}`;
+                              return (
+                                <TreeItem
+                                  itemId={`${obj.schema || ""}:table:${
+                                    obj.name
+                                  }`}
+                                  key={`${obj.schema || ""}:table:${obj.name}`}
+                                  label={
+                                    <Stack
+                                      direction="row"
+                                      spacing={0.5}
+                                      alignItems="center"
+                                    >
+                                      <Typography variant="body2">
+                                        {obj.name}
+                                      </Typography>
+                                      {loading && (
+                                        <CircularProgress size={10} />
+                                      )}
+                                    </Stack>
+                                  }
+                                  onClick={() => handleMetadataSelect(obj)}
+                                  onContextMenu={(e) =>
+                                    handleMetadataContextMenu(
+                                      e as React.MouseEvent<HTMLElement>,
+                                      obj
+                                    )
+                                  }
+                                >
+                                  {details && (
+                                    <>
+                                      <TreeItem
+                                        itemId={`${obj.schema || ""}:table:${
+                                          obj.name
+                                        }:columns`}
+                                        label="Columns"
+                                      >
+                                        {Object.keys(details.columns || {}).map(
+                                          (col) => (
+                                            <TreeItem
+                                              key={col}
+                                              itemId={`${
+                                                obj.schema || ""
+                                              }:table:${
+                                                obj.name
+                                              }:columns:${col}`}
+                                              label={col}
+                                            />
+                                          )
+                                        )}
+                                      </TreeItem>
+                                      <TreeItem
+                                        itemId={`${obj.schema || ""}:table:${
+                                          obj.name
+                                        }:pks`}
+                                        label="Primary Keys"
+                                      >
+                                        {(details.primary_keys || []).map(
+                                          (pk) => (
+                                            <TreeItem
+                                              key={pk}
+                                              itemId={`${
+                                                obj.schema || ""
+                                              }:table:${obj.name}:pks:${pk}`}
+                                              label={pk}
+                                            />
+                                          )
+                                        )}
+                                      </TreeItem>
+                                      <TreeItem
+                                        itemId={`${obj.schema || ""}:table:${
+                                          obj.name
+                                        }:fks`}
+                                        label="Foreign Keys"
+                                      >
+                                        {(details.foreign_keys || []).map(
+                                          (fk, idx) => (
+                                            <TreeItem
+                                              key={idx}
+                                              itemId={`${
+                                                obj.schema || ""
+                                              }:table:${obj.name}:fks:${idx}`}
+                                              label={`${fk.referenced_table}.${fk.referenced_column}`}
+                                            />
+                                          )
+                                        )}
+                                      </TreeItem>
+                                    </>
+                                  )}
+                                </TreeItem>
+                              );
+                            } else {
+                              return (
+                                <TreeItem
+                                  itemId={`${obj.schema || ""}:${obj.type}:${
+                                    obj.name
+                                  }`}
+                                  key={`${obj.schema || ""}:${obj.type}:${
+                                    obj.name
+                                  }`}
+                                  label={
+                                    <Typography variant="body2">
+                                      {obj.name}
+                                    </Typography>
+                                  }
+                                  onClick={() => handleMetadataSelect(obj)}
+                                  onContextMenu={(e) =>
+                                    handleMetadataContextMenu(
+                                      e as React.MouseEvent<HTMLElement>,
+                                      obj
+                                    )
+                                  }
+                                />
+                              );
+                            }
+                          })}
                         </TreeItem>
                       ))}
                       {items.length === 0 && (

@@ -41,7 +41,7 @@ const Navigation: React.FC = () => {
       path: '/tables',
     },
     {
-      text: 'Pillow Fight',
+      text: 'Pillow fight',
       icon: <PlayIcon />,
       path: '/pillow-fight',
     },

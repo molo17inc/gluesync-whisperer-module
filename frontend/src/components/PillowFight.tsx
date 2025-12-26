@@ -560,7 +560,7 @@ const PillowFight: React.FC = () => {
         maxWidth="md"
         fullWidth
       >
-        <DialogTitle>Start Pillow Fight Job</DialogTitle>
+        <DialogTitle>Start Pillow fight Job</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={3}>
             <FormControl fullWidth>
