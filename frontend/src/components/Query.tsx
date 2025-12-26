@@ -660,60 +660,38 @@ const Query: React.FC = () => {
         gap: 2,
       }}
     >
-      <Stack
-        direction="row"
-        justifyContent="space-between"
-        alignItems="center"
-        spacing={2}
-      >
-        <Box />
-        <Stack direction="row" spacing={1} alignItems="center">
-          <FormControl size="small" sx={{ minWidth: 220 }}>
-            <InputLabel>Database Connection</InputLabel>
-            <Select
-              label="Database Connection"
-              value={selectedConnection}
-              onChange={(e) => {
-                setSelectedConnection(e.target.value as number | "");
-                setTables([]);
-              }}
-            >
-              {connections.map((connection) => (
-                <MenuItem key={connection.id} value={connection.id}>
-                  <Box
-                    sx={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      width: "100%",
-                      gap: 2,
-                    }}
-                  >
-                    <span>{connection.name}</span>
-                    <Typography variant="caption" color="text.secondary">
-                      {connection.db_type?.toUpperCase()}
-                    </Typography>
-                  </Box>
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-          <Chip label="⌘ / Ctrl + Enter to run" variant="outlined" />
-        </Stack>
-      </Stack>
-
-      <Stack
-        direction={{ xs: "column", sm: "row" }}
-        justifyContent="space-between"
-        alignItems={{ xs: "flex-start", sm: "center" }}
-        spacing={1}
-      >
-        <Box>
-          <Typography variant="h4">Query browser</Typography>
-          <Typography variant="body2" color="text.secondary">
-            Query editor workspace with full-page editor, autocomplete, and
-            result grids.
-          </Typography>
-        </Box>
+      <Stack direction="row" spacing={2} alignItems="center">
+        <Typography variant="h4">Query browser</Typography>
+        <FormControl size="small" sx={{ minWidth: 220 }}>
+          <InputLabel>Database Connection</InputLabel>
+          <Select
+            label="Database Connection"
+            value={selectedConnection}
+            onChange={(e) => {
+              setSelectedConnection(e.target.value as number | "");
+              setTables([]);
+            }}
+          >
+            {connections.map((connection) => (
+              <MenuItem key={connection.id} value={connection.id}>
+                <Box
+                  sx={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    width: "100%",
+                    gap: 2,
+                  }}
+                >
+                  <span>{connection.name}</span>
+                  <Typography variant="caption" color="text.secondary">
+                    {connection.db_type?.toUpperCase()}
+                  </Typography>
+                </Box>
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        <Chip label="⌘ / Ctrl + Enter to run" variant="outlined" />
       </Stack>
 
       <Menu
@@ -739,7 +717,7 @@ const Query: React.FC = () => {
             minHeight: 0,
           }}
         >
-          <Stack direction="row" alignItems="center" spacing={1} p={1.5}>
+          <Stack direction="row" alignItems="center" spacing={0.5} p={0.625}>
             <IconButton
               onClick={() => setLeftPanelCollapsed(!leftPanelCollapsed)}
               size="small"
@@ -750,7 +728,7 @@ const Query: React.FC = () => {
               <Typography variant="subtitle1">Objects</Typography>
             )}
             {metadataLoadingSchema && (
-              <CircularProgress size={14} sx={{ ml: 1 }} />
+              <CircularProgress size={12} sx={{ ml: 0.5 }} />
             )}
           </Stack>
           {!leftPanelCollapsed && (
