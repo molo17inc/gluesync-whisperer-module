@@ -971,6 +971,8 @@ const Query: React.FC = () => {
             flexDirection: "column",
             gap: 2,
             minHeight: 0,
+            borderLeft: 1,
+            borderColor: "divider",
           }}
         >
           <Tabs
