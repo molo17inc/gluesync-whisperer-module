@@ -128,6 +128,7 @@ COPY ./api ./api
 COPY ./routers ./routers
 COPY ./services ./services
 # Copy JDBC drivers for AS400, MS SQL Server, PostgreSQL, MySQL, and Oracle support
+RUN mkdir -p /app/jdbc_drivers
 # Download PostgreSQL JDBC driver
 RUN wget -O /app/jdbc_drivers/postgresql.jar https://jdbc.postgresql.org/download/postgresql-42.7.8.jar
 COPY ./jdbc_drivers ./jdbc_drivers
