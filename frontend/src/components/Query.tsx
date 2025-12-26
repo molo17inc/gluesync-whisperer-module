@@ -63,12 +63,11 @@ interface QueryResult {
   execution_time?: number;
 }
 
-interface ResultTab {
+interface QueryTab {
   id: string;
   title: string;
-  result: QueryResult;
-  executionTime: number;
-  rowsReturned?: number;
+  query: string;
+  result: QueryResult | null;
 }
 
 interface QueryHistoryEntry {
@@ -167,7 +166,14 @@ const Query: React.FC = () => {
   const [metadataMenuAnchor, setMetadataMenuAnchor] =
     useState<null | HTMLElement>(null);
 
-  const [resultTabs, setResultTabs] = useState<ResultTab[]>([]);
+  const [queryTabs, setQueryTabs] = useState<QueryTab[]>([
+    {
+      id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
+      title: "Query 1",
+      query: "",
+      result: null,
+    },
+  ]);
   const [activeTab, setActiveTab] = useState(0);
 
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -328,7 +334,8 @@ const Query: React.FC = () => {
   }, [tables]);
 
   const handleExecuteQuery = useCallback(async () => {
-    if (!selectedConnection || !query.trim()) {
+    const currentQuery = queryTabs[activeTab].query.trim();
+    if (!selectedConnection || !currentQuery) {
       showSnackbar("Select a connection and write a query first", "error");
       return;
     }
@@ -339,7 +346,7 @@ const Query: React.FC = () => {
     try {
       const request: QueryRequest = {
         connection_id: Number(selectedConnection),
-        query: query.trim(),
+        query: currentQuery,
       };
       const response = await automationApi.executeQuery(request);
       const executionTime = Date.now() - startTime;
@@ -365,21 +372,15 @@ const Query: React.FC = () => {
         transformedResult.error = response.message;
       }
 
-      const newTab: ResultTab = {
-        id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
-        title: `Query ${tabCounterRef.current++}`,
-        result: transformedResult,
-        executionTime,
-        rowsReturned: transformedResult.rows?.length,
-      };
-
-      const newTabs = [...resultTabs, newTab];
-      setResultTabs(newTabs);
-      setActiveTab(newTabs.length - 1);
+      setQueryTabs((prev) =>
+        prev.map((tab, index) =>
+          index === activeTab ? { ...tab, result: transformedResult } : tab
+        )
+      );
 
       const historyEntry: QueryHistoryEntry = {
         id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
-        query: query.trim(),
+        query: currentQuery,
         status: response.success ? "success" : "error",
         timestamp: new Date().toISOString(),
         executionTime: transformedResult.execution_time,
@@ -399,7 +400,7 @@ const Query: React.FC = () => {
         "Query execution failed";
       const historyEntry: QueryHistoryEntry = {
         id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
-        query: query.trim(),
+        query: currentQuery,
         status: "error",
         timestamp: new Date().toISOString(),
         executionTime,
@@ -409,14 +410,22 @@ const Query: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [query, selectedConnection, showSnackbar]);
+  }, [queryTabs, activeTab, selectedConnection, showSnackbar]);
 
   const handleClear = () => {
-    setQuery("");
+    setQueryTabs((prev) =>
+      prev.map((tab, index) =>
+        index === activeTab ? { ...tab, query: "" } : tab
+      )
+    );
   };
 
   const handleSampleQuery = (sampleQuery: string) => {
-    setQuery(sampleQuery);
+    setQueryTabs((prev) =>
+      prev.map((tab, index) =>
+        index === activeTab ? { ...tab, query: sampleQuery } : tab
+      )
+    );
   };
 
   const handleTableSnippet = (table: Table) => {
@@ -424,7 +433,29 @@ const Query: React.FC = () => {
       ? `${table.schema}.${table.name}`
       : table.name;
     const snippet = `SELECT *\nFROM ${qualifiedName}\nLIMIT 100;`;
-    setQuery((prev) => (prev ? `${prev.trim()}\n\n${snippet}` : snippet));
+    setQueryTabs((prev) =>
+      prev.map((tab, index) =>
+        index === activeTab
+          ? {
+              ...tab,
+              query: prev[index].query
+                ? `${prev[index].query.trim()}\n\n${snippet}`
+                : snippet,
+            }
+          : tab
+      )
+    );
+  };
+
+  const handleNewQueryTab = () => {
+    const newTab: QueryTab = {
+      id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
+      title: `Query ${tabCounterRef.current++}`,
+      query: "",
+      result: null,
+    };
+    setQueryTabs((prev) => [...prev, newTab]);
+    setActiveTab(queryTabs.length);
   };
 
   const handleMetadataSelect = (obj: MetadataObject) => {
@@ -534,9 +565,28 @@ const Query: React.FC = () => {
 
       const runShortcut = monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter;
       editor.addCommand(runShortcut, () => executeCommandRef.current());
+
+      // Set initial value
+      editor.setValue(queryTabs[activeTab].query);
+
+      // Update query on change
+      editor.onDidChangeModelContent(() => {
+        const value = editor.getValue();
+        setQueryTabs((prev) =>
+          prev.map((tab, index) =>
+            index === activeTab ? { ...tab, query: value } : tab
+          )
+        );
+      });
     },
-    [registerCompletionProvider]
+    [registerCompletionProvider, queryTabs, activeTab]
   );
+
+  useEffect(() => {
+    if (editorRef.current) {
+      editorRef.current.setValue(queryTabs[activeTab].query);
+    }
+  }, [activeTab, queryTabs]);
 
   useEffect(() => {
     executeCommandRef.current = () => {
@@ -923,6 +973,15 @@ const Query: React.FC = () => {
             minHeight: 0,
           }}
         >
+          <Tabs
+            value={activeTab}
+            onChange={(_, newValue) => setActiveTab(newValue)}
+          >
+            {queryTabs.map((tab) => (
+              <Tab key={tab.id} label={tab.title} />
+            ))}
+          </Tabs>
+
           <Paper
             variant="outlined"
             sx={{
@@ -957,6 +1016,9 @@ const Query: React.FC = () => {
                 onClick={handleClear}
               >
                 Clear
+              </Button>
+              <Button variant="outlined" onClick={handleNewQueryTab}>
+                New Query
               </Button>
               <Button
                 variant="text"
@@ -1023,7 +1085,7 @@ const Query: React.FC = () => {
               justifyContent="space-between"
               p={2}
             >
-              <Typography variant="subtitle1">Result Tabs</Typography>
+              <Typography variant="subtitle1">Result</Typography>
               {loading && (
                 <Stack direction="row" spacing={1} alignItems="center">
                   <CircularProgress size={16} />
@@ -1037,7 +1099,7 @@ const Query: React.FC = () => {
             <Box sx={{ flex: 1, minHeight: 0 }}>
               {loading ? (
                 <LinearProgress />
-              ) : resultTabs.length === 0 ? (
+              ) : !queryTabs[activeTab].result ? (
                 <Stack
                   spacing={1}
                   alignItems="center"
@@ -1049,56 +1111,43 @@ const Query: React.FC = () => {
                   </Typography>
                 </Stack>
               ) : (
-                <>
-                  <Tabs
-                    value={activeTab}
-                    onChange={(_, newValue) => setActiveTab(newValue)}
-                  >
-                    {resultTabs.map((tab) => (
-                      <Tab
-                        key={tab.id}
-                        label={`${tab.title} (${tab.executionTime}ms${
-                          tab.rowsReturned ? `, ${tab.rowsReturned} rows` : ""
-                        })`}
-                      />
-                    ))}
-                  </Tabs>
-                  {resultTabs.map(
-                    (tab, index) =>
-                      activeTab === index && (
-                        <Box key={tab.id} sx={{ p: 2 }}>
-                          {tab.result.error ? (
-                            <Alert severity="error">{tab.result.error}</Alert>
-                          ) : tab.result.rows && tab.result.rows.length > 0 ? (
-                            <DataGrid
-                              rows={tab.result.rows.map((row, idx) => {
-                                const rowObj: Record<string, any> = { id: idx };
-                                tab.result.columns!.forEach((col, colIdx) => {
-                                  rowObj[col] = row[colIdx];
-                                });
-                                return rowObj;
-                              })}
-                              columns={
-                                tab.result.columns?.map((column) => ({
-                                  field: column,
-                                  headerName: column,
-                                  flex: 1,
-                                  minWidth: 140,
-                                })) || []
-                              }
-                              density="compact"
-                              disableRowSelectionOnClick
-                              sx={{ border: "none" }}
-                            />
-                          ) : (
-                            <Alert severity="info">
-                              Query executed successfully. No rows returned.
-                            </Alert>
-                          )}
-                        </Box>
-                      )
+                <Box key={queryTabs[activeTab].id} sx={{ p: 2 }}>
+                  {queryTabs[activeTab].result!.error ? (
+                    <Alert severity="error">
+                      {queryTabs[activeTab].result!.error}
+                    </Alert>
+                  ) : queryTabs[activeTab].result!.rows &&
+                    queryTabs[activeTab].result!.rows.length > 0 ? (
+                    <DataGrid
+                      rows={queryTabs[activeTab].result!.rows.map(
+                        (row, idx) => {
+                          const rowObj: Record<string, any> = { id: idx };
+                          queryTabs[activeTab].result!.columns!.forEach(
+                            (col, colIdx) => {
+                              rowObj[col] = row[colIdx];
+                            }
+                          );
+                          return rowObj;
+                        }
+                      )}
+                      columns={
+                        queryTabs[activeTab].result!.columns?.map((column) => ({
+                          field: column,
+                          headerName: column,
+                          flex: 1,
+                          minWidth: 140,
+                        })) || []
+                      }
+                      density="compact"
+                      disableRowSelectionOnClick
+                      sx={{ border: "none", height: 400 }}
+                    />
+                  ) : (
+                    <Alert severity="info">
+                      Query executed successfully. No rows returned.
+                    </Alert>
                   )}
-                </>
+                </Box>
               )}
             </Box>
           </Paper>
