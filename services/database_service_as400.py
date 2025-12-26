@@ -31,7 +31,7 @@ import logging
 from typing import List, Dict, Any, Optional
 
 from models import DatabaseConnection
-from schemas import TableSchemaResponse
+from schemas import TableSchemaResponse, TableMetadata
 from utils.db_connector import DatabaseConnector, DatabaseType
 from services.database_service_base import DatabaseServiceBase
 
@@ -325,9 +325,11 @@ class AS400DatabaseService(DatabaseServiceBase):
             
             normalized_columns: Dict[str, Any] = {}
             for key, definition in columns.items():
-                column_key = str(key)
+                column_key = _normalize_column_name(key)
                 definition_dict = dict(definition or {})
-                definition_dict["name"] = str(definition_dict.get("name", column_key))
+                definition_dict["name"] = _normalize_column_name(
+                    definition_dict.get("name", column_key)
+                )
                 normalized_columns[column_key] = definition_dict
 
             normalized_primary_keys = [str(pk) for pk in primary_keys if pk is not None]
@@ -340,6 +342,18 @@ class AS400DatabaseService(DatabaseServiceBase):
         except Exception as e:
             logger.error(f"Error in JDBC metadata approach: {str(e)}")
             return TableSchemaResponse(table_name=table_name, columns={}, primary_keys=[])
+    
+    def get_table_metadata(self, connection_id: int, table_name: str, schema_name: str = None) -> TableMetadata:
+        """Return AS400 table metadata using the service-level schema retrieval."""
+        schema_resp = self.get_table_schema(connection_id, table_name, schema_name)
+        return TableMetadata(
+            table_name=schema_resp.table_name,
+            schema_name=schema_name or "",
+            columns=schema_resp.columns,
+            primary_keys=schema_resp.primary_keys,
+            foreign_keys=getattr(schema_resp, "foreign_keys", []),
+            indexes=getattr(schema_resp, "indexes", []),
+        )
     
     def _build_connection_string(self, connection: DatabaseConnection) -> str:
         """Build a connection string based on the database type and connection parameters."""

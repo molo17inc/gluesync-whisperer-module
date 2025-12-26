@@ -25,12 +25,10 @@ import argparse
 import logging
 import os
 import sys
-import json
-import importlib.util
-import jaydebeapi
+
 import jpype
-from datetime import datetime
-from typing import List, Dict, Any, Optional, Tuple
+import jaydebeapi
+from typing import Dict, List, Optional, Any
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -44,6 +42,15 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+def _normalize_identifier(value: Any) -> str:
+    """Convert JDBC/JPype identifiers to clean Python strings."""
+    if value is None:
+        return ""
+    text = str(value)
+    if text.startswith("'") and text.endswith("'") and len(text) >= 2:
+        text = text[1:-1]
+    return text
 
 def build_jdbc_connection_info(db_type, host, port, username, password, database):
     """
@@ -548,11 +555,14 @@ class DatabaseConnector:
                     col_dict = {k.lower(): v for k, v in col.items()}
                     
                     # Extract common properties, adapting to various DB naming conventions
-                    name = col_dict.get('column_name') or next((col_dict[k] for k in col_dict if 'column_name' in k.lower()), '')
-                    data_type = col_dict.get('data_type') or next((col_dict[k] for k in col_dict if 'data_type' in k.lower()), '')
+                    name_raw = col_dict.get('column_name') or next((col_dict[k] for k in col_dict if 'column_name' in k.lower()), '')
+                    name = _normalize_identifier(name_raw)
+                    data_type_raw = col_dict.get('data_type') or next((col_dict[k] for k in col_dict if 'data_type' in k.lower()), '')
+                    data_type = _normalize_identifier(data_type_raw)
                     is_nullable = col_dict.get('is_nullable', 'YES') in ('YES', 'yes', 'Y', 'y', True, 1)
                     is_primary = col_dict.get('is_primary_key', 0) in (1, True, 'YES', 'yes', 'Y', 'y')
-                    default_val = col_dict.get('column_default') or col_dict.get('default')
+                    default_raw = col_dict.get('column_default') or col_dict.get('default')
+                    default_val = _normalize_identifier(default_raw) if isinstance(default_raw, str) else default_raw
                     extra = col_dict.get('extra', '')
                     
                     # For MySQL, examine COLUMN_KEY and EXTRA for primary key and auto_increment
@@ -598,6 +608,7 @@ class DatabaseConnector:
                     
                     # Store normalized column info
                     columns[name] = {
+                        'name': name,
                         'type': data_type,
                         'nullable': is_nullable,
                         'default': default_val,
@@ -627,6 +638,7 @@ class DatabaseConnector:
                         for pk_row in pk_results:
                             # Extract column name (adapt to various DB naming conventions)
                             pk_col = next((pk_row[k] for k in pk_row if 'column_name' in k.lower()), None)
+                            pk_col = _normalize_identifier(pk_col)
                             if pk_col and pk_col in columns:
                                 primary_keys.append(pk_col)
                                 columns[pk_col]['primary_key'] = True
@@ -696,7 +708,7 @@ class DatabaseConnector:
                         
                         # Extract primary key column names
                         while rs.next():
-                            pk_column = rs.getString("COLUMN_NAME")
+                            pk_column = _normalize_identifier(rs.getString("COLUMN_NAME"))
                             primary_keys.append(pk_column)
                             # Update column info to mark as primary key
                             if pk_column in columns:
