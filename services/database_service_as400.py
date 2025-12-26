@@ -37,6 +37,15 @@ from services.database_service_base import DatabaseServiceBase
 
 logger = logging.getLogger(__name__)
 
+def _normalize_column_name(value: Any) -> str:
+    """Convert JDBC/JPype column identifiers into clean Python strings."""
+    if value is None:
+        return ""
+    text = str(value)
+    if text.startswith("'") and text.endswith("'") and len(text) >= 2:
+        text = text[1:-1]
+    return text
+
 class AS400DatabaseService(DatabaseServiceBase):
     """AS400 specific database service implementation"""
     
@@ -174,7 +183,9 @@ class AS400DatabaseService(DatabaseServiceBase):
                 
                 while rs_columns.next():
                     column_count += 1
-                    column_name = rs_columns.getString("COLUMN_NAME")
+                    column_name = _normalize_column_name(
+                        rs_columns.getString("COLUMN_NAME")
+                    )
                     column_type = rs_columns.getString("TYPE_NAME")
                     nullable = rs_columns.getString("IS_NULLABLE").upper() == "YES"
                     
@@ -218,7 +229,7 @@ class AS400DatabaseService(DatabaseServiceBase):
                 
                 while rs_pk.next():
                     pk_count += 1
-                    pk_name = rs_pk.getString("COLUMN_NAME")
+                    pk_name = _normalize_column_name(rs_pk.getString("COLUMN_NAME"))
                     primary_keys.append(pk_name)
                     
                     # Mark as primary key in columns dictionary
@@ -247,7 +258,7 @@ class AS400DatabaseService(DatabaseServiceBase):
                     pk_rows = cursor.fetchall()
                     
                     for pk_row in pk_rows:
-                        pk_name = pk_row[0]
+                        pk_name = _normalize_column_name(pk_row[0])
                         primary_keys.append(pk_name)
                         
                         # Mark as primary key in columns dictionary
@@ -286,7 +297,7 @@ class AS400DatabaseService(DatabaseServiceBase):
                     column_rows = cursor.fetchall()
                     
                     for column_row in column_rows:
-                        column_name = column_row[0]
+                        column_name = _normalize_column_name(column_row[0])
                         data_type = column_row[1]
                         is_nullable = column_row[2] == 'Y'
                         default_value = column_row[3]

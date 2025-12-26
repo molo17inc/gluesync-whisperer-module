@@ -16,6 +16,7 @@ import {
   CircularProgress,
   Divider,
   FormControl,
+  IconButton,
   InputLabel,
   LinearProgress,
   List,
@@ -42,6 +43,7 @@ import {
   ExpandMore as ExpandMoreIcon,
   KeyboardArrowDown as ArrowDropDownIcon,
   ChevronRight as ChevronRightIcon,
+  AddCircleOutline as AddTabIcon,
 } from "@mui/icons-material";
 import { DataGrid } from "@mui/x-data-grid";
 import Editor from "@monaco-editor/react";
@@ -479,14 +481,18 @@ const Query: React.FC = () => {
   };
 
   const handleNewQueryTab = () => {
-    const newTab: QueryTab = {
-      id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
-      title: `Query ${tabCounterRef.current++}`,
-      query: "",
-      result: null,
-    };
-    setQueryTabs((prev) => [...prev, newTab]);
-    setActiveTab(queryTabs.length);
+    setQueryTabs((prev) => {
+      const newTab: QueryTab = {
+        id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
+        title: `Query ${tabCounterRef.current + 1}`,
+        query: "",
+        result: null,
+      };
+      tabCounterRef.current += 1;
+      const nextTabs = [...prev, newTab];
+      setActiveTab(nextTabs.length - 1);
+      return nextTabs;
+    });
   };
 
   const handleMetadataSelect = (obj: MetadataObject) => {
@@ -949,14 +955,23 @@ const Query: React.FC = () => {
             borderColor: "divider",
           }}
         >
-          <Tabs
-            value={activeTab}
-            onChange={(_, newValue) => setActiveTab(newValue)}
-          >
-            {queryTabs.map((tab) => (
-              <Tab key={tab.id} label={tab.title} />
-            ))}
-          </Tabs>
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <Tabs
+              value={activeTab}
+              onChange={(_, newValue) => setActiveTab(newValue)}
+            >
+              {queryTabs.map((tab) => (
+                <Tab key={tab.id} label={tab.title} />
+              ))}
+            </Tabs>
+            <IconButton
+              aria-label="New query tab"
+              size="small"
+              onClick={handleNewQueryTab}
+            >
+              <AddTabIcon fontSize="small" />
+            </IconButton>
+          </Stack>
 
           <Paper
             variant="outlined"
