@@ -1,5 +1,5 @@
-import React from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import React, { useState } from "react";
+import { Link, useLocation } from "react-router-dom";
 import {
   Drawer,
   List,
@@ -10,45 +10,49 @@ import {
   Toolbar,
   Typography,
   Box,
-} from '@mui/material';
+  IconButton,
+} from "@mui/material";
 import {
   Dashboard as DashboardIcon,
   Storage as StorageIcon,
   TableChart as TableIcon,
   PlayArrow as PlayIcon,
   Code as CodeIcon,
-} from '@mui/icons-material';
-
-const drawerWidth = 240;
+  ChevronLeft as ChevronLeftIcon,
+  ChevronRight as ChevronRightIcon,
+} from "@mui/icons-material";
 
 const Navigation: React.FC = () => {
   const location = useLocation();
+  const [collapsed, setCollapsed] = useState(false);
+
+  const drawerWidth = collapsed ? 60 : 240;
 
   const menuItems = [
     {
-      text: 'Dashboard',
+      text: "Dashboard",
       icon: <DashboardIcon />,
-      path: '/',
+      path: "/",
     },
     {
-      text: 'Connections',
+      text: "Connections",
       icon: <StorageIcon />,
-      path: '/connections',
+      path: "/connections",
     },
     {
-      text: 'Tables',
+      text: "Tables",
       icon: <TableIcon />,
-      path: '/tables',
+      path: "/tables",
     },
     {
-      text: 'Pillow fight',
+      text: "Pillow fight",
       icon: <PlayIcon />,
-      path: '/pillow-fight',
+      path: "/pillow-fight",
     },
     {
-      text: 'Query',
+      text: "Query",
       icon: <CodeIcon />,
-      path: '/query',
+      path: "/query",
     },
   ];
 
@@ -57,20 +61,34 @@ const Navigation: React.FC = () => {
       sx={{
         width: drawerWidth,
         flexShrink: 0,
-        '& .MuiDrawer-paper': {
+        "& .MuiDrawer-paper": {
           width: drawerWidth,
-          boxSizing: 'border-box',
+          boxSizing: "border-box",
         },
       }}
       variant="permanent"
       anchor="left"
     >
       <Toolbar>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <PlayIcon sx={{ color: 'primary.main', fontSize: 28 }} />
-          <Typography variant="h6" noWrap component="div" sx={{ fontWeight: 700 }}>
-            Whisperer
-          </Typography>
+        <Box
+          sx={{ display: "flex", alignItems: "center", gap: 1, width: "100%" }}
+        >
+          <IconButton onClick={() => setCollapsed(!collapsed)} size="small">
+            {collapsed ? <ChevronRightIcon /> : <ChevronLeftIcon />}
+          </IconButton>
+          {!collapsed && (
+            <>
+              <PlayIcon sx={{ color: "primary.main", fontSize: 28 }} />
+              <Typography
+                variant="h6"
+                noWrap
+                component="div"
+                sx={{ fontWeight: 700 }}
+              >
+                Whisperer
+              </Typography>
+            </>
+          )}
         </Box>
       </Toolbar>
       <List>
@@ -81,26 +99,29 @@ const Navigation: React.FC = () => {
               to={item.path}
               selected={location.pathname === item.path}
               sx={{
-                '&.Mui-selected': {
-                  backgroundColor: 'primary.light',
-                  color: 'primary.contrastText',
-                  '&:hover': {
-                    backgroundColor: 'primary.main',
+                "&.Mui-selected": {
+                  backgroundColor: "primary.light",
+                  color: "primary.contrastText",
+                  "&:hover": {
+                    backgroundColor: "primary.main",
                   },
-                  '& .MuiListItemIcon-root': {
-                    color: 'primary.contrastText',
+                  "& .MuiListItemIcon-root": {
+                    color: "primary.contrastText",
                   },
                 },
               }}
             >
               <ListItemIcon
                 sx={{
-                  color: location.pathname === item.path ? 'inherit' : 'text.secondary',
+                  color:
+                    location.pathname === item.path
+                      ? "inherit"
+                      : "text.secondary",
                 }}
               >
                 {item.icon}
               </ListItemIcon>
-              <ListItemText primary={item.text} />
+              {!collapsed && <ListItemText primary={item.text} />}
             </ListItemButton>
           </ListItem>
         ))}
