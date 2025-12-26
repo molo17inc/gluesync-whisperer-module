@@ -57,7 +57,16 @@ def create_connection(connection: DatabaseConnectionCreate, db = Depends(get_db)
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Connection with name '{connection.name}' already exists"
         )
-
+    
+    try:
+        new_connection = db_service.create_connection(connection)
+        return new_connection
+    except Exception as e:
+        logger.error(f"Error creating connection: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creating connection: {str(e)}"
+        )
 
 @router.get(
     "/connections/{connection_id}/metadata/objects",

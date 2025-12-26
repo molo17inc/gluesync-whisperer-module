@@ -92,6 +92,31 @@ class AS400DatabaseService(DatabaseServiceBase):
         except Exception as e:
             logger.error(f"Error getting tables: {str(e)}")
             raise
+
+    def get_schema_objects(self, connection_id: int, schema: str = None):
+        """Return metadata objects (tables/views) for a schema."""
+        if not schema:
+            schemas = self.get_schemas(connection_id)
+            schema_list = "\n - ".join(schemas)
+            error_msg = (
+                f"Schema parameter is required for AS400 metadata browsing. "
+                f"Available schemas:\n - {schema_list}"
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        table_entries = self.get_tables(connection_id, schema)
+        objects = [
+            {
+                "name": entry["name"] if isinstance(entry, dict) else entry,
+                "schema": entry.get("schema_name", schema) if isinstance(entry, dict) else schema,
+                "type": "table",
+                "has_children": True,
+            }
+            for entry in table_entries
+        ]
+        # NOTE: Additional object types (views, procedures) can be appended here when available.
+        return objects
     
     def get_table_schema(self, connection_id: int, table_name: str, schema_name: str = None) -> TableSchemaResponse:
         """Get the schema of a table."""

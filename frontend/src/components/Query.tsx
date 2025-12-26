@@ -690,9 +690,9 @@ const Query: React.FC = () => {
         <Paper
           variant="outlined"
           sx={{
-            width: 160,
-            minWidth: 140,
-            maxWidth: 180,
+            width: 240,
+            minWidth: 210,
+            maxWidth: 270,
             display: "flex",
             flexDirection: "column",
             minHeight: 0,
