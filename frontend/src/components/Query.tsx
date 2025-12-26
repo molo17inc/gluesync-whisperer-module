@@ -136,6 +136,20 @@ const Query: React.FC = () => {
   const [tables, setTables] = useState<Table[]>([]);
   const [allSchemas, setAllSchemas] = useState<string[]>([]);
   const [selectedConnection, setSelectedConnection] = useState<number | "">("");
+
+  useEffect(() => {
+    const saved = localStorage.getItem("selectedConnection");
+    if (saved && saved !== "") {
+      setSelectedConnection(Number(saved));
+    }
+  }, []);
+
+  const handleConnectionChange = (value: number | "") => {
+    setSelectedConnection(value);
+    localStorage.setItem("selectedConnection", value.toString());
+    setTables([]);
+  };
+
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [snackbar, setSnackbar] = useState<{
@@ -662,36 +676,6 @@ const Query: React.FC = () => {
     >
       <Stack direction="row" spacing={2} alignItems="center">
         <Typography variant="h4">Query browser</Typography>
-        <FormControl size="small" sx={{ minWidth: 220 }}>
-          <InputLabel>Database Connection</InputLabel>
-          <Select
-            label="Database Connection"
-            value={selectedConnection}
-            onChange={(e) => {
-              setSelectedConnection(e.target.value as number | "");
-              setTables([]);
-            }}
-          >
-            {connections.map((connection) => (
-              <MenuItem key={connection.id} value={connection.id}>
-                <Box
-                  sx={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    width: "100%",
-                    gap: 2,
-                  }}
-                >
-                  <span>{connection.name}</span>
-                  <Typography variant="caption" color="text.secondary">
-                    {connection.db_type?.toUpperCase()}
-                  </Typography>
-                </Box>
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-        <Chip label="⌘ / Ctrl + Enter to run" variant="outlined" />
       </Stack>
 
       <Menu
@@ -1085,7 +1069,42 @@ const Query: React.FC = () => {
                   </MenuItem>
                 ))}
               </Menu>
-              <Box sx={{ flex: 1 }} />
+              <Stack
+                direction="row"
+                spacing={1}
+                alignItems="center"
+                sx={{ flex: 1, justifyContent: "flex-end" }}
+              >
+                <FormControl size="small" sx={{ minWidth: 220 }}>
+                  <InputLabel>Database Connection</InputLabel>
+                  <Select
+                    label="Database Connection"
+                    value={selectedConnection}
+                    onChange={(e) =>
+                      handleConnectionChange(e.target.value as number | "")
+                    }
+                  >
+                    {connections.map((connection) => (
+                      <MenuItem key={connection.id} value={connection.id}>
+                        <Box
+                          sx={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            width: "100%",
+                            gap: 2,
+                          }}
+                        >
+                          <span>{connection.name}</span>
+                          <Typography variant="caption" color="text.secondary">
+                            {connection.db_type?.toUpperCase()}
+                          </Typography>
+                        </Box>
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+                <Chip label="⌘ / Ctrl + Enter to run" variant="outlined" />
+              </Stack>
             </Stack>
             <Divider />
             <Box sx={{ flex: 1, minHeight: 0 }}>
