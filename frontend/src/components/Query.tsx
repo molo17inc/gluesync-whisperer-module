@@ -127,8 +127,8 @@ const SAMPLE_QUERIES = [
 const Query: React.FC = () => {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [tables, setTables] = useState<Table[]>([]);
+  const [allSchemas, setAllSchemas] = useState<string[]>([]);
   const [selectedConnection, setSelectedConnection] = useState<number | "">("");
-  const [selectedSchema, setSelectedSchema] = useState<string>("");
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [snackbar, setSnackbar] = useState<{
@@ -203,14 +203,10 @@ const Query: React.FC = () => {
     async (connectionId: number) => {
       try {
         const data = await connectionApi.getSchemas(connectionId);
-        if (data.length > 0) {
-          setSelectedSchema((prev) => prev || data[0]);
-        } else {
-          setSelectedSchema("");
-        }
+        setAllSchemas(data);
       } catch (error) {
         showSnackbar("Unable to load schemas for this connection", "error");
-        setSelectedSchema("");
+        setAllSchemas([]);
       }
     },
     [showSnackbar]
@@ -284,23 +280,6 @@ const Query: React.FC = () => {
   const handleSampleMenuClose = () => {
     setSampleMenuAnchor(null);
   };
-
-  const loadTables = useCallback(
-    async (connectionId: number, schema?: string) => {
-      if (!schema) {
-        setTables([]);
-        return;
-      }
-      try {
-        const data = await connectionApi.getTables(connectionId, schema);
-        setTables(data);
-      } catch (error) {
-        showSnackbar("Unable to load tables for the selected schema", "error");
-        setTables([]);
-      }
-    },
-    [showSnackbar]
-  );
 
   const registerCompletionProvider = useCallback(() => {
     if (!monacoRef.current) return;
@@ -434,7 +413,6 @@ const Query: React.FC = () => {
 
   const handleClear = () => {
     setQuery("");
-    setResult(null);
   };
 
   const handleSampleQuery = (sampleQuery: string) => {
@@ -453,11 +431,7 @@ const Query: React.FC = () => {
     if (obj.type === "table" || obj.type === "view") {
       const table: Table = { name: obj.name, schema: obj.schema };
       handleTableSnippet(table);
-      loadTableMetadata(
-        Number(selectedConnection),
-        obj.name,
-        obj.schema || selectedSchema
-      );
+      loadTableMetadata(Number(selectedConnection), obj.name, obj.schema || "");
     }
   };
 
@@ -486,18 +460,13 @@ const Query: React.FC = () => {
       loadTableMetadata(
         Number(selectedConnection),
         selectedMetadataObject.name,
-        selectedMetadataObject.schema || selectedSchema
+        selectedMetadataObject.schema || ""
       );
     }
     handleMetadataMenuClose();
   };
 
-  const availableSchemas = useMemo(() => {
-    const set = new Set<string>();
-    if (selectedSchema) set.add(selectedSchema);
-    Object.keys(metadataBySchema).forEach((s) => set.add(s));
-    return Array.from(set);
-  }, [metadataBySchema, selectedSchema]);
+  const availableSchemas = useMemo(() => allSchemas, [allSchemas]);
 
   const filteredMetadataBySchema = useMemo(() => {
     const q = metadataFilter.toLowerCase();
@@ -520,7 +489,7 @@ const Query: React.FC = () => {
       const newlyExpanded = itemIds.filter((id) => !expandedItems.includes(id));
       setExpandedItems(itemIds);
       for (const id of newlyExpanded) {
-        if (availableSchemas.includes(id)) {
+        if (allSchemas.includes(id)) {
           if (selectedConnection) {
             await loadMetadataForSchema(Number(selectedConnection), id);
           }
@@ -535,7 +504,7 @@ const Query: React.FC = () => {
       }
     },
     [
-      availableSchemas,
+      allSchemas,
       expandedItems,
       loadMetadataForSchema,
       selectedConnection,
@@ -581,23 +550,21 @@ const Query: React.FC = () => {
 
   useEffect(() => {
     if (selectedConnection) {
+      setAllSchemas([]);
+      setMetadataBySchema({});
       loadSchemas(Number(selectedConnection));
-    } else {
-      setSelectedSchema("");
     }
   }, [selectedConnection, loadSchemas]);
 
   useEffect(() => {
-    if (selectedConnection && selectedSchema) {
-      loadTables(Number(selectedConnection), selectedSchema);
-      loadMetadataForSchema(Number(selectedConnection), selectedSchema);
-      setTableMetadata(null);
-    } else {
-      setTables([]);
-      setMetadataBySchema({});
-      setTableMetadata(null);
+    if (selectedConnection && allSchemas.length > 0) {
+      allSchemas.forEach((schema) => {
+        if (!metadataBySchema[schema]) {
+          loadMetadataForSchema(Number(selectedConnection), schema);
+        }
+      });
     }
-  }, [selectedConnection, selectedSchema, loadTables, loadMetadataForSchema]);
+  }, [selectedConnection, allSchemas, loadMetadataForSchema, metadataBySchema]);
 
   useEffect(() => {
     registerCompletionProvider();
@@ -608,11 +575,6 @@ const Query: React.FC = () => {
       completionDisposableRef.current?.dispose();
     },
     []
-  );
-
-  const selectedConnectionMeta = useMemo(
-    () => connections.find((conn) => conn.id === Number(selectedConnection)),
-    [connections, selectedConnection]
   );
 
   return (
@@ -630,46 +592,37 @@ const Query: React.FC = () => {
         alignItems="center"
         spacing={2}
       >
-        <FormControl size="small" sx={{ minWidth: 220 }}>
-          <InputLabel>Database Connection</InputLabel>
-          <Select
-            label="Database Connection"
-            value={selectedConnection}
-            onChange={(e) => {
-              setSelectedConnection(e.target.value as number | "");
-              setSelectedSchema("");
-              setTables([]);
-            }}
-          >
-            {connections.map((connection) => (
-              <MenuItem key={connection.id} value={connection.id}>
-                <Box
-                  sx={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    width: "100%",
-                    gap: 2,
-                  }}
-                >
-                  <span>{connection.name}</span>
-                  <Typography variant="caption" color="text.secondary">
-                    {connection.db_type?.toUpperCase()}
-                  </Typography>
-                </Box>
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-        <Stack direction="row" spacing={1}>
-          {selectedConnectionMeta && (
-            <Chip
-              label={`${
-                selectedConnectionMeta.name
-              } · ${selectedConnectionMeta.db_type?.toUpperCase()}`}
-              color="primary"
-              variant="outlined"
-            />
-          )}
+        <Box />
+        <Stack direction="row" spacing={1} alignItems="center">
+          <FormControl size="small" sx={{ minWidth: 220 }}>
+            <InputLabel>Database Connection</InputLabel>
+            <Select
+              label="Database Connection"
+              value={selectedConnection}
+              onChange={(e) => {
+                setSelectedConnection(e.target.value as number | "");
+                setTables([]);
+              }}
+            >
+              {connections.map((connection) => (
+                <MenuItem key={connection.id} value={connection.id}>
+                  <Box
+                    sx={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      width: "100%",
+                      gap: 2,
+                    }}
+                  >
+                    <span>{connection.name}</span>
+                    <Typography variant="caption" color="text.secondary">
+                      {connection.db_type?.toUpperCase()}
+                    </Typography>
+                  </Box>
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
           <Chip label="⌘ / Ctrl + Enter to run" variant="outlined" />
         </Stack>
       </Stack>
@@ -729,10 +682,10 @@ const Query: React.FC = () => {
           </Box>
           <Divider />
           <Box sx={{ flex: 1, overflow: "auto" }}>
-            {availableSchemas.length === 0 ? (
+            {allSchemas.length === 0 ? (
               <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
                 {selectedConnection
-                  ? "Select or load a schema"
+                  ? "Loading schemas..."
                   : "Choose a connection"}
               </Typography>
             ) : (
