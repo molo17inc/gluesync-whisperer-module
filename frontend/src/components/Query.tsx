@@ -203,8 +203,28 @@ const Query: React.FC = () => {
     try {
       const data = await connectionApi.list();
       setConnections(data);
-      if (data.length > 0) {
-        setSelectedConnection((prev) => prev || data[0].id || "");
+
+      if (data.length === 0) {
+        setSelectedConnection("");
+        localStorage.removeItem("selectedConnection");
+        showSnackbar("No database connections configured.", "warning");
+        return;
+      }
+
+      const saved = localStorage.getItem("selectedConnection");
+      const savedId =
+        saved && saved !== "" ? Number(saved) : (null as number | null);
+
+      const nextId: number | "" =
+        savedId && data.some((conn) => conn.id === savedId)
+          ? savedId
+          : data[0]?.id ?? "";
+
+      setSelectedConnection(nextId);
+      if (nextId === "") {
+        localStorage.removeItem("selectedConnection");
+      } else {
+        localStorage.setItem("selectedConnection", String(nextId));
       }
     } catch (error) {
       showSnackbar("Failed to load connections", "error");
@@ -214,13 +234,6 @@ const Query: React.FC = () => {
   useEffect(() => {
     loadConnections();
   }, [loadConnections]);
-
-  useEffect(() => {
-    const saved = localStorage.getItem("selectedConnection");
-    if (saved && saved !== "") {
-      setSelectedConnection(Number(saved));
-    }
-  }, []);
 
   const loadSchemas = useCallback(
     async (connectionId: number) => {
