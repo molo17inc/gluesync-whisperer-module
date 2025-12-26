@@ -561,7 +561,7 @@ const Tables: React.FC = () => {
           mb: 3,
         }}
       >
-        <Typography variant="h4">Table Configurations</Typography>
+        <Typography variant="h4">Table configurations</Typography>
         <Button
           variant="contained"
           startIcon={<AddIcon />}

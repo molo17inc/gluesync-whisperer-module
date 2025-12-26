@@ -229,7 +229,7 @@ const Dashboard: React.FC = () => {
             <CardContent>
               <Box sx={{ display: "flex", alignItems: "center", mb: 2 }}>
                 <StorageIcon sx={{ mr: 1, color: "primary.main" }} />
-                <Typography variant="h6">Database Connections</Typography>
+                <Typography variant="h6">Database connections</Typography>
               </Box>
               <Typography variant="h3" color="primary.main">
                 {safeConnections.length}

@@ -197,7 +197,7 @@ const Connections: React.FC = () => {
           mb: 3,
         }}
       >
-        <Typography variant="h4">Database Connections</Typography>
+        <Typography variant="h4">Database connections</Typography>
         <Button
           variant="contained"
           startIcon={<AddIcon />}
