@@ -32,6 +32,8 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import { TreeItem } from "@mui/x-tree-view/TreeItem";
+import { TreeView } from "@mui/x-tree-view/TreeView";
 import {
   PlayArrow as ExecuteIcon,
   Clear as ClearIcon,
@@ -143,8 +145,13 @@ const Query: React.FC = () => {
     null
   );
   const [historyExpanded, setHistoryExpanded] = useState(false);
-  const [metadataObjects, setMetadataObjects] = useState<MetadataObject[]>([]);
-  const [metadataLoading, setMetadataLoading] = useState(false);
+  const [metadataBySchema, setMetadataBySchema] = useState<
+    Record<string, MetadataObject[]>
+  >({});
+  const [metadataLoadingSchema, setMetadataLoadingSchema] = useState<
+    string | null
+  >(null);
+  const [expandedSchemas, setExpandedSchemas] = useState<string[]>([]);
   const [metadataFilter, setMetadataFilter] = useState("");
   const [tableMetadata, setTableMetadata] = useState<TableMetadata | null>(
     null
@@ -237,20 +244,21 @@ const Query: React.FC = () => {
     }
   };
 
-  const loadMetadataObjects = useCallback(
+  const loadMetadataForSchema = useCallback(
     async (connectionId: number, schema?: string) => {
-      setMetadataLoading(true);
+      if (!schema) return;
+      if (metadataBySchema[schema]) return;
+      setMetadataLoadingSchema(schema);
       try {
         const data = await metadataApi.listObjects(connectionId, schema);
-        setMetadataObjects(data);
+        setMetadataBySchema((prev) => ({ ...prev, [schema]: data }));
       } catch (error) {
         showSnackbar("Unable to load metadata objects", "error");
-        setMetadataObjects([]);
       } finally {
-        setMetadataLoading(false);
+        setMetadataLoadingSchema(null);
       }
     },
-    [showSnackbar]
+    [metadataBySchema, showSnackbar]
   );
 
   const loadTableMetadata = useCallback(
@@ -485,16 +493,59 @@ const Query: React.FC = () => {
     handleMetadataMenuClose();
   };
 
-  const filteredMetadata = useMemo(() => {
+  const availableSchemas = useMemo(() => {
+    const set = new Set<string>();
+    if (selectedSchema) set.add(selectedSchema);
+    Object.keys(metadataBySchema).forEach((s) => set.add(s));
+    return Array.from(set);
+  }, [metadataBySchema, selectedSchema]);
+
+  const filteredMetadataBySchema = useMemo(() => {
     const q = metadataFilter.toLowerCase();
-    if (!q) return metadataObjects;
-    return metadataObjects.filter(
-      (m) =>
-        m.name.toLowerCase().includes(q) ||
-        m.schema.toLowerCase().includes(q) ||
-        m.type.toLowerCase().includes(q)
-    );
-  }, [metadataFilter, metadataObjects]);
+    const result: Record<string, MetadataObject[]> = {};
+    availableSchemas.forEach((schema) => {
+      const items = metadataBySchema[schema] || [];
+      result[schema] = q
+        ? items.filter(
+            (m) =>
+              m.name.toLowerCase().includes(q) ||
+              (m.type || "").toLowerCase().includes(q)
+          )
+        : items;
+    });
+    return result;
+  }, [availableSchemas, metadataBySchema, metadataFilter]);
+
+  const handleSchemaToggle = useCallback(
+    async (_event: React.SyntheticEvent, itemIds: string[]) => {
+      const newlyExpanded = itemIds.filter(
+        (id) => !expandedSchemas.includes(id)
+      );
+      setExpandedSchemas(itemIds);
+      const schemaToLoad = newlyExpanded.find((id) =>
+        availableSchemas.includes(id)
+      );
+      if (schemaToLoad && selectedConnection) {
+        await loadMetadataForSchema(Number(selectedConnection), schemaToLoad);
+      }
+    },
+    [
+      availableSchemas,
+      expandedSchemas,
+      loadMetadataForSchema,
+      selectedConnection,
+    ]
+  );
+
+  const groupedByType = useCallback((items: MetadataObject[]) => {
+    const groups: Record<string, MetadataObject[]> = {};
+    items.forEach((item) => {
+      const key = item.type || "other";
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(item);
+    });
+    return groups;
+  }, []);
 
   const handleHistorySelect = (entry: QueryHistoryEntry) => {
     setQuery(entry.query);
@@ -534,14 +585,14 @@ const Query: React.FC = () => {
   useEffect(() => {
     if (selectedConnection && selectedSchema) {
       loadTables(Number(selectedConnection), selectedSchema);
-      loadMetadataObjects(Number(selectedConnection), selectedSchema);
+      loadMetadataForSchema(Number(selectedConnection), selectedSchema);
       setTableMetadata(null);
     } else {
       setTables([]);
-      setMetadataObjects([]);
+      setMetadataBySchema({});
       setTableMetadata(null);
     }
-  }, [selectedConnection, selectedSchema, loadTables, loadMetadataObjects]);
+  }, [selectedConnection, selectedSchema, loadTables, loadMetadataForSchema]);
 
   useEffect(() => {
     setTablePickerSelection(null);
@@ -799,7 +850,9 @@ const Query: React.FC = () => {
         >
           <Stack direction="row" alignItems="center" spacing={1} p={1.5}>
             <Typography variant="subtitle1">Objects</Typography>
-            {metadataLoading && <CircularProgress size={14} sx={{ ml: 1 }} />}
+            {metadataLoadingSchema && (
+              <CircularProgress size={14} sx={{ ml: 1 }} />
+            )}
           </Stack>
           <Box px={1.5} pb={1}>
             <TextField
@@ -812,27 +865,98 @@ const Query: React.FC = () => {
           </Box>
           <Divider />
           <Box sx={{ flex: 1, overflow: "auto" }}>
-            {filteredMetadata.length === 0 ? (
+            {availableSchemas.length === 0 ? (
               <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
-                {metadataLoading ? "Loading..." : "No objects found"}
+                {selectedConnection
+                  ? "Select or load a schema"
+                  : "Choose a connection"}
               </Typography>
             ) : (
-              <List dense disablePadding>
-                {filteredMetadata.map((obj) => (
-                  <ListItemButton
-                    key={`${obj.schema}.${obj.name}.${obj.type}`}
-                    onClick={() => handleMetadataSelect(obj)}
-                    onContextMenu={(e) => handleMetadataContextMenu(e, obj)}
-                  >
-                    <Stack spacing={0.25}>
-                      <Typography variant="body2">{obj.name}</Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {obj.schema} · {obj.type}
-                      </Typography>
-                    </Stack>
-                  </ListItemButton>
-                ))}
-              </List>
+              <TreeView
+                slots={{
+                  collapseIcon: ExpandMoreIcon,
+                  expandIcon: ArrowDropDownIcon,
+                }}
+                expandedItems={expandedSchemas}
+                onExpandedItemsChange={handleSchemaToggle}
+              >
+                {availableSchemas.map((schema) => {
+                  const items = filteredMetadataBySchema[schema] || [];
+                  const grouped = groupedByType(items);
+                  return (
+                    <TreeItem
+                      itemId={schema}
+                      key={schema}
+                      label={
+                        <Stack
+                          direction="row"
+                          spacing={0.75}
+                          alignItems="center"
+                        >
+                          <Typography variant="body2">{schema}</Typography>
+                          {metadataLoadingSchema === schema && (
+                            <CircularProgress size={12} />
+                          )}
+                          <Chip
+                            size="small"
+                            variant="outlined"
+                            label={`${items.length} objs`}
+                          />
+                        </Stack>
+                      }
+                    >
+                      {Object.entries(grouped).map(([type, objs]) => (
+                        <TreeItem
+                          itemId={`${schema}:${type}`}
+                          key={`${schema}:${type}`}
+                          label={
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                            >
+                              {type}
+                            </Typography>
+                          }
+                        >
+                          {objs.map((obj) => (
+                            <TreeItem
+                              itemId={`${schema}:${type}:${obj.name}`}
+                              key={`${schema}:${type}:${obj.name}`}
+                              label={
+                                <Typography variant="body2">
+                                  {obj.name}
+                                </Typography>
+                              }
+                              onClick={() => handleMetadataSelect(obj)}
+                              onContextMenu={(e) =>
+                                handleMetadataContextMenu(
+                                  e as React.MouseEvent<HTMLElement>,
+                                  obj
+                                )
+                              }
+                            />
+                          ))}
+                        </TreeItem>
+                      ))}
+                      {items.length === 0 && (
+                        <TreeItem
+                          itemId={`${schema}:empty`}
+                          label={
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                            >
+                              {metadataLoadingSchema === schema
+                                ? "Loading..."
+                                : "No objects"}
+                            </Typography>
+                          }
+                        />
+                      )}
+                    </TreeItem>
+                  );
+                })}
+              </TreeView>
             )}
           </Box>
           {tableMetadata && (
