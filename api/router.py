@@ -33,7 +33,9 @@ from schemas import (
     DatabaseConnectionResponse,
     ConnectionStatusUpdate,
     ConnectionTestResponse,
-    TableResponse
+    TableResponse,
+    MetadataObject,
+    TableMetadata,
 )
 from services.database_service import DatabaseService
 
@@ -54,6 +56,61 @@ def create_connection(connection: DatabaseConnectionCreate, db = Depends(get_db)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Connection with name '{connection.name}' already exists"
+        )
+
+
+@router.get(
+    "/connections/{connection_id}/metadata/objects",
+    response_model=List[MetadataObject],
+)
+def get_schema_objects(
+    connection_id: int,
+    schema: Optional[str] = None,
+    db = Depends(get_db),
+):
+    """List objects (tables/views/procs) for a connection and optional schema."""
+    db_service = DatabaseService(db)
+    existing_connection = db_service.get_connection(connection_id)
+    if not existing_connection:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Connection with ID {connection_id} not found",
+        )
+    try:
+        return db_service.get_schema_objects(connection_id, schema)
+    except Exception as e:
+        logger.error(f"Error getting metadata objects: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting metadata objects: {str(e)}",
+        )
+
+
+@router.get(
+    "/connections/{connection_id}/metadata/tables/{table_name}",
+    response_model=TableMetadata,
+)
+def get_table_metadata(
+    connection_id: int,
+    table_name: str,
+    schema: Optional[str] = None,
+    db = Depends(get_db),
+):
+    """Get table metadata (columns, PK/FK, indexes) for a given table."""
+    db_service = DatabaseService(db)
+    existing_connection = db_service.get_connection(connection_id)
+    if not existing_connection:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Connection with ID {connection_id} not found",
+        )
+    try:
+        return db_service.get_table_metadata(connection_id, table_name, schema)
+    except Exception as e:
+        logger.error(f"Error getting table metadata: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting table metadata: {str(e)}",
         )
     
     # Create connection

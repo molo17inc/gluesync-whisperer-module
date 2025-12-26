@@ -31,7 +31,14 @@ import logging
 from typing import List, Dict, Any, Optional, Union
 
 from models import DatabaseConnection
-from schemas import TableSchemaResponse, ConnectionStatus, DatabaseConnectionCreate, DatabaseConnectionUpdate
+from schemas import (
+    TableSchemaResponse,
+    TableMetadata,
+    MetadataObject,
+    ConnectionStatus,
+    DatabaseConnectionCreate,
+    DatabaseConnectionUpdate,
+)
 from utils.db_connector import DatabaseType
 from services.database_service_factory import DatabaseServiceFactory
 
@@ -257,3 +264,26 @@ class DatabaseService:
         
         # Use the service to get table schema
         return service.get_table_schema(connection_id, table_name, schema_name)
+
+    def get_schema_objects(self, connection_id: int, schema: str = None) -> list[MetadataObject]:
+        """List objects (tables/views/procs) for a connection and optional schema."""
+        service = self._get_service_for_connection_id(connection_id)
+        if not hasattr(service, "get_schema_objects"):
+            raise NotImplementedError("Schema objects listing is not implemented for this database type.")
+        return service.get_schema_objects(connection_id, schema)
+
+    def get_table_metadata(self, connection_id: int, table_name: str, schema_name: str = None) -> TableMetadata:
+        """Get detailed table metadata (columns, PK/FK, indexes)."""
+        service = self._get_service_for_connection_id(connection_id)
+        if not hasattr(service, "get_table_metadata"):
+            # Fallback to get_table_schema and wrap minimal info
+            schema_resp = service.get_table_schema(connection_id, table_name, schema_name)
+            return TableMetadata(
+                table_name=schema_resp.table_name,
+                schema_name=schema_name or "",
+                columns=schema_resp.columns,
+                primary_keys=schema_resp.primary_keys,
+                foreign_keys=[],
+                indexes=[],
+            )
+        return service.get_table_metadata(connection_id, table_name, schema_name)

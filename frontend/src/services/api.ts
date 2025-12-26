@@ -15,6 +15,35 @@ const resolveApiBaseUrl = (): string => {
   return 'http://localhost:8000/api';
 };
 
+export const metadataApi = {
+  // List objects (tables/views/procs) for a connection and optional schema
+  listObjects: async (
+    connectionId: number,
+    schema?: string
+  ): Promise<MetadataObject[]> => {
+    const params = schema ? { schema } : {};
+    const response = await api.get(
+      `/connections/${connectionId}/metadata/objects`,
+      { params }
+    );
+    return response.data;
+  },
+
+  // Get table metadata (columns, pk/fk, indexes)
+  getTableMetadata: async (
+    connectionId: number,
+    tableName: string,
+    schema?: string
+  ): Promise<TableMetadata> => {
+    const params = schema ? { schema } : {};
+    const response = await api.get(
+      `/connections/${connectionId}/metadata/tables/${tableName}`,
+      { params }
+    );
+    return response.data;
+  },
+};
+
 const API_BASE_URL = resolveApiBaseUrl();
 
 // Create axios instance with base configuration
@@ -49,6 +78,22 @@ export interface Schema {
 export interface Table {
   name: string;
   schema: string;
+}
+
+export interface MetadataObject {
+  name: string;
+  schema: string;
+  type: string; // table, view, materialized_view, procedure, function, other
+  has_children?: boolean;
+}
+
+export interface TableMetadata {
+  table_name: string;
+  schema_name: string;
+  columns: Record<string, any>;
+  primary_keys: string[];
+  foreign_keys?: Array<Record<string, any>>;
+  indexes?: Array<Record<string, any>>;
 }
 
 export interface TableConfig {

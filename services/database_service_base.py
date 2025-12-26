@@ -326,6 +326,82 @@ class DatabaseServiceBase(ABC):
         """Get the schema of a table."""
         pass
     
+    # Optional helpers for metadata browsing
+    def get_schema_objects(self, connection_id: int, schema: str = None):
+        """List objects for a schema; default implementation returns tables only."""
+        # Default: use engine tables listing for the schema
+        connection = self.get_connection(connection_id)
+        if not connection:
+            return []
+        try:
+            engine = self._get_engine(connection)
+            # Prefer engine.get_tables if available
+            if hasattr(engine, "get_tables"):
+                tables = engine.get_tables(schema)
+                # Normalize to list of dicts if strings
+                normalized = []
+                for t in tables:
+                    if isinstance(t, dict):
+                        normalized.append(t)
+                    else:
+                        normalized.append({"name": str(t), "schema_name": schema or ""})
+                return [
+                    {
+                        "name": t.get("name") or t.get("table_name") or "",
+                        "schema": t.get("schema_name", schema or ""),
+                        "type": "table",
+                        "has_children": True,
+                    }
+                    for t in normalized
+                ]
+        except Exception as e:
+            logger.warning(f"Metadata listing fallback: {e}")
+        
+        # Fallback: tables only via get_tables
+        tables = self.get_tables(connection_id, schema)
+        return [
+            {
+                "name": t["name"] if isinstance(t, dict) and "name" in t else t,
+                "schema": t.get("schema_name", schema) if isinstance(t, dict) else (schema or ""),
+                "type": "table",
+                "has_children": True,
+            }
+            for t in tables
+        ]
+    
+    def get_table_metadata(self, connection_id: int, table_name: str, schema_name: str = None):
+        """Return detailed table metadata; default uses get_table_schema."""
+        connection = self.get_connection(connection_id)
+        engine = None
+        try:
+            engine = self._get_engine(connection)
+        except Exception as e:
+            logger.warning(f"Metadata engine fallback: {e}")
+        
+        if engine and hasattr(engine, "get_table_schema"):
+            try:
+                schema_data = engine.get_table_schema(table_name, schema_name)
+                return {
+                    "table_name": table_name,
+                    "schema_name": schema_name or "",
+                    "columns": schema_data.get("columns", {}),
+                    "primary_keys": schema_data.get("primary_keys", []),
+                    "foreign_keys": schema_data.get("foreign_keys", []),
+                    "indexes": schema_data.get("indexes", []),
+                }
+            except Exception as e:
+                logger.warning(f"Engine get_table_schema failed: {e}")
+        
+        schema_resp = self.get_table_schema(connection_id, table_name, schema_name)
+        return {
+            "table_name": schema_resp.table_name,
+            "schema_name": schema_name or "",
+            "columns": schema_resp.columns,
+            "primary_keys": schema_resp.primary_keys,
+            "foreign_keys": getattr(schema_resp, "foreign_keys", []),
+            "indexes": getattr(schema_resp, "indexes", []),
+        }
+    
     @abstractmethod
     def _build_connection_string(self, connection: DatabaseConnection) -> str:
         """Build a connection string based on the database type and connection parameters."""

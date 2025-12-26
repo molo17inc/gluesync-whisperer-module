@@ -152,6 +152,23 @@ class TableSchemaResponse(BaseModel):
     primary_keys: List[str]
 
 
+# Metadata DTOs for object browser
+class MetadataObject(BaseModel):
+    name: str
+    schema: str
+    type: str  # table, view, materialized_view, procedure, function, other
+    has_children: bool = False
+
+
+class TableMetadata(BaseModel):
+    table_name: str
+    schema_name: str
+    columns: Dict[str, Any] = {}
+    primary_keys: List[str] = []
+    foreign_keys: List[Dict[str, Any]] = []
+    indexes: List[Dict[str, Any]] = []
+
+
 class TableOperationRequest(BaseModel):
     connection_id: int
     table_ids: List[int]

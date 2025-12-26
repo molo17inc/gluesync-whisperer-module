@@ -51,6 +51,9 @@ import {
   Table,
   connectionApi,
   automationApi,
+  metadataApi,
+  MetadataObject,
+  TableMetadata,
 } from "../services/api";
 
 interface QueryResult {
@@ -140,6 +143,17 @@ const Query: React.FC = () => {
     null
   );
   const [historyExpanded, setHistoryExpanded] = useState(false);
+  const [metadataObjects, setMetadataObjects] = useState<MetadataObject[]>([]);
+  const [metadataLoading, setMetadataLoading] = useState(false);
+  const [metadataFilter, setMetadataFilter] = useState("");
+  const [tableMetadata, setTableMetadata] = useState<TableMetadata | null>(
+    null
+  );
+  const [tableMetadataLoading, setTableMetadataLoading] = useState(false);
+  const [selectedMetadataObject, setSelectedMetadataObject] =
+    useState<MetadataObject | null>(null);
+  const [metadataMenuAnchor, setMetadataMenuAnchor] =
+    useState<null | HTMLElement>(null);
 
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
@@ -222,6 +236,42 @@ const Query: React.FC = () => {
       handleTableSnippet(value);
     }
   };
+
+  const loadMetadataObjects = useCallback(
+    async (connectionId: number, schema?: string) => {
+      setMetadataLoading(true);
+      try {
+        const data = await metadataApi.listObjects(connectionId, schema);
+        setMetadataObjects(data);
+      } catch (error) {
+        showSnackbar("Unable to load metadata objects", "error");
+        setMetadataObjects([]);
+      } finally {
+        setMetadataLoading(false);
+      }
+    },
+    [showSnackbar]
+  );
+
+  const loadTableMetadata = useCallback(
+    async (connectionId: number, tableName: string, schema?: string) => {
+      setTableMetadataLoading(true);
+      try {
+        const data = await metadataApi.getTableMetadata(
+          connectionId,
+          tableName,
+          schema
+        );
+        setTableMetadata(data);
+      } catch (error) {
+        showSnackbar("Unable to load table metadata", "error");
+        setTableMetadata(null);
+      } finally {
+        setTableMetadataLoading(false);
+      }
+    },
+    [showSnackbar]
+  );
 
   const handleSampleMenuToggle = (event: React.MouseEvent<HTMLElement>) => {
     setSampleMenuAnchor(event.currentTarget);
@@ -391,6 +441,61 @@ const Query: React.FC = () => {
     setQuery((prev) => (prev ? `${prev.trim()}\n\n${snippet}` : snippet));
   };
 
+  const handleMetadataSelect = (obj: MetadataObject) => {
+    if (obj.type === "table" || obj.type === "view") {
+      const table: Table = { name: obj.name, schema: obj.schema };
+      handleTableSnippet(table);
+      setTablePickerSelection(table);
+      loadTableMetadata(
+        Number(selectedConnection),
+        obj.name,
+        obj.schema || selectedSchema
+      );
+    }
+  };
+
+  const handleMetadataContextMenu = (
+    event: React.MouseEvent<HTMLElement>,
+    obj: MetadataObject
+  ) => {
+    event.preventDefault();
+    setSelectedMetadataObject(obj);
+    setMetadataMenuAnchor(event.currentTarget);
+  };
+
+  const handleMetadataMenuClose = () => {
+    setMetadataMenuAnchor(null);
+  };
+
+  const handleMetadataInsertSelect = () => {
+    if (selectedMetadataObject) {
+      handleMetadataSelect(selectedMetadataObject);
+    }
+    handleMetadataMenuClose();
+  };
+
+  const handleMetadataDescribe = () => {
+    if (selectedMetadataObject) {
+      loadTableMetadata(
+        Number(selectedConnection),
+        selectedMetadataObject.name,
+        selectedMetadataObject.schema || selectedSchema
+      );
+    }
+    handleMetadataMenuClose();
+  };
+
+  const filteredMetadata = useMemo(() => {
+    const q = metadataFilter.toLowerCase();
+    if (!q) return metadataObjects;
+    return metadataObjects.filter(
+      (m) =>
+        m.name.toLowerCase().includes(q) ||
+        m.schema.toLowerCase().includes(q) ||
+        m.type.toLowerCase().includes(q)
+    );
+  }, [metadataFilter, metadataObjects]);
+
   const handleHistorySelect = (entry: QueryHistoryEntry) => {
     setQuery(entry.query);
   };
@@ -429,10 +534,14 @@ const Query: React.FC = () => {
   useEffect(() => {
     if (selectedConnection && selectedSchema) {
       loadTables(Number(selectedConnection), selectedSchema);
+      loadMetadataObjects(Number(selectedConnection), selectedSchema);
+      setTableMetadata(null);
     } else {
       setTables([]);
+      setMetadataObjects([]);
+      setTableMetadata(null);
     }
-  }, [selectedConnection, selectedSchema, loadTables]);
+  }, [selectedConnection, selectedSchema, loadTables, loadMetadataObjects]);
 
   useEffect(() => {
     setTablePickerSelection(null);
@@ -476,18 +585,30 @@ const Query: React.FC = () => {
             result grids.
           </Typography>
         </Box>
-        <Stack direction="row" spacing={1} flexWrap="wrap">
-          {selectedConnectionMeta && (
-            <Chip
-              label={`${
-                selectedConnectionMeta.name
-              } · ${selectedConnectionMeta.db_type?.toUpperCase()}`}
-              color="primary"
-              variant="outlined"
-            />
-          )}
-          <Chip label="⌘ / Ctrl + Enter to run" variant="outlined" />
-        </Stack>
+      </Stack>
+
+      <Menu
+        anchorEl={metadataMenuAnchor}
+        open={Boolean(metadataMenuAnchor)}
+        onClose={handleMetadataMenuClose}
+      >
+        <MenuItem onClick={handleMetadataInsertSelect}>
+          Insert SELECT *
+        </MenuItem>
+        <MenuItem onClick={handleMetadataDescribe}>Describe table</MenuItem>
+      </Menu>
+
+      <Stack direction="row" spacing={1} flexWrap="wrap">
+        {selectedConnectionMeta && (
+          <Chip
+            label={`${
+              selectedConnectionMeta.name
+            } · ${selectedConnectionMeta.db_type?.toUpperCase()}`}
+            color="primary"
+            variant="outlined"
+          />
+        )}
+        <Chip label="⌘ / Ctrl + Enter to run" variant="outlined" />
       </Stack>
 
       <Paper variant="outlined" sx={{ p: 2 }}>
@@ -664,173 +785,256 @@ const Query: React.FC = () => {
         {(schemasLoading || tablesLoading) && <LinearProgress sx={{ mt: 2 }} />}
       </Paper>
 
-      <Box
-        sx={{
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-          gap: 2,
-          minHeight: 0,
-        }}
-      >
+      <Stack direction="row" spacing={2} sx={{ flex: 1, minHeight: 0 }}>
         <Paper
           variant="outlined"
           sx={{
-            flex: 1,
-            minHeight: 280,
+            width: 320,
+            minWidth: 280,
+            maxWidth: 360,
             display: "flex",
             flexDirection: "column",
+            minHeight: 0,
           }}
         >
-          <Stack direction="row" alignItems="center" spacing={1} p={2}>
-            <Tooltip title="Run (⌘ / Ctrl + Enter)">
-              <span>
-                <Button
-                  variant="contained"
-                  startIcon={
-                    loading ? (
-                      <CircularProgress size={18} color="inherit" />
-                    ) : (
-                      <ExecuteIcon />
-                    )
-                  }
-                  onClick={handleExecuteQuery}
-                  disabled={loading || !selectedConnection || !query.trim()}
-                >
-                  {loading ? "Executing" : "Run"}
-                </Button>
-              </span>
-            </Tooltip>
-            <Button
-              variant="outlined"
-              startIcon={<ClearIcon />}
-              onClick={handleClear}
-            >
-              Clear
-            </Button>
-            <Button
-              variant="text"
-              startIcon={<AutoAwesomeIcon />}
-              endIcon={<ArrowDropDownIcon />}
-              onClick={handleSampleMenuToggle}
-            >
-              Sample queries
-            </Button>
-            <Menu
-              anchorEl={sampleMenuAnchor}
-              open={Boolean(sampleMenuAnchor)}
-              onClose={handleSampleMenuClose}
-            >
-              {SAMPLE_QUERIES.map((sample) => (
-                <MenuItem
-                  key={sample.label}
-                  onClick={() => {
-                    handleSampleQuery(sample.query);
-                    handleSampleMenuClose();
-                  }}
-                >
-                  {sample.label}
-                </MenuItem>
-              ))}
-            </Menu>
-            <Box sx={{ flex: 1 }} />
-            {result?.execution_time && (
-              <Chip
-                size="small"
-                label={`Execution: ${result.execution_time} ms`}
-              />
-            )}
-            {result?.rows && (
-              <Chip
-                size="small"
-                label={`${result.rows.length} rows`}
-                variant="outlined"
-              />
-            )}
+          <Stack direction="row" alignItems="center" spacing={1} p={1.5}>
+            <Typography variant="subtitle1">Objects</Typography>
+            {metadataLoading && <CircularProgress size={14} sx={{ ml: 1 }} />}
           </Stack>
-          <Divider />
-          <Box sx={{ flex: 1, minHeight: 0 }}>
-            <Editor
-              height="100%"
-              defaultLanguage="sql"
-              theme="vs-dark"
-              options={{
-                minimap: { enabled: false },
-                fontFamily: '"JetBrains Mono", Menlo, monospace',
-                fontSize: 14,
-                automaticLayout: true,
-                scrollBeyondLastLine: false,
-                wordWrap: "on",
-                renderLineHighlight: "all",
-                suggestOnTriggerCharacters: true,
-              }}
-              value={query}
-              onChange={(value) => setQuery(value ?? "")}
-              onMount={handleEditorMount}
+          <Box px={1.5} pb={1}>
+            <TextField
+              size="small"
+              fullWidth
+              placeholder="Filter objects"
+              value={metadataFilter}
+              onChange={(e) => setMetadataFilter(e.target.value)}
             />
           </Box>
-        </Paper>
-
-        <Paper
-          variant="outlined"
-          sx={{
-            flex: 1,
-            minHeight: 260,
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          <Stack
-            direction="row"
-            alignItems="center"
-            justifyContent="space-between"
-            p={2}
-          >
-            <Typography variant="subtitle1">Result Grid</Typography>
-            {loading && (
-              <Stack direction="row" spacing={1} alignItems="center">
-                <CircularProgress size={16} />
-                <Typography variant="body2" color="text.secondary">
-                  Running query...
-                </Typography>
-              </Stack>
-            )}
-          </Stack>
           <Divider />
-          <Box sx={{ flex: 1, minHeight: 0 }}>
-            {loading ? (
-              <LinearProgress />
-            ) : result?.error ? (
-              <Alert severity="error" sx={{ m: 2 }}>
-                {result.error}
-              </Alert>
-            ) : gridRows.length > 0 ? (
-              <DataGrid
-                rows={gridRows}
-                columns={gridColumns}
-                density="compact"
-                disableRowSelectionOnClick
-                sx={{ border: "none" }}
-              />
-            ) : result ? (
-              <Alert severity="info" sx={{ m: 2 }}>
-                Query executed successfully. No rows returned.
-              </Alert>
+          <Box sx={{ flex: 1, overflow: "auto" }}>
+            {filteredMetadata.length === 0 ? (
+              <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
+                {metadataLoading ? "Loading..." : "No objects found"}
+              </Typography>
             ) : (
-              <Stack
-                spacing={1}
-                alignItems="center"
-                justifyContent="center"
-                sx={{ height: "100%" }}
-              >
-                <Typography variant="body2" color="text.secondary">
-                  Run a query to see results here.
-                </Typography>
-              </Stack>
+              <List dense disablePadding>
+                {filteredMetadata.map((obj) => (
+                  <ListItemButton
+                    key={`${obj.schema}.${obj.name}.${obj.type}`}
+                    onClick={() => handleMetadataSelect(obj)}
+                    onContextMenu={(e) => handleMetadataContextMenu(e, obj)}
+                  >
+                    <Stack spacing={0.25}>
+                      <Typography variant="body2">{obj.name}</Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {obj.schema} · {obj.type}
+                      </Typography>
+                    </Stack>
+                  </ListItemButton>
+                ))}
+              </List>
             )}
           </Box>
+          {tableMetadata && (
+            <>
+              <Divider />
+              <Box sx={{ p: 1.5, maxHeight: 200, overflow: "auto" }}>
+                <Typography variant="subtitle2" gutterBottom>
+                  {tableMetadata.schema_name}.{tableMetadata.table_name}
+                </Typography>
+                <Stack
+                  direction="row"
+                  spacing={1}
+                  alignItems="center"
+                  sx={{ pb: 1 }}
+                >
+                  <Typography variant="caption" color="text.secondary">
+                    PK: {tableMetadata.primary_keys.join(", ") || "—"}
+                  </Typography>
+                  {tableMetadataLoading && (
+                    <CircularProgress size={12} color="inherit" />
+                  )}
+                </Stack>
+                <List dense>
+                  {Object.keys(tableMetadata.columns || {}).map((col) => (
+                    <ListItemButton key={col} disableRipple>
+                      <Typography variant="body2">{col}</Typography>
+                    </ListItemButton>
+                  ))}
+                </List>
+              </Box>
+            </>
+          )}
         </Paper>
-      </Box>
+
+        <Box
+          sx={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            gap: 2,
+            minHeight: 0,
+          }}
+        >
+          <Paper
+            variant="outlined"
+            sx={{
+              flex: 1,
+              minHeight: 280,
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <Stack direction="row" alignItems="center" spacing={1} p={2}>
+              <Tooltip title="Run (⌘ / Ctrl + Enter)">
+                <span>
+                  <Button
+                    variant="contained"
+                    startIcon={
+                      loading ? (
+                        <CircularProgress size={18} color="inherit" />
+                      ) : (
+                        <ExecuteIcon />
+                      )
+                    }
+                    onClick={handleExecuteQuery}
+                    disabled={loading || !selectedConnection || !query.trim()}
+                  >
+                    {loading ? "Executing" : "Run"}
+                  </Button>
+                </span>
+              </Tooltip>
+              <Button
+                variant="outlined"
+                startIcon={<ClearIcon />}
+                onClick={handleClear}
+              >
+                Clear
+              </Button>
+              <Button
+                variant="text"
+                startIcon={<AutoAwesomeIcon />}
+                endIcon={<ArrowDropDownIcon />}
+                onClick={handleSampleMenuToggle}
+              >
+                Sample queries
+              </Button>
+              <Menu
+                anchorEl={sampleMenuAnchor}
+                open={Boolean(sampleMenuAnchor)}
+                onClose={handleSampleMenuClose}
+              >
+                {SAMPLE_QUERIES.map((sample) => (
+                  <MenuItem
+                    key={sample.label}
+                    onClick={() => {
+                      handleSampleQuery(sample.query);
+                      handleSampleMenuClose();
+                    }}
+                  >
+                    {sample.label}
+                  </MenuItem>
+                ))}
+              </Menu>
+              <Box sx={{ flex: 1 }} />
+              {result?.execution_time && (
+                <Chip
+                  size="small"
+                  label={`Execution: ${result.execution_time} ms`}
+                />
+              )}
+              {result?.rows && (
+                <Chip
+                  size="small"
+                  label={`${result.rows.length} rows`}
+                  variant="outlined"
+                />
+              )}
+            </Stack>
+            <Divider />
+            <Box sx={{ flex: 1, minHeight: 0 }}>
+              <Editor
+                height="100%"
+                defaultLanguage="sql"
+                theme="vs-dark"
+                options={{
+                  minimap: { enabled: false },
+                  fontFamily: '"JetBrains Mono", Menlo, monospace',
+                  fontSize: 14,
+                  automaticLayout: true,
+                  scrollBeyondLastLine: false,
+                  wordWrap: "on",
+                  renderLineHighlight: "all",
+                  suggestOnTriggerCharacters: true,
+                }}
+                value={query}
+                onChange={(value) => setQuery(value ?? "")}
+                onMount={handleEditorMount}
+              />
+            </Box>
+          </Paper>
+
+          <Paper
+            variant="outlined"
+            sx={{
+              flex: 1,
+              minHeight: 260,
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <Stack
+              direction="row"
+              alignItems="center"
+              justifyContent="space-between"
+              p={2}
+            >
+              <Typography variant="subtitle1">Result Grid</Typography>
+              {loading && (
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <CircularProgress size={16} />
+                  <Typography variant="body2" color="text.secondary">
+                    Running query...
+                  </Typography>
+                </Stack>
+              )}
+            </Stack>
+            <Divider />
+            <Box sx={{ flex: 1, minHeight: 0 }}>
+              {loading ? (
+                <LinearProgress />
+              ) : result?.error ? (
+                <Alert severity="error" sx={{ m: 2 }}>
+                  {result.error}
+                </Alert>
+              ) : gridRows.length > 0 ? (
+                <DataGrid
+                  rows={gridRows}
+                  columns={gridColumns}
+                  density="compact"
+                  disableRowSelectionOnClick
+                  sx={{ border: "none" }}
+                />
+              ) : result ? (
+                <Alert severity="info" sx={{ m: 2 }}>
+                  Query executed successfully. No rows returned.
+                </Alert>
+              ) : (
+                <Stack
+                  spacing={1}
+                  alignItems="center"
+                  justifyContent="center"
+                  sx={{ height: "100%" }}
+                >
+                  <Typography variant="body2" color="text.secondary">
+                    Run a query to see results here.
+                  </Typography>
+                </Stack>
+              )}
+            </Box>
+          </Paper>
+        </Box>
+      </Stack>
 
       <Accordion
         expanded={historyExpanded}
