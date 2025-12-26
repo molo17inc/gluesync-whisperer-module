@@ -41,6 +41,7 @@ import {
   AutoAwesome as AutoAwesomeIcon,
   ExpandMore as ExpandMoreIcon,
   KeyboardArrowDown as ArrowDropDownIcon,
+  ChevronRight as ChevronRightIcon,
 } from "@mui/icons-material";
 import { DataGrid } from "@mui/x-data-grid";
 import Editor from "@monaco-editor/react";
@@ -715,7 +716,7 @@ const Query: React.FC = () => {
               <TreeView
                 slots={{
                   collapseIcon: ExpandMoreIcon,
-                  expandIcon: ArrowDropDownIcon,
+                  expandIcon: ChevronRightIcon,
                 }}
                 expandedItems={expandedItems}
                 onExpandedItemsChange={handleTreeExpansion}

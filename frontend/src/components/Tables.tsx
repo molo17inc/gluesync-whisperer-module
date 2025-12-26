@@ -568,7 +568,7 @@ const Tables: React.FC = () => {
           onClick={handleOpenDialog}
           disabled={connections.length === 0}
         >
-          Configure Table
+          Configure table
         </Button>
       </Box>
 

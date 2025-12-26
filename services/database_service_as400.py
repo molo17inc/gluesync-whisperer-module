@@ -312,7 +312,20 @@ class AS400DatabaseService(DatabaseServiceBase):
             # Close the connection
             conn.close()
             
-            return TableSchemaResponse(table_name=table_name, columns=columns, primary_keys=primary_keys)
+            normalized_columns: Dict[str, Any] = {}
+            for key, definition in columns.items():
+                column_key = str(key)
+                definition_dict = dict(definition or {})
+                definition_dict["name"] = str(definition_dict.get("name", column_key))
+                normalized_columns[column_key] = definition_dict
+
+            normalized_primary_keys = [str(pk) for pk in primary_keys if pk is not None]
+
+            return TableSchemaResponse(
+                table_name=table_name,
+                columns=normalized_columns,
+                primary_keys=normalized_primary_keys,
+            )
         except Exception as e:
             logger.error(f"Error in JDBC metadata approach: {str(e)}")
             return TableSchemaResponse(table_name=table_name, columns={}, primary_keys=[])
