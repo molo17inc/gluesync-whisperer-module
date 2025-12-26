@@ -637,16 +637,6 @@ const Query: React.FC = () => {
   }, [selectedConnection, loadSchemas]);
 
   useEffect(() => {
-    if (selectedConnection && allSchemas.length > 0) {
-      allSchemas.forEach((schema) => {
-        if (!metadataBySchema[schema]) {
-          loadMetadataForSchema(Number(selectedConnection), schema);
-        }
-      });
-    }
-  }, [selectedConnection, allSchemas, loadMetadataForSchema, metadataBySchema]);
-
-  useEffect(() => {
     registerCompletionProvider();
   }, [registerCompletionProvider]);
 
