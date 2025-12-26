@@ -10,14 +10,12 @@ import {
   AccordionDetails,
   AccordionSummary,
   Alert,
-  Autocomplete,
   Box,
   Button,
   Chip,
   CircularProgress,
   Divider,
   FormControl,
-  IconButton,
   InputLabel,
   LinearProgress,
   List,
@@ -28,6 +26,8 @@ import {
   Select,
   Snackbar,
   Stack,
+  Tab,
+  Tabs,
   TextField,
   Tooltip,
   Typography,
@@ -38,13 +38,11 @@ import {
   PlayArrow as ExecuteIcon,
   Clear as ClearIcon,
   History as HistoryIcon,
-  Refresh as RefreshIcon,
   AutoAwesome as AutoAwesomeIcon,
-  ContentCopy as ContentCopyIcon,
   ExpandMore as ExpandMoreIcon,
   KeyboardArrowDown as ArrowDropDownIcon,
 } from "@mui/icons-material";
-import { DataGrid, GridColDef } from "@mui/x-data-grid";
+import { DataGrid } from "@mui/x-data-grid";
 import Editor from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 import {
@@ -63,6 +61,14 @@ interface QueryResult {
   rows?: any[][];
   error?: string;
   execution_time?: number;
+}
+
+interface ResultTab {
+  id: string;
+  title: string;
+  result: QueryResult;
+  executionTime: number;
+  rowsReturned?: number;
 }
 
 interface QueryHistoryEntry {
@@ -120,15 +126,11 @@ const SAMPLE_QUERIES = [
 
 const Query: React.FC = () => {
   const [connections, setConnections] = useState<Connection[]>([]);
-  const [schemas, setSchemas] = useState<string[]>([]);
   const [tables, setTables] = useState<Table[]>([]);
   const [selectedConnection, setSelectedConnection] = useState<number | "">("");
   const [selectedSchema, setSelectedSchema] = useState<string>("");
   const [query, setQuery] = useState("");
-  const [result, setResult] = useState<QueryResult | null>(null);
   const [loading, setLoading] = useState(false);
-  const [schemasLoading, setSchemasLoading] = useState(false);
-  const [tablesLoading, setTablesLoading] = useState(false);
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
     message: string;
@@ -139,8 +141,6 @@ const Query: React.FC = () => {
     severity: "success",
   });
   const [history, setHistory] = useState<QueryHistoryEntry[]>([]);
-  const [tablePickerSelection, setTablePickerSelection] =
-    useState<Table | null>(null);
   const [sampleMenuAnchor, setSampleMenuAnchor] = useState<null | HTMLElement>(
     null
   );
@@ -162,35 +162,14 @@ const Query: React.FC = () => {
   const [metadataMenuAnchor, setMetadataMenuAnchor] =
     useState<null | HTMLElement>(null);
 
+  const [resultTabs, setResultTabs] = useState<ResultTab[]>([]);
+  const [activeTab, setActiveTab] = useState(0);
+
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
   const completionDisposableRef = useRef<Monaco.IDisposable | null>(null);
   const executeCommandRef = useRef<() => void>(() => undefined);
-
-  const gridColumns: GridColDef[] = useMemo(() => {
-    if (!result?.columns) {
-      return [];
-    }
-    return result.columns.map((column) => ({
-      field: column,
-      headerName: column,
-      flex: 1,
-      minWidth: 140,
-    }));
-  }, [result?.columns]);
-
-  const gridRows = useMemo(() => {
-    if (!result?.rows || !result.columns) {
-      return [];
-    }
-    return result.rows.map((row, idx) => {
-      const rowObj: Record<string, any> = { id: idx };
-      result.columns!.forEach((col, colIdx) => {
-        rowObj[col] = row[colIdx];
-      });
-      return rowObj;
-    });
-  }, [result?.rows, result?.columns]);
+  const tabCounterRef = useRef(1);
 
   const showSnackbar = useCallback(
     (message: string, severity: "success" | "error") => {
@@ -217,10 +196,8 @@ const Query: React.FC = () => {
 
   const loadSchemas = useCallback(
     async (connectionId: number) => {
-      setSchemasLoading(true);
       try {
         const data = await connectionApi.getSchemas(connectionId);
-        setSchemas(data);
         if (data.length > 0) {
           setSelectedSchema((prev) => prev || data[0]);
         } else {
@@ -228,21 +205,11 @@ const Query: React.FC = () => {
         }
       } catch (error) {
         showSnackbar("Unable to load schemas for this connection", "error");
-        setSchemas([]);
         setSelectedSchema("");
-      } finally {
-        setSchemasLoading(false);
       }
     },
     [showSnackbar]
   );
-
-  const handleTablePickerChange = (_: any, value: Table | null) => {
-    setTablePickerSelection(value);
-    if (value) {
-      handleTableSnippet(value);
-    }
-  };
 
   const loadMetadataForSchema = useCallback(
     async (connectionId: number, schema?: string) => {
@@ -295,15 +262,12 @@ const Query: React.FC = () => {
         setTables([]);
         return;
       }
-      setTablesLoading(true);
       try {
         const data = await connectionApi.getTables(connectionId, schema);
         setTables(data);
       } catch (error) {
         showSnackbar("Unable to load tables for the selected schema", "error");
         setTables([]);
-      } finally {
-        setTablesLoading(false);
       }
     },
     [showSnackbar]
@@ -393,7 +357,18 @@ const Query: React.FC = () => {
         transformedResult.error = response.message;
       }
 
-      setResult(transformedResult);
+      const newTab: ResultTab = {
+        id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
+        title: `Query ${tabCounterRef.current++}`,
+        result: transformedResult,
+        executionTime,
+        rowsReturned: transformedResult.rows?.length,
+      };
+
+      const newTabs = [...resultTabs, newTab];
+      setResultTabs(newTabs);
+      setActiveTab(newTabs.length - 1);
+
       const historyEntry: QueryHistoryEntry = {
         id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
         query: query.trim(),
@@ -414,10 +389,6 @@ const Query: React.FC = () => {
         error.response?.data?.detail ||
         error.message ||
         "Query execution failed";
-      setResult({
-        error: message,
-        execution_time: executionTime,
-      });
       const historyEntry: QueryHistoryEntry = {
         id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
         query: query.trim(),
@@ -453,7 +424,6 @@ const Query: React.FC = () => {
     if (obj.type === "table" || obj.type === "view") {
       const table: Table = { name: obj.name, schema: obj.schema };
       handleTableSnippet(table);
-      setTablePickerSelection(table);
       loadTableMetadata(
         Number(selectedConnection),
         obj.name,
@@ -577,7 +547,6 @@ const Query: React.FC = () => {
     if (selectedConnection) {
       loadSchemas(Number(selectedConnection));
     } else {
-      setSchemas([]);
       setSelectedSchema("");
     }
   }, [selectedConnection, loadSchemas]);
@@ -593,10 +562,6 @@ const Query: React.FC = () => {
       setTableMetadata(null);
     }
   }, [selectedConnection, selectedSchema, loadTables, loadMetadataForSchema]);
-
-  useEffect(() => {
-    setTablePickerSelection(null);
-  }, [selectedConnection, selectedSchema]);
 
   useEffect(() => {
     registerCompletionProvider();
@@ -624,6 +589,56 @@ const Query: React.FC = () => {
       }}
     >
       <Stack
+        direction="row"
+        justifyContent="space-between"
+        alignItems="center"
+        spacing={2}
+      >
+        <FormControl size="small" sx={{ minWidth: 220 }}>
+          <InputLabel>Database Connection</InputLabel>
+          <Select
+            label="Database Connection"
+            value={selectedConnection}
+            onChange={(e) => {
+              setSelectedConnection(e.target.value as number | "");
+              setSelectedSchema("");
+              setTables([]);
+            }}
+          >
+            {connections.map((connection) => (
+              <MenuItem key={connection.id} value={connection.id}>
+                <Box
+                  sx={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    width: "100%",
+                    gap: 2,
+                  }}
+                >
+                  <span>{connection.name}</span>
+                  <Typography variant="caption" color="text.secondary">
+                    {connection.db_type?.toUpperCase()}
+                  </Typography>
+                </Box>
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        <Stack direction="row" spacing={1}>
+          {selectedConnectionMeta && (
+            <Chip
+              label={`${
+                selectedConnectionMeta.name
+              } · ${selectedConnectionMeta.db_type?.toUpperCase()}`}
+              color="primary"
+              variant="outlined"
+            />
+          )}
+          <Chip label="⌘ / Ctrl + Enter to run" variant="outlined" />
+        </Stack>
+      </Stack>
+
+      <Stack
         direction={{ xs: "column", sm: "row" }}
         justifyContent="space-between"
         alignItems={{ xs: "flex-start", sm: "center" }}
@@ -648,193 +663,6 @@ const Query: React.FC = () => {
         </MenuItem>
         <MenuItem onClick={handleMetadataDescribe}>Describe table</MenuItem>
       </Menu>
-
-      <Stack direction="row" spacing={1} flexWrap="wrap">
-        {selectedConnectionMeta && (
-          <Chip
-            label={`${
-              selectedConnectionMeta.name
-            } · ${selectedConnectionMeta.db_type?.toUpperCase()}`}
-            color="primary"
-            variant="outlined"
-          />
-        )}
-        <Chip label="⌘ / Ctrl + Enter to run" variant="outlined" />
-      </Stack>
-
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <Stack
-          direction={{ xs: "column", lg: "row" }}
-          spacing={2}
-          alignItems={{ lg: "center" }}
-          flexWrap="wrap"
-        >
-          <FormControl size="small" sx={{ minWidth: 220 }}>
-            <InputLabel>Database Connection</InputLabel>
-            <Select
-              label="Database Connection"
-              value={selectedConnection}
-              onChange={(e) => {
-                setSelectedConnection(e.target.value as number | "");
-                setSelectedSchema("");
-                setTables([]);
-              }}
-            >
-              {connections.map((connection) => (
-                <MenuItem key={connection.id} value={connection.id}>
-                  <Box
-                    sx={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      width: "100%",
-                      gap: 2,
-                    }}
-                  >
-                    <span>{connection.name}</span>
-                    <Typography variant="caption" color="text.secondary">
-                      {connection.db_type?.toUpperCase()}
-                    </Typography>
-                  </Box>
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-          <Stack
-            direction="row"
-            spacing={1}
-            alignItems="center"
-            sx={{ flex: 1 }}
-          >
-            <Autocomplete
-              size="small"
-              sx={{ minWidth: 200, flex: 1 }}
-              options={schemas}
-              value={selectedSchema}
-              onChange={(_, value) => setSelectedSchema(value ?? "")}
-              loading={schemasLoading}
-              disabled={!selectedConnection || schemas.length === 0}
-              getOptionLabel={(option) => option}
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  label="Schema"
-                  placeholder={
-                    !selectedConnection
-                      ? "Select a connection first"
-                      : schemas.length === 0
-                      ? "No schemas found"
-                      : "Search schemas"
-                  }
-                  InputProps={{
-                    ...params.InputProps,
-                    endAdornment: (
-                      <>
-                        {schemasLoading ? (
-                          <CircularProgress color="inherit" size={16} />
-                        ) : null}
-                        {params.InputProps.endAdornment}
-                      </>
-                    ),
-                  }}
-                />
-              )}
-            />
-            <Tooltip title="Reload schemas">
-              <span>
-                <IconButton
-                  size="small"
-                  onClick={() =>
-                    selectedConnection &&
-                    loadSchemas(Number(selectedConnection))
-                  }
-                  disabled={!selectedConnection || schemasLoading}
-                >
-                  <RefreshIcon fontSize="small" />
-                </IconButton>
-              </span>
-            </Tooltip>
-          </Stack>
-          <Stack
-            direction="row"
-            spacing={1}
-            alignItems="center"
-            sx={{ flex: 1, minWidth: 240 }}
-          >
-            <Autocomplete
-              size="small"
-              sx={{ flex: 1 }}
-              options={tables}
-              value={tablePickerSelection}
-              onChange={handleTablePickerChange}
-              getOptionLabel={(option) =>
-                option.schema
-                  ? `${option.schema}.${option.name}`
-                  : option.name ?? ""
-              }
-              isOptionEqualToValue={(option, value) =>
-                option.schema === value?.schema && option.name === value?.name
-              }
-              loading={tablesLoading}
-              disabled={
-                !selectedConnection || !selectedSchema || tables.length === 0
-              }
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  label="Table"
-                  placeholder={
-                    !selectedSchema ? "Select a schema first" : "Search tables"
-                  }
-                  InputProps={{
-                    ...params.InputProps,
-                    endAdornment: (
-                      <>
-                        {tablesLoading ? (
-                          <CircularProgress color="inherit" size={16} />
-                        ) : null}
-                        {params.InputProps.endAdornment}
-                      </>
-                    ),
-                  }}
-                />
-              )}
-            />
-            <Tooltip title="Reload tables for schema">
-              <span>
-                <IconButton
-                  size="small"
-                  onClick={() =>
-                    selectedConnection &&
-                    selectedSchema &&
-                    loadTables(Number(selectedConnection), selectedSchema)
-                  }
-                  disabled={
-                    !selectedConnection || !selectedSchema || tablesLoading
-                  }
-                >
-                  <RefreshIcon fontSize="small" />
-                </IconButton>
-              </span>
-            </Tooltip>
-            <Tooltip title="Insert SELECT * for highlighted table">
-              <span>
-                <IconButton
-                  size="small"
-                  onClick={() => {
-                    if (tablePickerSelection) {
-                      handleTableSnippet(tablePickerSelection);
-                    }
-                  }}
-                  disabled={!tablePickerSelection}
-                >
-                  <ContentCopyIcon fontSize="small" />
-                </IconButton>
-              </span>
-            </Tooltip>
-          </Stack>
-        </Stack>
-        {(schemasLoading || tablesLoading) && <LinearProgress sx={{ mt: 2 }} />}
-      </Paper>
 
       <Stack direction="row" spacing={2} sx={{ flex: 1, minHeight: 0 }}>
         <Paper
@@ -1061,19 +889,6 @@ const Query: React.FC = () => {
                 ))}
               </Menu>
               <Box sx={{ flex: 1 }} />
-              {result?.execution_time && (
-                <Chip
-                  size="small"
-                  label={`Execution: ${result.execution_time} ms`}
-                />
-              )}
-              {result?.rows && (
-                <Chip
-                  size="small"
-                  label={`${result.rows.length} rows`}
-                  variant="outlined"
-                />
-              )}
             </Stack>
             <Divider />
             <Box sx={{ flex: 1, minHeight: 0 }}>
@@ -1113,7 +928,7 @@ const Query: React.FC = () => {
               justifyContent="space-between"
               p={2}
             >
-              <Typography variant="subtitle1">Result Grid</Typography>
+              <Typography variant="subtitle1">Result Tabs</Typography>
               {loading && (
                 <Stack direction="row" spacing={1} alignItems="center">
                   <CircularProgress size={16} />
@@ -1127,23 +942,7 @@ const Query: React.FC = () => {
             <Box sx={{ flex: 1, minHeight: 0 }}>
               {loading ? (
                 <LinearProgress />
-              ) : result?.error ? (
-                <Alert severity="error" sx={{ m: 2 }}>
-                  {result.error}
-                </Alert>
-              ) : gridRows.length > 0 ? (
-                <DataGrid
-                  rows={gridRows}
-                  columns={gridColumns}
-                  density="compact"
-                  disableRowSelectionOnClick
-                  sx={{ border: "none" }}
-                />
-              ) : result ? (
-                <Alert severity="info" sx={{ m: 2 }}>
-                  Query executed successfully. No rows returned.
-                </Alert>
-              ) : (
+              ) : resultTabs.length === 0 ? (
                 <Stack
                   spacing={1}
                   alignItems="center"
@@ -1154,6 +953,57 @@ const Query: React.FC = () => {
                     Run a query to see results here.
                   </Typography>
                 </Stack>
+              ) : (
+                <>
+                  <Tabs
+                    value={activeTab}
+                    onChange={(_, newValue) => setActiveTab(newValue)}
+                  >
+                    {resultTabs.map((tab) => (
+                      <Tab
+                        key={tab.id}
+                        label={`${tab.title} (${tab.executionTime}ms${
+                          tab.rowsReturned ? `, ${tab.rowsReturned} rows` : ""
+                        })`}
+                      />
+                    ))}
+                  </Tabs>
+                  {resultTabs.map(
+                    (tab, index) =>
+                      activeTab === index && (
+                        <Box key={tab.id} sx={{ p: 2 }}>
+                          {tab.result.error ? (
+                            <Alert severity="error">{tab.result.error}</Alert>
+                          ) : tab.result.rows && tab.result.rows.length > 0 ? (
+                            <DataGrid
+                              rows={tab.result.rows.map((row, idx) => {
+                                const rowObj: Record<string, any> = { id: idx };
+                                tab.result.columns!.forEach((col, colIdx) => {
+                                  rowObj[col] = row[colIdx];
+                                });
+                                return rowObj;
+                              })}
+                              columns={
+                                tab.result.columns?.map((column) => ({
+                                  field: column,
+                                  headerName: column,
+                                  flex: 1,
+                                  minWidth: 140,
+                                })) || []
+                              }
+                              density="compact"
+                              disableRowSelectionOnClick
+                              sx={{ border: "none" }}
+                            />
+                          ) : (
+                            <Alert severity="info">
+                              Query executed successfully. No rows returned.
+                            </Alert>
+                          )}
+                        </Box>
+                      )
+                  )}
+                </>
               )}
             </Box>
           </Paper>
