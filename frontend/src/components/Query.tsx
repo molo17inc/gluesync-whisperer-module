@@ -16,7 +16,6 @@ import {
   CircularProgress,
   Divider,
   FormControl,
-  IconButton,
   InputLabel,
   LinearProgress,
   List,
@@ -182,7 +181,6 @@ const Query: React.FC = () => {
       result: null,
     },
   ]);
-  const [activeTabIndex, setActiveTabIndex] = useState(0);
 
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
@@ -201,20 +199,21 @@ const Query: React.FC = () => {
     setSnackbar((prev) => ({ ...prev, open: false }));
   };
 
-  useEffect(() => {
-    const loadConnections = async () => {
-      try {
-        const data = await connectionApi.list();
-        setConnections(data);
-        if (data.length > 0) {
-          setSelectedConnection((prev) => prev || data[0].id || "");
-        }
-      } catch (error) {
-        showSnackbar("Failed to load connections", "error");
+  const loadConnections = useCallback(async () => {
+    try {
+      const data = await connectionApi.list();
+      setConnections(data);
+      if (data.length > 0) {
+        setSelectedConnection((prev) => prev || data[0].id || "");
       }
-    };
-    loadConnections();
+    } catch (error) {
+      showSnackbar("Failed to load connections", "error");
+    }
   }, [showSnackbar]);
+
+  useEffect(() => {
+    loadConnections();
+  }, [loadConnections]);
 
   useEffect(() => {
     const saved = localStorage.getItem("selectedConnection");
