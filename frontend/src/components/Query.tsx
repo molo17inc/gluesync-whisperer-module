@@ -16,6 +16,7 @@ import {
   CircularProgress,
   Divider,
   FormControl,
+  IconButton,
   InputLabel,
   LinearProgress,
   List,
@@ -41,6 +42,13 @@ import {
   AutoAwesome as AutoAwesomeIcon,
   ExpandMore as ExpandMoreIcon,
   KeyboardArrowDown as ArrowDropDownIcon,
+  Folder as FolderIcon,
+  TableChart as TableIcon,
+  Visibility as ViewIcon,
+  Settings as SettingsIcon,
+  Help as HelpIcon,
+  ChevronLeft as ChevronLeftIcon,
+  ChevronRight as ChevronRightIcon,
 } from "@mui/icons-material";
 import { DataGrid } from "@mui/x-data-grid";
 import Editor from "@monaco-editor/react";
@@ -175,6 +183,7 @@ const Query: React.FC = () => {
     },
   ]);
   const [activeTab, setActiveTab] = useState(0);
+  const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
 
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
@@ -627,6 +636,21 @@ const Query: React.FC = () => {
     []
   );
 
+  const panelWidth = leftPanelCollapsed ? 60 : 160;
+
+  const getTypeIcon = (type: string) => {
+    switch (type) {
+      case "table":
+        return <TableIcon fontSize="small" />;
+      case "view":
+        return <ViewIcon fontSize="small" />;
+      case "procedure":
+        return <SettingsIcon fontSize="small" />;
+      default:
+        return <HelpIcon fontSize="small" />;
+    }
+  };
+
   return (
     <Box
       sx={{
@@ -707,29 +731,39 @@ const Query: React.FC = () => {
         <Paper
           variant="outlined"
           sx={{
-            width: 320,
-            minWidth: 280,
-            maxWidth: 360,
+            width: panelWidth,
+            minWidth: panelWidth,
+            maxWidth: panelWidth,
             display: "flex",
             flexDirection: "column",
             minHeight: 0,
           }}
         >
           <Stack direction="row" alignItems="center" spacing={1} p={1.5}>
-            <Typography variant="subtitle1">Objects</Typography>
+            <IconButton
+              onClick={() => setLeftPanelCollapsed(!leftPanelCollapsed)}
+              size="small"
+            >
+              {leftPanelCollapsed ? <ChevronRightIcon /> : <ChevronLeftIcon />}
+            </IconButton>
+            {!leftPanelCollapsed && (
+              <Typography variant="subtitle1">Objects</Typography>
+            )}
             {metadataLoadingSchema && (
               <CircularProgress size={14} sx={{ ml: 1 }} />
             )}
           </Stack>
-          <Box px={1.5} pb={1}>
-            <TextField
-              size="small"
-              fullWidth
-              placeholder="Filter objects"
-              value={metadataFilter}
-              onChange={(e) => setMetadataFilter(e.target.value)}
-            />
-          </Box>
+          {!leftPanelCollapsed && (
+            <Box px={1.5} pb={1}>
+              <TextField
+                size="small"
+                fullWidth
+                placeholder="Filter objects"
+                value={metadataFilter}
+                onChange={(e) => setMetadataFilter(e.target.value)}
+              />
+            </Box>
+          )}
           <Divider />
           <Box sx={{ flex: 1, overflow: "auto" }}>
             {allSchemas.length === 0 ? (
@@ -760,15 +794,20 @@ const Query: React.FC = () => {
                           spacing={0.75}
                           alignItems="center"
                         >
-                          <Typography variant="body2">{schema}</Typography>
+                          <FolderIcon fontSize="small" />
+                          {!leftPanelCollapsed && (
+                            <Typography variant="body2">{schema}</Typography>
+                          )}
                           {metadataLoadingSchema === schema && (
                             <CircularProgress size={12} />
                           )}
-                          <Chip
-                            size="small"
-                            variant="outlined"
-                            label={`${items.length} objs`}
-                          />
+                          {!leftPanelCollapsed && (
+                            <Chip
+                              size="small"
+                              variant="outlined"
+                              label={`${items.length} objs`}
+                            />
+                          )}
                         </Stack>
                       }
                     >
@@ -777,12 +816,21 @@ const Query: React.FC = () => {
                           itemId={`${schema}:${type}`}
                           key={`${schema}:${type}`}
                           label={
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
+                            <Stack
+                              direction="row"
+                              spacing={0.5}
+                              alignItems="center"
                             >
-                              {type}
-                            </Typography>
+                              {getTypeIcon(type)}
+                              {!leftPanelCollapsed && (
+                                <Typography
+                                  variant="caption"
+                                  color="text.secondary"
+                                >
+                                  {type}
+                                </Typography>
+                              )}
+                            </Stack>
                           }
                         >
                           {objs.map((obj) => {
@@ -806,9 +854,12 @@ const Query: React.FC = () => {
                                       spacing={0.5}
                                       alignItems="center"
                                     >
-                                      <Typography variant="body2">
-                                        {obj.name}
-                                      </Typography>
+                                      {getTypeIcon(obj.type)}
+                                      {!leftPanelCollapsed && (
+                                        <Typography variant="body2">
+                                          {obj.name}
+                                        </Typography>
+                                      )}
                                       {loading && (
                                         <CircularProgress size={10} />
                                       )}
@@ -894,9 +945,18 @@ const Query: React.FC = () => {
                                     obj.name
                                   }`}
                                   label={
-                                    <Typography variant="body2">
-                                      {obj.name}
-                                    </Typography>
+                                    <Stack
+                                      direction="row"
+                                      spacing={0.5}
+                                      alignItems="center"
+                                    >
+                                      {getTypeIcon(obj.type)}
+                                      {!leftPanelCollapsed && (
+                                        <Typography variant="body2">
+                                          {obj.name}
+                                        </Typography>
+                                      )}
+                                    </Stack>
                                   }
                                   onClick={() => handleMetadataSelect(obj)}
                                   onContextMenu={(e) =>
@@ -932,7 +992,7 @@ const Query: React.FC = () => {
               </TreeView>
             )}
           </Box>
-          {tableMetadata && (
+          {!leftPanelCollapsed && tableMetadata && (
             <>
               <Divider />
               <Box sx={{ p: 1.5, maxHeight: 200, overflow: "auto" }}>
