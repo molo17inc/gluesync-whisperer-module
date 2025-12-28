@@ -233,3 +233,16 @@ class SqlQueryResponse(BaseModel):
     results: Optional[List[Dict[str, Any]]] = None
     column_names: Optional[List[str]] = None
     row_count: Optional[int] = None
+
+
+class CsvQueryExportRequest(BaseModel):
+    query: str
+    schema_name: Optional[str] = None
+    params: Optional[List[Any]] = None
+    include_all_rows: bool = False
+    max_rows: int = Field(default=100, ge=1)
+
+
+class CsvImportResponse(BaseModel):
+    success: bool
+    inserted_rows: int

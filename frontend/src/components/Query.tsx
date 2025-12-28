@@ -44,6 +44,7 @@ import {
   KeyboardArrowDown as ArrowDropDownIcon,
   ChevronRight as ChevronRightIcon,
   AddCircleOutline as AddTabIcon,
+  Download as DownloadIcon,
 } from "@mui/icons-material";
 import { DataGrid } from "@mui/x-data-grid";
 import Editor from "@monaco-editor/react";
@@ -139,6 +140,8 @@ const Query: React.FC = () => {
 
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
+  const [exportingCsv, setExportingCsv] = useState(false);
+  const [exportingTableCsv, setExportingTableCsv] = useState(false);
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
     message: string;
@@ -445,6 +448,129 @@ const Query: React.FC = () => {
     }
   }, [queryTabs, activeTab, selectedConnection, showSnackbar]);
 
+  const handleExportCsv = async () => {
+    const currentResult = queryTabs[activeTab].result;
+    if (
+      !currentResult ||
+      !currentResult.rows ||
+      currentResult.rows.length === 0
+    ) {
+      showSnackbar("No query results to export", "warning");
+      return;
+    }
+
+    setExportingCsv(true);
+    try {
+      const currentQuery = queryTabs[activeTab].query.trim();
+      const blob = await automationApi.exportQueryCsv({
+        connection_id: Number(selectedConnection),
+        query: currentQuery,
+        include_all_rows: true, // Export all rows, not just the limited results
+      });
+
+      // Create download link
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `query_export_${Date.now()}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+
+      showSnackbar("CSV export completed successfully", "success");
+    } catch (error: any) {
+      const message =
+        error.response?.data?.detail || error.message || "CSV export failed";
+      showSnackbar(message, "error");
+    } finally {
+      setExportingCsv(false);
+    }
+  };
+
+  const handleTableExportCsv = async () => {
+    if (!selectedMetadataObject || selectedMetadataObject.type !== "table") {
+      return;
+    }
+
+    setExportingTableCsv(true);
+    try {
+      const blob = await automationApi.exportTableCsv({
+        connection_id: Number(selectedConnection),
+        table_name: selectedMetadataObject.name,
+        schema_name: selectedMetadataObject.schema || undefined,
+      });
+
+      // Create download link
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `table_export_${
+        selectedMetadataObject.name
+      }_${Date.now()}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+
+      showSnackbar(
+        `Table ${selectedMetadataObject.name} exported successfully`,
+        "success"
+      );
+    } catch (error: any) {
+      const message =
+        error.response?.data?.detail ||
+        error.message ||
+        "Table CSV export failed";
+      showSnackbar(message, "error");
+    } finally {
+      setExportingTableCsv(false);
+      handleMetadataMenuClose();
+    }
+  };
+
+  const handleTableImportCsv = () => {
+    if (!selectedMetadataObject || selectedMetadataObject.type !== "table") {
+      return;
+    }
+
+    // Create a hidden file input
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".csv";
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+
+      // Check file size (500 MB limit)
+      if (file.size > 500 * 1024 * 1024) {
+        showSnackbar("File exceeds 500 MB limit", "error");
+        return;
+      }
+
+      try {
+        const result = await automationApi.importTableCsv({
+          connection_id: Number(selectedConnection),
+          table_name: selectedMetadataObject.name,
+          schema_name: selectedMetadataObject.schema || undefined,
+          file: file,
+        });
+
+        showSnackbar(
+          `Successfully imported ${result.inserted_rows} rows into ${selectedMetadataObject.name}`,
+          "success"
+        );
+      } catch (error: any) {
+        const message =
+          error.response?.data?.detail || error.message || "CSV import failed";
+        showSnackbar(message, "error");
+      }
+    };
+
+    input.click();
+    handleMetadataMenuClose();
+  };
+
   const handleClear = () => {
     setQueryTabs((prev) =>
       prev.map((tab, index) =>
@@ -681,6 +807,18 @@ const Query: React.FC = () => {
           Insert SELECT *
         </MenuItem>
         <MenuItem onClick={handleMetadataDescribe}>Describe table</MenuItem>
+        {selectedMetadataObject?.type === "table" && (
+          <>
+            <Divider />
+            <MenuItem
+              onClick={handleTableExportCsv}
+              disabled={exportingTableCsv}
+            >
+              {exportingTableCsv ? "Exporting..." : "Export CSV"}
+            </MenuItem>
+            <MenuItem onClick={handleTableImportCsv}>Import CSV</MenuItem>
+          </>
+        )}
       </Menu>
 
       <Stack direction="row" spacing={2} sx={{ flex: 1, minHeight: 0 }}>
@@ -1112,6 +1250,19 @@ const Query: React.FC = () => {
               p={2}
             >
               <Typography variant="subtitle1">Result</Typography>
+              {queryTabs[activeTab].result &&
+                queryTabs[activeTab].result.rows &&
+                queryTabs[activeTab].result.rows.length > 0 && (
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={<DownloadIcon />}
+                    onClick={handleExportCsv}
+                    disabled={exportingCsv}
+                  >
+                    {exportingCsv ? "Exporting..." : "Export CSV"}
+                  </Button>
+                )}
               {loading && (
                 <Stack direction="row" spacing={1} alignItems="center">
                   <CircularProgress size={16} />

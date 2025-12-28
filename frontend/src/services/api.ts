@@ -268,6 +268,59 @@ export const automationApi = {
     const response = await api.post(`/v1/automation/connections/${request.connection_id}/query`, request);
     return response.data;
   },
+
+  // Export query results to CSV
+  exportQueryCsv: async (request: {
+    connection_id: number;
+    query: string;
+    schema_name?: string;
+    params?: any[];
+    include_all_rows?: boolean;
+    max_rows?: number;
+  }): Promise<Blob> => {
+    const response = await api.post(`/v1/automation/connections/${request.connection_id}/query/export-csv`, {
+      query: request.query,
+      schema_name: request.schema_name,
+      params: request.params,
+      include_all_rows: request.include_all_rows,
+      max_rows: request.max_rows,
+    }, {
+      responseType: 'blob'
+    });
+    return response.data;
+  },
+
+  // Export table to CSV
+  exportTableCsv: async (request: {
+    connection_id: number;
+    table_name: string;
+    schema_name?: string;
+  }): Promise<Blob> => {
+    const response = await api.get(`/v1/automation/connections/${request.connection_id}/tables/${request.table_name}/export-csv`, {
+      params: request.schema_name ? { schema_name: request.schema_name } : {},
+      responseType: 'blob'
+    });
+    return response.data;
+  },
+
+  // Import CSV into table
+  importTableCsv: async (request: {
+    connection_id: number;
+    table_name: string;
+    schema_name?: string;
+    file: File;
+  }): Promise<{ success: boolean; inserted_rows: number }> => {
+    const formData = new FormData();
+    formData.append('file', request.file);
+    
+    const response = await api.post(`/v1/automation/connections/${request.connection_id}/tables/${request.table_name}/import-csv`, formData, {
+      params: request.schema_name ? { schema_name: request.schema_name } : {},
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  },
 };
 
 export default api;

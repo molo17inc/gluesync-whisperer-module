@@ -25,6 +25,10 @@ import asyncio
 import logging
 from typing import Dict, List, Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
+from fastapi import UploadFile, File
+import io
+import csv
 
 from database import get_db
 from models import DatabaseType, OperationType, ConnectionStatus
@@ -36,7 +40,9 @@ from schemas import (
     TableListResponse,
     TableSchemaResponse,
     SqlQueryRequest,
-    SqlQueryResponse
+    SqlQueryResponse,
+    CsvQueryExportRequest,
+    CsvImportResponse
 )
 from services.whisperer_service import WhispererService
 from services.connection_service import ConnectionService
@@ -444,9 +450,403 @@ async def execute_query(connection_id: int, request: SqlQueryRequest, db = Depen
         # Re-raise HTTP exceptions
         raise
     except Exception as e:
-        # Log the error and return a 500 response
         logger.error(f"Error executing query: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error executing query: {str(e)}"
+        )
+
+
+@router.post("/connections/{connection_id}/query/export-csv", response_class=StreamingResponse)
+async def export_query_csv(connection_id: int, request: CsvQueryExportRequest, db = Depends(get_db)):
+    """Export query results to CSV with streaming and size limit enforcement."""
+    try:
+        # Get database connection
+        db_service = ConnectionService(db)
+        connection = db_service.get_connection(connection_id)
+        
+        if not connection:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Connection with ID {connection_id} not found"
+            )
+        
+        if connection.status not in [
+            ConnectionStatus.RUNNING,
+            ConnectionStatus.IDLE,
+            ConnectionStatus.CONNECTED,
+        ]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Connection with ID {connection_id} is not active (status: {connection.status})"
+            )
+        
+        # Create a database connector
+        connector_db_type = connection.db_type
+        if isinstance(connector_db_type, str):
+            try:
+                connector_db_type = DatabaseType[connector_db_type.upper()]
+            except (KeyError, AttributeError):
+                logger.warning(f"Unknown database type string: {connector_db_type}")
+                
+        from utils.db_connector import DatabaseConnector
+        db_connector = DatabaseConnector(
+            db_type=connector_db_type,
+            host=connection.host,
+            port=connection.port,
+            database=connection.database,
+            username=connection.username,
+            password=connection.password
+        )
+        
+        # Connect to the database
+        connected = db_connector.connect()
+        if not connected:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to connect to database for connection ID {connection_id}"
+            )
+        
+        try:
+            # Determine max rows based on include_all_rows flag
+            max_rows = None if request.include_all_rows else request.max_rows
+            if request.include_all_rows:
+                logger.info(f"Exporting all rows for query on connection {connection_id}")
+            
+            # Execute the query
+            params = request.params if request.params else []
+            results = db_connector.execute_query(request.query, params, max_rows)
+            
+            # Stream the CSV response with size limit
+            def generate_csv():
+                output = io.StringIO()
+                writer = csv.writer(output)
+                
+                # Write header
+                if results and len(results) > 0:
+                    writer.writerow(results[0].keys())
+                    yield output.getvalue()
+                    output.seek(0)
+                    output.truncate(0)
+                    
+                    total_size = 0
+                    max_size_bytes = 500 * 1024 * 1024  # 500 MB limit
+                    
+                    # Write data rows
+                    for row in results:
+                        writer.writerow(row.values())
+                        csv_row = output.getvalue()
+                        
+                        # Check size limit
+                        total_size += len(csv_row.encode('utf-8'))
+                        if total_size > max_size_bytes:
+                            logger.warning(f"CSV export exceeded 500 MB limit for connection {connection_id}")
+                            raise HTTPException(
+                                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                                detail="CSV export exceeds 500 MB limit"
+                            )
+                        
+                        yield csv_row
+                        output.seek(0)
+                        output.truncate(0)
+            
+            # Log export information
+            logger.info(f"Starting CSV export for connection {connection_id}, query: {request.query[:100]}...")
+            
+            return StreamingResponse(
+                generate_csv(),
+                media_type="text/csv",
+                headers={
+                    "Content-Disposition": f"attachment; filename=query_export_{connection_id}.csv"
+                }
+            )
+            
+        finally:
+            db_connector.disconnect()
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error exporting query CSV: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error exporting query CSV: {str(e)}"
+        )
+
+@router.get("/connections/{connection_id}/tables/{table_name}/export-csv", response_class=StreamingResponse)
+async def export_table_csv(connection_id: int, table_name: str, schema_name: Optional[str] = None, db = Depends(get_db)):
+    """Export entire table to CSV with streaming and size limit enforcement."""
+    try:
+        # Get database connection
+        db_service = ConnectionService(db)
+        connection = db_service.get_connection(connection_id)
+        
+        if not connection:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Connection with ID {connection_id} not found"
+            )
+        
+        if connection.status not in [
+            ConnectionStatus.RUNNING,
+            ConnectionStatus.IDLE,
+            ConnectionStatus.CONNECTED,
+        ]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Connection with ID {connection_id} is not active (status: {connection.status})"
+            )
+        
+        # Create a database connector
+        connector_db_type = connection.db_type
+        if isinstance(connector_db_type, str):
+            try:
+                connector_db_type = DatabaseType[connector_db_type.upper()]
+            except (KeyError, AttributeError):
+                logger.warning(f"Unknown database type string: {connector_db_type}")
+                
+        from utils.db_connector import DatabaseConnector
+        db_connector = DatabaseConnector(
+            db_type=connector_db_type,
+            host=connection.host,
+            port=connection.port,
+            database=connection.database,
+            username=connection.username,
+            password=connection.password
+        )
+        
+        # Connect to the database
+        connected = db_connector.connect()
+        if not connected:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to connect to database for connection ID {connection_id}"
+            )
+        
+        try:
+            # Build the SELECT query for the table
+            if schema_name:
+                qualified_table = f"{schema_name}.{table_name}"
+            else:
+                qualified_table = table_name
+                
+            query = f"SELECT * FROM {qualified_table}"
+            
+            # Execute the query to get all rows
+            results = db_connector.execute_query(query, max_rows=None)
+            
+            # Stream the CSV response with size limit
+            def generate_csv():
+                output = io.StringIO()
+                writer = csv.writer(output)
+                
+                # Write header
+                if results and len(results) > 0:
+                    writer.writerow(results[0].keys())
+                    yield output.getvalue()
+                    output.seek(0)
+                    output.truncate(0)
+                    
+                    total_size = 0
+                    max_size_bytes = 500 * 1024 * 1024  # 500 MB limit
+                    
+                    # Write data rows
+                    for row in results:
+                        writer.writerow(row.values())
+                        csv_row = output.getvalue()
+                        
+                        # Check size limit
+                        total_size += len(csv_row.encode('utf-8'))
+                        if total_size > max_size_bytes:
+                            logger.warning(f"CSV export exceeded 500 MB limit for table {qualified_table}")
+                            raise HTTPException(
+                                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                                detail="CSV export exceeds 500 MB limit"
+                            )
+                        
+                        yield csv_row
+                        output.seek(0)
+                        output.truncate(0)
+            
+            # Log export information
+            logger.info(f"Starting CSV export for table {qualified_table} on connection {connection_id}")
+            
+            return StreamingResponse(
+                generate_csv(),
+                media_type="text/csv",
+                headers={
+                    "Content-Disposition": f"attachment; filename=table_export_{table_name}_{connection_id}.csv"
+                }
+            )
+            
+        finally:
+            db_connector.disconnect()
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error exporting table CSV: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error exporting table CSV: {str(e)}"
+        )
+
+@router.post("/connections/{connection_id}/tables/{table_name}/import-csv", response_model=CsvImportResponse)
+async def import_table_csv(
+    connection_id: int, 
+    table_name: str, 
+    file: UploadFile = File(...), 
+    schema_name: Optional[str] = None, 
+    db = Depends(get_db)
+):
+    """Import CSV file into a database table with size limit enforcement."""
+    try:
+        # Check file size (500 MB limit)
+        file_size = 0
+        content = await file.read()
+        file_size = len(content)
+        
+        if file_size > 500 * 1024 * 1024:  # 500 MB
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="CSV file exceeds 500 MB limit"
+            )
+        
+        # Reset file pointer
+        await file.seek(0)
+        
+        # Get database connection
+        db_service = ConnectionService(db)
+        connection = db_service.get_connection(connection_id)
+        
+        if not connection:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Connection with ID {connection_id} not found"
+            )
+        
+        if connection.status not in [
+            ConnectionStatus.RUNNING,
+            ConnectionStatus.IDLE,
+            ConnectionStatus.CONNECTED,
+        ]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Connection with ID {connection_id} is not active (status: {connection.status})"
+            )
+        
+        # Create a database connector
+        connector_db_type = connection.db_type
+        if isinstance(connector_db_type, str):
+            try:
+                connector_db_type = DatabaseType[connector_db_type.upper()]
+            except (KeyError, AttributeError):
+                logger.warning(f"Unknown database type string: {connector_db_type}")
+                
+        from utils.db_connector import DatabaseConnector
+        db_connector = DatabaseConnector(
+            db_type=connector_db_type,
+            host=connection.host,
+            port=connection.port,
+            database=connection.database,
+            username=connection.username,
+            password=connection.password
+        )
+        
+        # Connect to the database
+        connected = db_connector.connect()
+        if not connected:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to connect to database for connection ID {connection_id}"
+            )
+        
+        try:
+            # Parse CSV content
+            csv_content = content.decode('utf-8')
+            csv_reader = csv.DictReader(io.StringIO(csv_content))
+            
+            # Get column names from CSV
+            csv_columns = csv_reader.fieldnames
+            if not csv_columns:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="CSV file has no columns"
+                )
+            
+            # Build the qualified table name
+            if schema_name:
+                qualified_table = f"{schema_name}.{table_name}"
+            else:
+                qualified_table = table_name
+            
+            # Get table schema to validate columns
+            table_schema = db_connector.get_table_schema(table_name, schema_name)
+            if not table_schema or 'columns' not in table_schema:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Could not get schema for table {qualified_table}"
+                )
+            
+            table_columns = list(table_schema['columns'].keys())
+            
+            # Validate that CSV columns exist in the table
+            missing_columns = [col for col in csv_columns if col not in table_columns]
+            if missing_columns:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"CSV columns not found in table: {', '.join(missing_columns)}"
+                )
+            
+            # Prepare insert statement
+            placeholders = ', '.join(['?' for _ in csv_columns])
+            columns_str = ', '.join(f'"{col}"' if ' ' in col or col.upper() in ['ORDER', 'GROUP', 'SELECT'] else col for col in csv_columns)
+            insert_query = f"INSERT INTO {qualified_table} ({columns_str}) VALUES ({placeholders})"
+            
+            # Execute inserts in batches
+            batch_size = 1000
+            inserted_rows = 0
+            
+            batch_data = []
+            for row in csv_reader:
+                # Convert empty strings to None for nullable columns
+                processed_row = []
+                for col in csv_columns:
+                    value = row.get(col, '')
+                    if value == '' and table_schema['columns'][col].get('nullable', True):
+                        processed_row.append(None)
+                    else:
+                        processed_row.append(value)
+                
+                batch_data.append(processed_row)
+                inserted_rows += 1
+                
+                # Execute batch when it reaches batch_size
+                if len(batch_data) >= batch_size:
+                    db_connector.connection.cursor().executemany(insert_query, batch_data)
+                    db_connector.connection.commit()
+                    batch_data = []
+            
+            # Execute remaining batch
+            if batch_data:
+                db_connector.connection.cursor().executemany(insert_query, batch_data)
+                db_connector.connection.commit()
+            
+            logger.info(f"Successfully imported {inserted_rows} rows into table {qualified_table}")
+            
+            return CsvImportResponse(
+                success=True,
+                inserted_rows=inserted_rows
+            )
+            
+        finally:
+            db_connector.disconnect()
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error importing CSV: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error importing CSV: {str(e)}"
         )
