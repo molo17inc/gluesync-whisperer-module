@@ -166,11 +166,24 @@ class AS400DatabaseService(DatabaseServiceBase):
         
         # Connect to the database
         try:
-            conn = db_connector.connect()
-            logger.info(f"Connected to AS400 database for schema retrieval")
+            connected = db_connector.connect()
+            if not connected:
+                raise RuntimeError("Failed to establish AS400 JDBC connection")
+            
+            jdbc_conn = getattr(db_connector, "connection", None)
+            if not jdbc_conn:
+                raise RuntimeError("DatabaseConnector did not expose an active connection")
+            
+            logger.info("Connected to AS400 database for schema retrieval")
             
             # Get JDBC metadata
-            metadata = conn.jconn.getMetaData()
+            metadata_source = (
+                getattr(jdbc_conn, "jconn", None)
+                or getattr(db_connector, "jconn", None)
+            )
+            if metadata_source is None:
+                raise RuntimeError("Active AS400 connection missing JDBC metadata handle (jconn)")
+            metadata = metadata_source.getMetaData()
             
             columns = {}
             primary_keys = []
@@ -246,7 +259,7 @@ class AS400DatabaseService(DatabaseServiceBase):
                 # If JDBC metadata approach fails, try direct SQL query
                 try:
                     logger.info("Falling back to direct SQL query for primary keys")
-                    cursor = conn.cursor()
+                    cursor = jdbc_conn.cursor()
                     pk_query = """
                     SELECT COLUMN_NAME
                     FROM QSYS2.SYSCST
@@ -275,7 +288,7 @@ class AS400DatabaseService(DatabaseServiceBase):
             if not columns:
                 try:
                     logger.info("No columns retrieved from JDBC metadata, trying direct SQL query")
-                    cursor = conn.cursor()
+                    cursor = jdbc_conn.cursor()
                     columns_query = """
                     SELECT 
                         COLUMN_NAME,
@@ -320,9 +333,6 @@ class AS400DatabaseService(DatabaseServiceBase):
                 except Exception as e:
                     logger.error(f"Error getting columns via SQL: {str(e)}")
             
-            # Close the connection
-            conn.close()
-            
             normalized_columns: Dict[str, Any] = {}
             for key, definition in columns.items():
                 column_key = _normalize_column_name(key)
@@ -342,6 +352,11 @@ class AS400DatabaseService(DatabaseServiceBase):
         except Exception as e:
             logger.error(f"Error in JDBC metadata approach: {str(e)}")
             return TableSchemaResponse(table_name=table_name, columns={}, primary_keys=[])
+        finally:
+            try:
+                db_connector.disconnect()
+            except Exception as disconnect_err:
+                logger.warning(f"Error disconnecting AS400 metadata connector: {disconnect_err}")
     
     def get_table_metadata(self, connection_id: int, table_name: str, schema_name: str = None) -> TableMetadata:
         """Return AS400 table metadata using the service-level schema retrieval."""

@@ -52,6 +52,15 @@ def _normalize_identifier(value: Any) -> str:
         text = text[1:-1]
     return text
 
+def _sanitize_sql(query: Any) -> Any:
+    """Strip trailing semicolons/whitespace from SQL strings."""
+    if not isinstance(query, str):
+        return query
+    cleaned = query.strip()
+    while cleaned.endswith(";"):
+        cleaned = cleaned[:-1].rstrip()
+    return cleaned
+
 def build_jdbc_connection_info(db_type, host, port, username, password, database):
     """
     Build JDBC connection information based on database type.
@@ -1312,8 +1321,9 @@ class DatabaseConnector:
         """Execute a query with optional parameters and return the results using JDBC."""
         if not self.connection:
             raise RuntimeError("Not connected to database")
-            
+        
         try:
+            query = _sanitize_sql(query)
             logger.debug(f"Executing query via JDBC for {self.db_type.value}: {query}")
             
             # Process parameters
