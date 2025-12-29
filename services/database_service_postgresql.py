@@ -159,30 +159,46 @@ class PostgreSQLDatabaseService(DatabaseServiceBase):
             if not success:
                 raise RuntimeError(f"Failed to connect to PostgreSQL database: {connection.name}")
             
-            # Get the database connection - jaydebeapi connection object itself is the connection
-            conn = connector.connection
-            cursor = conn.cursor()
+            # Helper to access row keys case-insensitively
+            def _row_value(row: Dict[str, Any], *candidates: str) -> Optional[Any]:
+                for key in candidates:
+                    if key in row and row[key] is not None:
+                        return row[key]
+                    upper = key.upper()
+                    if upper in row and row[upper] is not None:
+                        return row[upper]
+                return None
             
-            # Get columns information
+            params = {"schema": target_schema, "table": table_name}
+            
+            # Get columns information using DatabaseConnector helper (handles named params)
             columns_sql = self.sql_statements.get_columns_statement(schema_name, table_name)
+            column_rows = connector.execute_query(columns_sql, params=params)
             
-            cursor.execute(columns_sql, (target_schema, table_name))
+            if not column_rows:
+                raise ValueError(f"No column metadata returned for {target_schema}.{table_name}")
             
-            # Process columns
             columns = []
-            for row in cursor.fetchall():
+            for row in column_rows:
+                column_name = _row_value(row, "column_name")
+                data_type = _row_value(row, "data_type", "udt_name")
+                is_nullable = (_row_value(row, "is_nullable") or "").upper() == "YES"
+                is_pk_flag = _row_value(row, "is_primary_key", "primary_key", "pk", "pk_flag")
                 columns.append({
-                    'name': row[0],
-                    'type': row[2],
-                    'nullable': row[8] == 'YES',
-                    'primary_key': row[9] == 1,
+                    "name": column_name,
+                    "type": data_type,
+                    "nullable": is_nullable,
+                    "primary_key": bool(is_pk_flag),
                 })
             
             # Get primary keys
             pk_sql = self.sql_statements.get_primary_keys_statement(schema_name, table_name)
-            cursor.execute(pk_sql, (target_schema, table_name))
-                
-            primary_keys = [row[0] for row in cursor.fetchall()]
+            pk_rows = connector.execute_query(pk_sql, params=params)
+            primary_keys = [
+                str(_row_value(row, "column_name"))
+                for row in (pk_rows or [])
+                if _row_value(row, "column_name") is not None
+            ]
             
             # Create the response
             schema_response = TableSchemaResponse(
