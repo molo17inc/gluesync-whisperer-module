@@ -188,6 +188,13 @@ Gluesync Whisperer supports the following database types with their specific par
 - Automatically handles parameter escaping and quoting
 - Properly commits transactions for data modification operations
 
+#### MariaDB
+
+- Shares catalog structure and SQL syntax with MySQL but uses its own JDBC driver (`org.mariadb.jdbc.Driver`)
+- Default port is `3306`
+- Fully supported across the API, PillowFight service, and frontend connection UI
+- Recommended for testing via Docker (see “Testing MariaDB Connections” below)
+
 #### PostgreSQL
 
 - Uses named parameters (`:param`) in SQL queries
@@ -408,3 +415,41 @@ Gluesync Whisperer supports multi-architecture Docker builds for both ARM64 (App
    ```
 
 The Docker image will automatically detect the platform it's running on and enable or disable AS400 support accordingly.
+
+### Testing MariaDB Connections
+
+MariaDB works best when tested against a disposable Docker container:
+
+1. Start MariaDB locally:
+
+   ```bash
+   docker run -d \
+     --name gs-mariadb \
+     -e MARIADB_ROOT_PASSWORD=whisperer \
+     -e MARIADB_DATABASE=whisperer_demo \
+     -p 3306:3306 \
+     mariadb:11
+   ```
+
+2. (Optional) Verify the database is reachable:
+
+   ```bash
+   docker exec -it gs-mariadb mariadb -u root -pwhisperer -e "SELECT 1;"
+   ```
+
+3. Create a connection in Whisperer (UI or `POST /api/connections`) with:
+
+   - **Type**: `MariaDB`
+   - **Host**: `localhost`
+   - **Port**: `3306`
+   - **Username**: `root`
+   - **Password**: `whisperer`
+   - **Database**: `whisperer_demo`
+
+4. Test the connection via the UI or `POST /api/connections/{id}/test`, then browse schemas, run PillowFight, or execute queries.
+
+5. When done, clean up:
+
+   ```bash
+   docker rm -f gs-mariadb
+   ```

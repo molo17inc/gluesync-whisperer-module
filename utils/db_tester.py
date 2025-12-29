@@ -49,6 +49,9 @@ def test_connection(db_type, host, port, username, password, database):
         if db_type == DatabaseType.MYSQL:
             jdbc_url = f"jdbc:mysql://{host}:{port}/{database}"
             driver_class = "com.mysql.cj.jdbc.Driver"
+        elif db_type == DatabaseType.MARIADB:
+            jdbc_url = f"jdbc:mariadb://{host}:{port}/{database}"
+            driver_class = "org.mariadb.jdbc.Driver"
         elif db_type == DatabaseType.POSTGRESQL:
             jdbc_url = f"jdbc:postgresql://{host}:{port}/{database}"
             driver_class = "org.postgresql.Driver"

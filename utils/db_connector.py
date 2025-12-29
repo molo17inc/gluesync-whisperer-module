@@ -85,6 +85,10 @@ def build_jdbc_connection_info(db_type, host, port, username, password, database
         jdbc_url = f"jdbc:mysql://{host}:{port}/{database}"
         driver_class = "com.mysql.cj.jdbc.Driver"
         
+    elif db_type == DatabaseType.MARIADB:
+        jdbc_url = f"jdbc:mariadb://{host}:{port}/{database}"
+        driver_class = "org.mariadb.jdbc.Driver"
+        
     elif db_type == DatabaseType.POSTGRESQL:
         jdbc_url = f"jdbc:postgresql://{host}:{port}/{database}"
         driver_class = "org.postgresql.Driver"
@@ -478,8 +482,8 @@ class DatabaseConnector:
                 schema = self.database
                 
             # Make sure schema is never None for databases that require it
-            if schema is None and self.db_type == DatabaseType.MYSQL:
-                # For MySQL, use the database name if schema isn't specified
+            if schema is None and self.db_type in (DatabaseType.MYSQL, DatabaseType.MARIADB):
+                # For MySQL/MariaDB, use the database name if schema isn't specified
                 schema = self.database
                 
             # Get columns with detailed information
@@ -504,8 +508,8 @@ class DatabaseConnector:
                 # For other databases, use the specialized query
                 query = self.sql_statements.get_columns_statement(schema, table_name)
                 
-                # For MySQL, directly substitute parameters to avoid escaping issues
-                if self.db_type == DatabaseType.MYSQL:
+                # For MySQL family, directly substitute parameters to avoid escaping issues
+                if self.db_type in (DatabaseType.MYSQL, DatabaseType.MARIADB):
                     # Directly substitute parameters in the query for MySQL
                     # This is a special case to work around the %s escaping issue
                     # Replace the %s with concrete values directly using string formatting
@@ -574,8 +578,8 @@ class DatabaseConnector:
                     default_val = _normalize_identifier(default_raw) if isinstance(default_raw, str) else default_raw
                     extra = col_dict.get('extra', '')
                     
-                    # For MySQL, examine COLUMN_KEY and EXTRA for primary key and auto_increment
-                    if self.db_type == DatabaseType.MYSQL:
+                    # For MySQL-family, examine COLUMN_KEY and EXTRA for primary key and auto_increment
+                    if self.db_type in (DatabaseType.MYSQL, DatabaseType.MARIADB):
                         if col_dict.get('column_key') == 'PRI':
                             is_primary = True
                         extra = col_dict.get('extra', '')
@@ -803,7 +807,7 @@ class DatabaseConnector:
                     query = self.sql_statements.get_foreign_keys_statement(schema, table_name)
                     
                     # Handle different parameter styles based on database type
-                    if self.db_type == DatabaseType.MYSQL and "%s" in query:
+                    if self.db_type in (DatabaseType.MYSQL, DatabaseType.MARIADB) and "%s" in query:
                         # For MySQL with %s placeholders, use direct string formatting
                         params = []
                         if schema:
@@ -1210,8 +1214,8 @@ class DatabaseConnector:
             metadata = self.connection.jconn.getMetaData()
             
             # Different databases handle schemas differently
-            if self.db_type == DatabaseType.MYSQL:
-                # For MySQL, databases are essentially schemas
+            if self.db_type in (DatabaseType.MYSQL, DatabaseType.MARIADB):
+                # For MySQL/MariaDB, databases are essentially schemas
                 rs = metadata.getCatalogs()
                 while rs.next():
                     catalog = rs.getString("TABLE_CAT")
@@ -1304,6 +1308,8 @@ class DatabaseConnector:
             # Return a default schema based on database type
             if self.db_type == DatabaseType.MYSQL:
                 return [self.database] if self.database else ["mysql"]
+            if self.db_type == DatabaseType.MARIADB:
+                return [self.database] if self.database else ["mariadb"]
             elif self.db_type == DatabaseType.MSSQL:
                 return ["dbo"]
             elif self.db_type == DatabaseType.POSTGRESQL:

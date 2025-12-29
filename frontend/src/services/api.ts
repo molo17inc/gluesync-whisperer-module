@@ -55,11 +55,20 @@ const api = axios.create({
 });
 
 // Database types
+type SupportedDbType =
+  | 'mssql'
+  | 'as400'
+  | 'sqlite'
+  | 'mysql'
+  | 'mariadb'
+  | 'postgresql'
+  | 'oracle';
+
 export interface Connection {
   id?: number;
   name: string;
   description: string;
-  db_type: 'mssql' | 'as400' | 'sqlite' | 'mysql' | 'postgresql' | 'oracle';
+  db_type: SupportedDbType;
   host: string;
   port: number;
   username: string;

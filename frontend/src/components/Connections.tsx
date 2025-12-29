@@ -51,18 +51,21 @@ const Connections: React.FC = () => {
     severity: "success",
   });
 
+  type DbTypeOption =
+    | "mssql"
+    | "as400"
+    | "sqlite"
+    | "postgresql"
+    | "mysql"
+    | "mariadb"
+    | "oracle";
+
   const [formData, setFormData] = useState({
     name: "",
     description: "",
-    db_type: "sqlite" as
-      | "mssql"
-      | "as400"
-      | "sqlite"
-      | "postgresql"
-      | "mysql"
-      | "oracle",
+    db_type: "sqlite" as DbTypeOption,
     host: "localhost",
-    port: 3306, // Default MySQL port
+    port: 3306, // Default MySQL/MariaDB port
     username: "",
     password: "",
     database: "",
@@ -342,18 +345,13 @@ const Connections: React.FC = () => {
                 value={formData.db_type}
                 label="Database Type"
                 onChange={(e) => {
-                  const dbType = e.target.value as
-                    | "mssql"
-                    | "as400"
-                    | "sqlite"
-                    | "postgresql"
-                    | "mysql"
-                    | "oracle";
+                  const dbType = e.target.value as DbTypeOption;
                   handleInputChange("db_type", dbType);
                   // Set default port based on database type
-                  const defaultPorts = {
+                  const defaultPorts: Record<DbTypeOption, number> = {
                     sqlite: 0, // SQLite doesn't use ports
                     mysql: 3306,
+                    mariadb: 3306,
                     postgresql: 5432,
                     mssql: 1433,
                     oracle: 1521, // Oracle default port
@@ -366,6 +364,7 @@ const Connections: React.FC = () => {
               >
                 <MenuItem value="sqlite">SQLite</MenuItem>
                 <MenuItem value="mysql">MySQL</MenuItem>
+                <MenuItem value="mariadb">MariaDB</MenuItem>
                 <MenuItem value="postgresql">PostgreSQL</MenuItem>
                 <MenuItem value="oracle">Oracle</MenuItem>
                 <MenuItem value="mssql">MS SQL Server</MenuItem>
@@ -409,7 +408,7 @@ const Connections: React.FC = () => {
               value={formData.database}
               onChange={(e) => handleInputChange("database", e.target.value)}
               fullWidth
-              helperText="Database name (required for MySQL, PostgreSQL, Oracle, MS SQL) or leave empty for AS400"
+              helperText="Database name (required for MySQL, MariaDB, PostgreSQL, Oracle, MS SQL) or leave empty for AS400"
             />
           </Box>
         </DialogContent>

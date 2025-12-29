@@ -60,6 +60,9 @@ def get_sql_statements(database_type):
     """
     if database_type == DatabaseType.MYSQL:
         return MySqlSqlStatements()
+    elif database_type == DatabaseType.MARIADB:
+        # MariaDB shares the same metadata/catalog structure as MySQL
+        return MySqlSqlStatements()
     elif database_type == DatabaseType.POSTGRESQL:
         return PostgreSqlSqlStatements()
     elif database_type == DatabaseType.SQLITE:
