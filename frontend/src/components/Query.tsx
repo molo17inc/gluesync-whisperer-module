@@ -138,7 +138,6 @@ const Query: React.FC = () => {
     localStorage.setItem("selectedConnection", value.toString());
   };
 
-  const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [exportingCsv, setExportingCsv] = useState(false);
   const [exportingTableCsv, setExportingTableCsv] = useState(false);
@@ -188,11 +187,17 @@ const Query: React.FC = () => {
     },
   ]);
 
+  const currentQuery = useMemo(
+    () => queryTabs[activeTab]?.query ?? "",
+    [queryTabs, activeTab]
+  );
+
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
   const completionDisposableRef = useRef<Monaco.IDisposable | null>(null);
   const executeCommandRef = useRef<() => void>(() => undefined);
   const tabCounterRef = useRef(1);
+  const suppressEditorUpdateRef = useRef(false);
 
   const showSnackbar = useCallback(
     (message: string, severity: "success" | "error" | "warning") => {
@@ -370,8 +375,8 @@ const Query: React.FC = () => {
   }, [tables]);
 
   const handleExecuteQuery = useCallback(async () => {
-    const currentQuery = queryTabs[activeTab].query.trim();
-    if (!selectedConnection || !currentQuery) {
+    const trimmedQuery = currentQuery.trim();
+    if (!selectedConnection || !trimmedQuery) {
       showSnackbar("Select a connection and write a query first", "error");
       return;
     }
@@ -382,7 +387,7 @@ const Query: React.FC = () => {
     try {
       const request: QueryRequest = {
         connection_id: Number(selectedConnection),
-        query: currentQuery,
+        query: trimmedQuery,
       };
       const response = await automationApi.executeQuery(request);
       const executionTime = Date.now() - startTime;
@@ -416,7 +421,7 @@ const Query: React.FC = () => {
 
       const historyEntry: QueryHistoryEntry = {
         id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
-        query: currentQuery,
+        query: trimmedQuery,
         status: response.success ? "success" : "error",
         timestamp: new Date().toISOString(),
         executionTime: transformedResult.execution_time,
@@ -436,7 +441,7 @@ const Query: React.FC = () => {
         "Query execution failed";
       const historyEntry: QueryHistoryEntry = {
         id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
-        query: currentQuery,
+        query: trimmedQuery,
         status: "error",
         timestamp: new Date().toISOString(),
         executionTime,
@@ -446,7 +451,7 @@ const Query: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [queryTabs, activeTab, selectedConnection, showSnackbar]);
+  }, [queryTabs, activeTab, selectedConnection, showSnackbar, currentQuery]);
 
   const handleExportCsv = async () => {
     const currentResult = queryTabs[activeTab].result;
@@ -461,10 +466,10 @@ const Query: React.FC = () => {
 
     setExportingCsv(true);
     try {
-      const currentQuery = queryTabs[activeTab].query.trim();
+      const trimmedQuery = currentQuery.trim();
       const blob = await automationApi.exportQueryCsv({
         connection_id: Number(selectedConnection),
-        query: currentQuery,
+        query: trimmedQuery,
         include_all_rows: true, // Export all rows, not just the limited results
       });
 
@@ -717,7 +722,11 @@ const Query: React.FC = () => {
   }, []);
 
   const handleHistorySelect = (entry: QueryHistoryEntry) => {
-    setQuery(entry.query);
+    setQueryTabs((prev) =>
+      prev.map((tab, index) =>
+        index === activeTab ? { ...tab, query: entry.query } : tab
+      )
+    );
   };
 
   const handleEditorMount = useCallback(
@@ -734,6 +743,9 @@ const Query: React.FC = () => {
 
       // Update query on change
       editor.onDidChangeModelContent(() => {
+        if (suppressEditorUpdateRef.current) {
+          return;
+        }
         const value = editor.getValue();
         setQueryTabs((prev) =>
           prev.map((tab, index) =>
@@ -746,9 +758,17 @@ const Query: React.FC = () => {
   );
 
   useEffect(() => {
-    if (editorRef.current) {
-      editorRef.current.setValue(queryTabs[activeTab].query);
+    if (!editorRef.current) {
+      return;
     }
+    const editor = editorRef.current;
+    const nextValue = queryTabs[activeTab]?.query ?? "";
+    if (editor.getValue() === nextValue) {
+      return;
+    }
+    suppressEditorUpdateRef.current = true;
+    editor.setValue(nextValue);
+    suppressEditorUpdateRef.current = false;
   }, [activeTab, queryTabs]);
 
   useEffect(() => {
@@ -890,145 +910,139 @@ const Query: React.FC = () => {
                         </Stack>
                       }
                     >
-                      {Object.entries(grouped).map(([type, objs]) => (
-                        <TreeItem
-                          itemId={`${schema}:${type}`}
-                          key={`${schema}:${type}`}
-                          label={
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                            >
-                              {type}
-                            </Typography>
-                          }
-                        >
-                          {objs.map((obj) => {
-                            if (obj.type === "table") {
-                              const details =
-                                tableDetailsBySchemaAndTable[
-                                  obj.schema || ""
-                                ]?.[obj.name];
-                              const loading =
-                                tableDetailsLoading ===
-                                `${obj.schema || ""}.${obj.name}`;
-                              return (
-                                <TreeItem
-                                  itemId={`${obj.schema || ""}:table:${
-                                    obj.name
-                                  }`}
-                                  key={`${obj.schema || ""}:table:${obj.name}`}
-                                  label={
-                                    <Stack
-                                      direction="row"
-                                      spacing={0.5}
-                                      alignItems="center"
-                                    >
-                                      <Typography variant="body2">
-                                        {obj.name}
-                                      </Typography>
-                                      {loading && (
-                                        <CircularProgress size={10} />
-                                      )}
-                                    </Stack>
-                                  }
-                                  onClick={() => handleMetadataSelect(obj)}
-                                  onContextMenu={(e) =>
-                                    handleMetadataContextMenu(
-                                      e as React.MouseEvent<HTMLElement>,
-                                      obj
-                                    )
-                                  }
-                                >
-                                  {details && (
-                                    <>
-                                      <TreeItem
-                                        itemId={`${obj.schema || ""}:table:${
-                                          obj.name
-                                        }:columns`}
-                                        label="Columns"
-                                      >
-                                        {Object.keys(details.columns || {}).map(
-                                          (col) => (
-                                            <TreeItem
-                                              key={col}
-                                              itemId={`${
-                                                obj.schema || ""
-                                              }:table:${
-                                                obj.name
-                                              }:columns:${col}`}
-                                              label={col}
-                                            />
-                                          )
-                                        )}
-                                      </TreeItem>
-                                      <TreeItem
-                                        itemId={`${obj.schema || ""}:table:${
-                                          obj.name
-                                        }:pks`}
-                                        label="Primary Keys"
-                                      >
-                                        {(details.primary_keys || []).map(
-                                          (pk) => (
-                                            <TreeItem
-                                              key={pk}
-                                              itemId={`${
-                                                obj.schema || ""
-                                              }:table:${obj.name}:pks:${pk}`}
-                                              label={pk}
-                                            />
-                                          )
-                                        )}
-                                      </TreeItem>
-                                      <TreeItem
-                                        itemId={`${obj.schema || ""}:table:${
-                                          obj.name
-                                        }:fks`}
-                                        label="Foreign Keys"
-                                      >
-                                        {(details.foreign_keys || []).map(
-                                          (fk, idx) => (
-                                            <TreeItem
-                                              key={idx}
-                                              itemId={`${
-                                                obj.schema || ""
-                                              }:table:${obj.name}:fks:${idx}`}
-                                              label={`${fk.referenced_table}.${fk.referenced_column}`}
-                                            />
-                                          )
-                                        )}
-                                      </TreeItem>
-                                    </>
-                                  )}
-                                </TreeItem>
-                              );
-                            } else {
-                              return (
-                                <TreeItem
-                                  itemId={`${obj.schema || ""}:${obj.type}:${
-                                    obj.name
-                                  }`}
-                                  key={`${obj.schema || ""}:${obj.type}:${
-                                    obj.name
-                                  }`}
-                                  label={
+                      {Object.entries(grouped).map(([type, objs]) =>
+                        type === "table" ? (
+                          objs.map((obj) => {
+                            const details =
+                              tableDetailsBySchemaAndTable[obj.schema || ""]?.[
+                                obj.name
+                              ];
+                            const loading =
+                              tableDetailsLoading ===
+                              `${obj.schema || ""}.${obj.name}`;
+                            return (
+                              <TreeItem
+                                itemId={`${obj.schema || ""}:table:${obj.name}`}
+                                key={`${obj.schema || ""}:table:${obj.name}`}
+                                label={
+                                  <Stack
+                                    direction="row"
+                                    spacing={0.5}
+                                    alignItems="center"
+                                  >
                                     <Typography variant="body2">
                                       {obj.name}
                                     </Typography>
-                                  }
-                                  onClick={() => handleMetadataSelect(obj)}
-                                  onContextMenu={(e) =>
-                                    handleMetadataContextMenu(
-                                      e as React.MouseEvent<HTMLElement>,
-                                      obj
-                                    )
-                                  }
-                                />
-                              );
+                                    {loading && <CircularProgress size={10} />}
+                                  </Stack>
+                                }
+                                onClick={() => handleMetadataSelect(obj)}
+                                onContextMenu={(e) =>
+                                  handleMetadataContextMenu(
+                                    e as React.MouseEvent<HTMLElement>,
+                                    obj
+                                  )
+                                }
+                              >
+                                {details && (
+                                  <>
+                                    <TreeItem
+                                      itemId={`${obj.schema || ""}:table:${
+                                        obj.name
+                                      }:columns`}
+                                      label="Columns"
+                                    >
+                                      {Object.keys(details.columns || {}).map(
+                                        (col) => (
+                                          <TreeItem
+                                            key={col}
+                                            itemId={`${
+                                              obj.schema || ""
+                                            }:table:${obj.name}:columns:${col}`}
+                                            label={col}
+                                          />
+                                        )
+                                      )}
+                                    </TreeItem>
+                                    <TreeItem
+                                      itemId={`${obj.schema || ""}:table:${
+                                        obj.name
+                                      }:pks`}
+                                      label="Primary Keys"
+                                    >
+                                      {(details.primary_keys || []).map(
+                                        (pk) => (
+                                          <TreeItem
+                                            key={pk}
+                                            itemId={`${
+                                              obj.schema || ""
+                                            }:table:${obj.name}:pks:${pk}`}
+                                            label={pk}
+                                          />
+                                        )
+                                      )}
+                                    </TreeItem>
+                                    <TreeItem
+                                      itemId={`${obj.schema || ""}:table:${
+                                        obj.name
+                                      }:fks`}
+                                      label="Foreign Keys"
+                                    >
+                                      {(details.foreign_keys || []).map(
+                                        (fk, idx) => (
+                                          <TreeItem
+                                            key={idx}
+                                            itemId={`${
+                                              obj.schema || ""
+                                            }:table:${obj.name}:fks:${idx}`}
+                                            label={`${fk.referenced_table}.${fk.referenced_column}`}
+                                          />
+                                        )
+                                      )}
+                                    </TreeItem>
+                                  </>
+                                )}
+                              </TreeItem>
+                            );
+                          })
+                        ) : (
+                          <TreeItem
+                            itemId={`${schema}:${type}`}
+                            key={`${schema}:${type}`}
+                            label={
+                              <Typography
+                                variant="caption"
+                                color="text.secondary"
+                              >
+                                {type}
+                              </Typography>
                             }
-                          })}
-                        </TreeItem>
-                      ))}
+                          >
+                            {objs.map((obj) => (
+                              <TreeItem
+                                itemId={`${obj.schema || ""}:${obj.type}:${
+                                  obj.name
+                                }`}
+                                key={`${obj.schema || ""}:${obj.type}:${
+                                  obj.name
+                                }`}
+                                label={
+                                  <Typography variant="body2">
+                                    {obj.name}
+                                  </Typography>
+                                }
+                                onClick={() => handleMetadataSelect(obj)}
+                                onContextMenu={(e) =>
+                                  handleMetadataContextMenu(
+                                    e as React.MouseEvent<HTMLElement>,
+                                    obj
+                                  )
+                                }
+                              />
+                            ))}
+                          </TreeItem>
+                        )
+                      )}
                       {items.length === 0 && (
                         <TreeItem
                           itemId={`${schema}:empty`}
