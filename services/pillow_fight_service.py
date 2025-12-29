@@ -299,18 +299,37 @@ class PillowFightService:
             except Exception:
                 return default
     
+    @staticmethod
+    def _first_non_none_value(row: Any) -> Optional[Any]:
+        """Return the first non-None scalar value from supported row containers."""
+        if row is None:
+            return None
+        if isinstance(row, dict):
+            for value in row.values():
+                if value is not None:
+                    return value
+            return None
+        if isinstance(row, (list, tuple)):
+            for value in row:
+                if value is not None:
+                    return value
+            return None
+        return row
+    
     def _generate_sequential_primary_key(self, engine, table: TableConfig, column_name: str) -> int:
         """Generate a unique numeric primary key by querying MAX(column) and adding a delta."""
         table_name = table.table_name
         if table.schema_name:
             table_name = f"{table.schema_name}.{table_name}"
-        max_query = f"SELECT MAX({column_name}) AS max_id FROM {table_name}"
+        max_query = f"SELECT MAX({column_name}) FROM {table_name}"
         max_value = 0
         try:
             if hasattr(engine, "execute_query") and callable(engine.execute_query):
                 result = engine.execute_query(max_query)
-                if result and result[0].get("max_id") is not None:
-                    max_value = self._safe_int(result[0]["max_id"], 0)
+                if result:
+                    candidate = self._first_non_none_value(result[0])
+                    if candidate is not None:
+                        max_value = self._safe_int(candidate, 0)
             elif hasattr(engine, "connection") and engine.connection:
                 cursor = engine.connection.cursor()
                 cursor.execute(max_query)
@@ -322,7 +341,11 @@ class PillowFightService:
                 result = engine.execute(max_query)
                 row = result.fetchone()
                 if row:
-                    candidate = row[0] if isinstance(row, (list, tuple)) else row.get("max_id")
+                    candidate = (
+                        row[0]
+                        if isinstance(row, (list, tuple))
+                        else self._first_non_none_value(row)
+                    )
                     if candidate is not None:
                         max_value = self._safe_int(candidate, 0)
         except Exception as e:
