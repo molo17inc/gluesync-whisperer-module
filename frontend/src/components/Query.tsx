@@ -1147,7 +1147,9 @@ const Query: React.FC = () => {
                       )
                     }
                     onClick={handleExecuteQuery}
-                    disabled={loading || !selectedConnection || !query.trim()}
+                    disabled={
+                      loading || !selectedConnection || !currentQuery.trim()
+                    }
                   >
                     {loading ? "Executing" : "Run"}
                   </Button>
