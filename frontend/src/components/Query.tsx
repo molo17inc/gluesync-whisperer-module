@@ -1227,8 +1227,6 @@ const Query: React.FC = () => {
                   renderLineHighlight: "all",
                   suggestOnTriggerCharacters: true,
                 }}
-                value={query}
-                onChange={(value) => setQuery(value ?? "")}
                 onMount={handleEditorMount}
               />
             </Box>
