@@ -13,29 +13,36 @@ logger = logging.getLogger(__name__)
 
 
 class MySQLDatabaseService(DatabaseServiceBase):
-    """MySQL database service implementation."""
+    """MySQL database service implementation (also acts as base for MariaDB)."""
+    
+    DB_TYPE = DatabaseType.MYSQL
+    DISPLAY_NAME = "MySQL"
+    JDBC_SCHEME = "mysql"
 
     def __init__(self, db):
         super().__init__(db)
-        self.sql_statements = get_sql_statements(DatabaseType.MYSQL)
+        self.sql_statements = get_sql_statements(self.DB_TYPE)
+    
+    def _create_connector(self, connection: DatabaseConnection) -> DatabaseConnector:
+        return DatabaseConnector(
+            db_type=self.DB_TYPE,
+            host=connection.host,
+            port=connection.port,
+            database=connection.database,
+            username=connection.username,
+            password=connection.password,
+        )
 
     def _build_connection_string(self, connection: DatabaseConnection) -> str:
-        return f"jdbc:mysql://{connection.host}:{connection.port}/{connection.database}"
+        return f"jdbc:{self.JDBC_SCHEME}://{connection.host}:{connection.port}/{connection.database}"
 
     def _get_engine(self, connection: DatabaseConnection) -> Any:
         connection_id = connection.id
         if connection_id in self.engines:
             return self.engines[connection_id]
 
-        logger.info(f"Creating MySQL connector for connection: {connection.name}")
-        connector = DatabaseConnector(
-            db_type=DatabaseType.MYSQL,
-            host=connection.host,
-            port=connection.port,
-            database=connection.database,
-            username=connection.username,
-            password=connection.password
-        )
+        logger.info(f"Creating {self.DISPLAY_NAME} connector for connection: {connection.name}")
+        connector = self._create_connector(connection)
         
         # Store the connector in the engines dict
         self.engines[connection_id] = connector
@@ -46,21 +53,14 @@ class MySQLDatabaseService(DatabaseServiceBase):
         if not connection:
             raise ValueError(f"Connection with ID {connection_id} not found")
 
-        logger.info(f"MySQL: Getting schemas for connection {connection_id} ({connection.name})")
-        connector = DatabaseConnector(
-            db_type=DatabaseType.MYSQL,
-            host=connection.host,
-            port=connection.port,
-            database=connection.database,
-            username=connection.username,
-            password=connection.password
-        )
+        logger.info(f"{self.DISPLAY_NAME}: Getting schemas for connection {connection_id} ({connection.name})")
+        connector = self._create_connector(connection)
         
         try:
             # Connect to the database
             success = connector.connect()
             if not success:
-                raise RuntimeError(f"Failed to connect to MySQL database: {connection.name}")
+                raise RuntimeError(f"Failed to connect to {self.DISPLAY_NAME} database: {connection.name}")
             
             # Get the database connection
             conn = connector.connection
@@ -74,7 +74,7 @@ class MySQLDatabaseService(DatabaseServiceBase):
             result = cursor.fetchall()
             schemas = [str(row[0]) for row in result if row[0] is not None]
             
-            logger.info(f"MySQL: Retrieved {len(schemas)} schemas: {schemas}")
+            logger.info(f"{self.DISPLAY_NAME}: Retrieved {len(schemas)} schemas: {schemas}")
             
             # Ensure we return a proper list of strings
             return list(map(str, schemas))
@@ -96,15 +96,8 @@ class MySQLDatabaseService(DatabaseServiceBase):
         if not connection:
             raise ValueError(f"Connection with ID {connection_id} not found")
 
-        logger.info(f"MySQL: Getting tables for connection {connection_id} ({connection.name}), schema: {schema}")
-        connector = DatabaseConnector(
-            db_type=DatabaseType.MYSQL,
-            host=connection.host,
-            port=connection.port,
-            database=connection.database,
-            username=connection.username,
-            password=connection.password
-        )
+        logger.info(f"{self.DISPLAY_NAME}: Getting tables for connection {connection_id} ({connection.name}), schema: {schema}")
+        connector = self._create_connector(connection)
         
         try:
             # Connect to the database
@@ -124,7 +117,7 @@ class MySQLDatabaseService(DatabaseServiceBase):
             result = cursor.fetchall()
             tables = [{"name": str(row[0]), "schema_name": schema or ""} for row in result if row[0] is not None]
             
-            logger.info(f"MySQL: Retrieved {len(tables)} tables for schema '{schema}': {tables}")
+            logger.info(f"{self.DISPLAY_NAME}: Retrieved {len(tables)} tables for schema '{schema}': {tables}")
             return tables
             
         except Exception as e:
@@ -140,16 +133,12 @@ class MySQLDatabaseService(DatabaseServiceBase):
         if not connection:
             raise ValueError(f"Connection with ID {connection_id} not found")
             
-        logger.info(f"MySQL: Getting schema for table '{table_name}' in schema '{schema_name}' for connection {connection_id} ({connection.name})")
-        
-        connector = DatabaseConnector(
-            db_type=DatabaseType.MYSQL,
-            host=connection.host,
-            port=connection.port,
-            database=connection.database,
-            username=connection.username,
-            password=connection.password
+        logger.info(
+            f"{self.DISPLAY_NAME}: Getting schema for table '{table_name}' in schema '{schema_name}' "
+            f"for connection {connection_id} ({connection.name})"
         )
+        
+        connector = self._create_connector(connection)
         
         # Determine which schema to query against. If the caller didn't pass one,
         # fall back to the connection default so the parameterized statements
@@ -209,7 +198,10 @@ class MySQLDatabaseService(DatabaseServiceBase):
                 foreign_keys=[]
             )
             
-            logger.info(f"MySQL: Retrieved schema for {schema_name or 'default'}.{table_name}: {len(columns_dict)} columns, {len(primary_keys)} primary keys")
+            logger.info(
+                f"{self.DISPLAY_NAME}: Retrieved schema for {schema_name or 'default'}.{table_name}: "
+                f"{len(columns_dict)} columns, {len(primary_keys)} primary keys"
+            )
             return schema_response
             
         except Exception as e:

@@ -61,6 +61,7 @@ class ConnectionStatus(enum.Enum):
 
 class DatabaseType(enum.Enum):
     MYSQL = "mysql"
+    MARIADB = "mariadb"
     POSTGRESQL = "postgresql"
     SQLITE = "sqlite"
     MSSQL = "mssql"
