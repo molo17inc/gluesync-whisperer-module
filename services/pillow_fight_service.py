@@ -902,133 +902,155 @@ class PillowFightService:
         )
         self._refresh_job_status(job_id)
     
+    def _build_insert_payload(
+        self,
+        engine,
+        connection: DatabaseConnection,
+        table: TableConfig,
+        columns_dict: Dict[str, Any],
+        primary_keys: List[str],
+    ) -> Dict[str, Any]:
+        data: Dict[str, Any] = {}
+        for col_name, col_info in columns_dict.items():
+            is_primary = col_name in primary_keys or col_info.get("primary_key", False)
+            is_auto_increment = col_info.get("auto_increment", False)
+
+            if is_primary and is_auto_increment:
+                logger.info(f"Skipping auto-increment primary key column: {col_name}")
+                continue
+
+            column_type = col_info.get("type")
+            if hasattr(column_type, "__dict__"):
+                column_type._col_name = col_name
+
+            if is_primary and not is_auto_increment:
+                logger.info(f"Generating value for non auto-increment primary key: {col_name}")
+                value = self._generate_sequential_primary_key(engine, table, col_name)
+            else:
+                value = self._generate_random_data(column_type)
+
+            data[col_name] = value
+        return data
+
     def _perform_insert(self, engine, connection: DatabaseConnection, table: TableConfig) -> None:
         """Perform an insert operation on a table."""
         try:
             logger.info(f"Starting insert operation for table {table.table_name}")
-            
-            # Verify the engine is valid
+
             if engine is None:
                 error_msg = f"Could not establish connection to database for {table.schema_name}.{table.table_name}"
                 logger.error(error_msg)
                 raise RuntimeError(error_msg)
-                
-            # Get the table schema with caching
-            logger.info(f"Getting table schema for connection ID {connection.id}, table {table.table_name}, schema {table.schema_name}")
+
+            logger.info(
+                f"Getting table schema for connection ID {connection.id}, table {table.table_name}, schema {table.schema_name}"
+            )
             try:
-                # Check if schema is in cache
                 cache_key = (connection.id, table.table_name, table.schema_name)
                 if cache_key in self._schema_cache:
                     logger.info(f"Using cached schema for {table.schema_name}.{table.table_name}")
                     schema_info = self._schema_cache[cache_key]
                 else:
-                    logger.info(f"Schema cache miss for {table.schema_name}.{table.table_name}, retrieving from database")
-                    schema_info = self.db_service.get_table_schema(connection.id, table.table_name, table.schema_name)
-                    # Cache the schema
+                    logger.info(
+                        f"Schema cache miss for {table.schema_name}.{table.table_name}, retrieving from database"
+                    )
+                    schema_info = self.db_service.get_table_schema(
+                        connection.id, table.table_name, table.schema_name
+                    )
                     self._schema_cache[cache_key] = schema_info
-                
+
                 logger.info(f"Schema info received: {schema_info}")
-                # Access columns and primary_keys as attributes of the TableSchemaResponse object
                 columns_dict = schema_info.columns
                 primary_keys = schema_info.primary_keys
-                
                 logger.info(f"Found {len(columns_dict)} columns and {len(primary_keys)} primary keys")
             except Exception as e:
                 logger.error(f"Error getting table schema for {table.schema_name}.{table.table_name}: {str(e)}")
                 raise
-            
-            # Generate random data for each column
-            data = {}
-            db_type_str = (
-                connection.db_type.value
-                if hasattr(connection.db_type, "value")
-                else str(connection.db_type)
-            ).lower() if connection.db_type else ""
-            
-            for col_name, col_info in columns_dict.items():
-                is_primary = col_name in primary_keys or col_info.get("primary_key", False)
-                is_auto_increment = col_info.get("auto_increment", False)
-                
-                if is_primary and is_auto_increment:
-                    logger.info(f"Skipping auto-increment primary key column: {col_name}")
-                    continue
-                
-                column_type = col_info.get("type")
-                if hasattr(column_type, '__dict__'):
-                    column_type._col_name = col_name
-                
-                if is_primary and not is_auto_increment:
-                    logger.info(f"Generating value for non auto-increment primary key: {col_name}")
-                    value = self._generate_sequential_primary_key(engine, table, col_name)
-                else:
-                    value = self._generate_random_data(column_type)
-                
-                data[col_name] = value
-            
-            logger.info(f"Generated data for insert: {data}")
-            
-            # If no data to insert (all columns are primary keys), return
-            if not data:
-                logger.info(f"No columns to insert data for in {table.table_name}")
-                return
-            
-            # Build the fully qualified table name
+
             table_name = table.table_name
             if table.schema_name:
                 table_name = f"{table.schema_name}.{table_name}"
-            
-            # For MS SQL Server, we need to handle the parameter placeholders differently
-            is_mssql = connection.db_type.lower() == 'mssql'
-            
-            # Both JDBC implementations use ? for parameter placeholders
-            placeholders = ', '.join(['?' for _ in range(len(data))])
-            
-            # Build the insert statement
-            stmt = f"INSERT INTO {table_name} ({', '.join(data.keys())}) VALUES ({placeholders})"
-            
-            logger.info(f"Prepared insert statement: {stmt}")
-            logger.info(f"With values: {list(data.values())}")
-            
-            # Execute through the unified helper (JDBC or SQLAlchemy)
-            self._execute_statement(
-                engine,
-                stmt,
-                params=list(data.values()),
-            )
-            
-            logger.info(f"Successfully inserted record into {table.table_name}")
-        
+
+            placeholders = ", ".join(["?" for _ in range(len(columns_dict))])
+            stmt_template = f"INSERT INTO {table_name} ({{columns}}) VALUES ({placeholders})"
+
+            max_attempts = 5
+            last_error: Optional[Exception] = None
+
+            for attempt in range(1, max_attempts + 1):
+                data = self._build_insert_payload(engine, connection, table, columns_dict, primary_keys)
+
+                if not data:
+                    logger.info(f"No columns to insert data for in {table.table_name}")
+                    return
+
+                stmt = stmt_template.format(columns=", ".join(data.keys()))
+                params = list(data.values())
+
+                logger.info(f"Prepared insert statement: {stmt}")
+                logger.info(f"With values: {params}")
+
+                try:
+                    self._execute_statement(
+                        engine,
+                        stmt,
+                        params=params,
+                    )
+                    logger.info(f"Successfully inserted record into {table.table_name}")
+                    return
+                except Exception as exc:
+                    last_error = exc
+                    error_message = str(exc).lower()
+                    is_duplicate = any(
+                        keyword in error_message for keyword in ["duplicate", "sql0803", "key duplicata"]
+                    )
+                    if is_duplicate and attempt < max_attempts:
+                        logger.warning(
+                            f"Duplicate primary key detected for {table.schema_name}.{table.table_name}. "
+                            f"Retrying insert attempt {attempt}/{max_attempts} with regenerated values."
+                        )
+                        time.sleep(0.1)
+                        continue
+                    raise
+
+            if last_error:
+                raise last_error
+
         except Exception as e:
             error_message = str(e)
             logger.error(f"Error performing insert on {table.table_name}: {error_message}")
             logger.error(f"Exception type: {type(e).__name__}")
             import traceback
+
             logger.error(f"Traceback: {traceback.format_exc()}")
-            
-            # Check for foreign key constraint violations
-            if any(keyword in error_message.lower() for keyword in ["foreign key constraint", "constraint", "reference", "fk"]):
-                # Extract table and column information from the error message if possible
+
+            if any(
+                keyword in error_message.lower()
+                for keyword in ["foreign key constraint", "constraint", "reference", "fk"]
+            ):
                 import re
-                table_match = re.search(r"table \"([^\"]+)\"", error_message) or re.search(r"table ([^,]+),", error_message)
-                column_match = re.search(r"column \"([^\"]+)\"", error_message) or re.search(r"column '([^']+)'", error_message)
-                
+
+                table_match = re.search(r'table "([^"]+)"', error_message) or re.search(r"table ([^,]+),", error_message)
+                column_match = re.search(r'column "([^"]+)"', error_message) or re.search(r"column '([^']+)'", error_message)
+
                 referenced_table = table_match.group(1) if table_match else "referenced table"
                 referenced_column = column_match.group(1) if column_match else "referenced column"
-                
-                # Provide helpful guidance about enabling cascade deletes
+
                 logger.warning(f"Foreign key constraint violation detected on {table.table_name}")
-                logger.warning(f"The operation failed because a foreign key constraint prevents the action.")
+                logger.warning("The operation failed because a foreign key constraint prevents the action.")
                 logger.warning(f"Referenced table: {referenced_table}, Column: {referenced_column}")
-                logger.warning(f"To fix this issue, you can:")
-                logger.warning(f"1. Enable cascade_delete for the {table.table_name} table in your configuration")
-                logger.warning(f"2. Ensure the referenced records in {referenced_table} exist before inserting into {table.table_name}")
-                logger.warning(f"3. Use the update_cascade_delete.py script to update your configuration")
-                
-                # If we have a table_id, we can provide more specific guidance
-                if hasattr(table, 'id'):
+                logger.warning("To fix this issue, you can:")
+                logger.warning(
+                    f"1. Enable cascade_delete for the {table.table_name} table in your configuration"
+                )
+                logger.warning(
+                    f"2. Ensure the referenced records in {referenced_table} exist before inserting into {table.table_name}"
+                )
+                logger.warning("3. Use the update_cascade_delete.py script to update your configuration")
+
+                if hasattr(table, "id"):
                     logger.warning(f"You can run: python update_cascade_delete.py --table_id {table.id} --enable True")
-            
-            # Propagate error so the caller can track failures
+
             raise
     
     def _perform_update(self, engine, connection: DatabaseConnection, table: TableConfig) -> None:
