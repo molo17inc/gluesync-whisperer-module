@@ -290,20 +290,33 @@ class AS400DatabaseService(DatabaseServiceBase):
                     logger.info("No columns retrieved from JDBC metadata, trying direct SQL query")
                     cursor = jdbc_conn.cursor()
                     columns_query = """
+                    WITH primary_keys AS (
+                        SELECT 
+                            CST.TABLE_SCHEMA,
+                            CST.TABLE_NAME,
+                            CSTCOL.COLUMN_NAME
+                        FROM QSYS2.SYSCST CST
+                        JOIN QSYS2.SYSCSTCOL CSTCOL
+                          ON CST.CONSTRAINT_SCHEMA = CSTCOL.CONSTRAINT_SCHEMA
+                         AND CST.CONSTRAINT_NAME = CSTCOL.CONSTRAINT_NAME
+                        WHERE CST.CONSTRAINT_TYPE = 'PRIMARY KEY'
+                    )
                     SELECT 
-                        COLUMN_NAME,
-                        DATA_TYPE,
-                        IS_NULLABLE,
-                        COLUMN_DEFAULT,
-                        CASE WHEN CONSTRAINT_TYPE = 'PRIMARY KEY' THEN 1 ELSE 0 END AS IS_PRIMARY_KEY
+                        C.COLUMN_NAME,
+                        C.DATA_TYPE,
+                        C.IS_NULLABLE,
+                        C.COLUMN_DEFAULT,
+                        CASE 
+                            WHEN PK.COLUMN_NAME IS NOT NULL THEN 1
+                            ELSE 0
+                        END AS IS_PRIMARY_KEY
                     FROM QSYS2.SYSCOLUMNS C
-                    LEFT JOIN QSYS2.SYSCST K ON 
-                        C.TABLE_SCHEMA = K.TABLE_SCHEMA AND
-                        C.TABLE_NAME = K.TABLE_NAME AND
-                        C.COLUMN_NAME = K.COLUMN_NAME AND
-                        K.CONSTRAINT_TYPE = 'PRIMARY KEY'
+                    LEFT JOIN primary_keys PK
+                      ON PK.TABLE_SCHEMA = C.TABLE_SCHEMA
+                     AND PK.TABLE_NAME = C.TABLE_NAME
+                     AND PK.COLUMN_NAME = C.COLUMN_NAME
                     WHERE C.TABLE_SCHEMA = ?
-                    AND C.TABLE_NAME = ?
+                      AND C.TABLE_NAME = ?
                     ORDER BY C.ORDINAL_POSITION
                     """
                     cursor.execute(columns_query, [schema_name, table_name])
@@ -312,7 +325,7 @@ class AS400DatabaseService(DatabaseServiceBase):
                     for column_row in column_rows:
                         column_name = _normalize_column_name(column_row[0])
                         data_type = column_row[1]
-                        is_nullable = column_row[2] == 'Y'
+                        is_nullable = str(column_row[2]).upper().startswith("Y")
                         default_value = column_row[3]
                         is_primary_key = column_row[4] == 1
                         
