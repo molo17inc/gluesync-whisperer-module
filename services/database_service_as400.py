@@ -46,6 +46,17 @@ def _normalize_column_name(value: Any) -> str:
         text = text[1:-1]
     return text
 
+def _normalize_text(value: Any) -> str:
+    """Convert mixed JDBC/Java/Python text values into safe Python strings."""
+    if value is None:
+        return ""
+    try:
+        if hasattr(value, "toString"):
+            return str(value.toString())
+    except Exception:
+        pass
+    return str(value)
+
 class AS400DatabaseService(DatabaseServiceBase):
     """AS400 specific database service implementation"""
     
@@ -199,8 +210,8 @@ class AS400DatabaseService(DatabaseServiceBase):
                     column_name = _normalize_column_name(
                         rs_columns.getString("COLUMN_NAME")
                     )
-                    column_type = rs_columns.getString("TYPE_NAME")
-                    nullable = rs_columns.getString("IS_NULLABLE").upper() == "YES"
+                    column_type = _normalize_text(rs_columns.getString("TYPE_NAME"))
+                    nullable = _normalize_text(rs_columns.getString("IS_NULLABLE")).upper() == "YES"
                     
                     try:
                         column_size = rs_columns.getInt("COLUMN_SIZE")
@@ -223,7 +234,9 @@ class AS400DatabaseService(DatabaseServiceBase):
                     
                     # Try to get default value
                     try:
-                        columns[column_name]["default"] = rs_columns.getString("COLUMN_DEF")
+                        raw_default = rs_columns.getString("COLUMN_DEF")
+                        if raw_default is not None:
+                            columns[column_name]["default"] = _normalize_text(raw_default)
                     except:
                         pass
                     
@@ -324,9 +337,12 @@ class AS400DatabaseService(DatabaseServiceBase):
                     
                     for column_row in column_rows:
                         column_name = _normalize_column_name(column_row[0])
-                        data_type = column_row[1]
-                        is_nullable = str(column_row[2]).upper().startswith("Y")
-                        default_value = column_row[3]
+                        data_type = _normalize_text(column_row[1])
+                        is_nullable = _normalize_text(column_row[2]).upper().startswith("Y")
+                        default_value_raw = column_row[3]
+                        default_value = (
+                            _normalize_text(default_value_raw) if default_value_raw is not None else None
+                        )
                         is_primary_key = column_row[4] == 1
                         
                         columns[column_name] = {

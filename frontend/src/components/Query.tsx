@@ -1078,7 +1078,11 @@ const Query: React.FC = () => {
                   sx={{ pb: 1 }}
                 >
                   <Typography variant="caption" color="text.secondary">
-                    PK: {tableMetadata.primary_keys.join(", ") || "—"}
+                    PK:{" "}
+                    {tableMetadata?.primary_keys &&
+                    tableMetadata.primary_keys.length > 0
+                      ? tableMetadata.primary_keys.join(", ")
+                      : "—"}
                   </Typography>
                   {tableMetadataLoading && (
                     <CircularProgress size={12} color="inherit" />

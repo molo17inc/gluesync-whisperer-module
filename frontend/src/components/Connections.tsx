@@ -40,6 +40,7 @@ const Connections: React.FC = () => {
   );
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [testingConnection, setTestingConnection] = useState(false);
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
     message: string;
@@ -157,8 +158,13 @@ const Connections: React.FC = () => {
     setOpen(true);
   };
 
-  const handleTestConnection = async (id: number) => {
+  const handleTestConnection = async (id?: number) => {
+    if (!id) {
+      showSnackbar("Save the connection before testing.", "error");
+      return;
+    }
     try {
+      setTestingConnection(true);
       showSnackbar("Testing connection...", "success");
       const response = await connectionApi.test(id);
       showSnackbar(response.message, response.success ? "success" : "error");
@@ -169,6 +175,8 @@ const Connections: React.FC = () => {
         error?.response?.data?.detail ||
         "Unable to test connection";
       showSnackbar(message, "error");
+    } finally {
+      setTestingConnection(false);
     }
   };
 
@@ -274,15 +282,6 @@ const Connections: React.FC = () => {
                         />
                       </TableCell>
                       <TableCell>
-                        <Button
-                          variant="outlined"
-                          size="small"
-                          startIcon={<PlayArrowIcon />}
-                          onClick={() => handleTestConnection(connection.id!)}
-                          sx={{ mr: 1 }}
-                        >
-                          Test
-                        </Button>
                         <IconButton
                           onClick={() => handleEdit(connection)}
                           color="secondary"
@@ -414,23 +413,33 @@ const Connections: React.FC = () => {
             />
           </Box>
         </DialogContent>
-        <DialogActions>
+        <DialogActions sx={{ justifyContent: "space-between" }}>
           <Button onClick={handleCloseDialog}>Cancel</Button>
-          <Button
-            onClick={handleSubmit}
-            variant="contained"
-            disabled={
-              !formData.name ||
-              !formData.host ||
-              !formData.username ||
-              !formData.password ||
-              (formData.db_type !== "as400" &&
-                formData.db_type !== "sqlite" &&
-                !formData.database)
-            }
-          >
-            {editingConnection ? "Update" : "Create"}
-          </Button>
+          <Box sx={{ display: "flex", gap: 1 }}>
+            <Button
+              variant="outlined"
+              startIcon={<PlayArrowIcon />}
+              onClick={() => handleTestConnection(editingConnection?.id)}
+              disabled={!editingConnection?.id || testingConnection}
+            >
+              {testingConnection ? "Testing..." : "Test"}
+            </Button>
+            <Button
+              onClick={handleSubmit}
+              variant="contained"
+              disabled={
+                !formData.name ||
+                !formData.host ||
+                !formData.username ||
+                !formData.password ||
+                (formData.db_type !== "as400" &&
+                  formData.db_type !== "sqlite" &&
+                  !formData.database)
+              }
+            >
+              {editingConnection ? "Update" : "Create"}
+            </Button>
+          </Box>
         </DialogActions>
       </Dialog>
 
