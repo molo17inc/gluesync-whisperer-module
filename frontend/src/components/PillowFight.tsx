@@ -27,6 +27,8 @@ import {
   MenuItem,
   Select,
   Stack,
+  Tabs,
+  Tab,
   TextField,
   Typography,
   Checkbox,
@@ -64,11 +66,27 @@ const getStatusColor = (status?: string) =>
 const OPERATION_KEYS = ["insert", "update", "delete"] as const;
 type OperationKey = (typeof OPERATION_KEYS)[number];
 
+const JOB_STATUS_TABS = [
+  { key: "running", label: "Running", statuses: ["running", "pending"] },
+  {
+    key: "errorStopped",
+    label: "Error / Stopped",
+    statuses: ["error", "stopped"],
+  },
+  { key: "completed", label: "Completed", statuses: ["completed"] },
+  { key: "all", label: "All Jobs", statuses: null },
+] as const;
+
+type JobStatusTabKey = (typeof JOB_STATUS_TABS)[number]["key"];
+
+const normalizeStatus = (status?: string) => status?.toLowerCase() || "";
+
 const PillowFight: React.FC = () => {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [tableConfigs, setTableConfigs] = useState<TableConfig[]>([]);
   const [jobs, setJobs] = useState<PillowFightJobStatus[]>([]);
   const [jobsLoading, setJobsLoading] = useState(false);
+  const [jobStatusTab, setJobStatusTab] = useState<JobStatusTabKey>("running");
   const [loadingData, setLoadingData] = useState(false);
 
   const [jobSearchInput, setJobSearchInput] = useState("");
@@ -273,6 +291,34 @@ const PillowFight: React.FC = () => {
       handleJobSearch();
     }
   };
+
+  const tabCounts = useMemo(() => {
+    const counts = JOB_STATUS_TABS.reduce(
+      (acc, tab) => ({ ...acc, [tab.key]: 0 }),
+      {} as Record<JobStatusTabKey, number>
+    );
+    jobs.forEach((job) => {
+      const status = normalizeStatus(job.status);
+      JOB_STATUS_TABS.forEach((tab) => {
+        if (!tab.statuses || tab.statuses.includes(status)) {
+          counts[tab.key] += 1;
+        }
+      });
+    });
+    return counts;
+  }, [jobs]);
+
+  const filteredJobs = useMemo(() => {
+    const selectedTab = JOB_STATUS_TABS.find((tab) => tab.key === jobStatusTab);
+    if (!selectedTab || !selectedTab.statuses) {
+      return jobs;
+    }
+    const allowed = new Set(selectedTab.statuses);
+    return jobs.filter((job) => allowed.has(normalizeStatus(job.status)));
+  }, [jobs, jobStatusTab]);
+
+  const activeTabLabel =
+    JOB_STATUS_TABS.find((tab) => tab.key === jobStatusTab)?.label ?? "Jobs";
 
   const renderJobCard = (job: PillowFightJobStatus) => {
     const connectionName =
@@ -530,6 +576,27 @@ const PillowFight: React.FC = () => {
         </Grid>
 
         <Grid item xs={12} md={8}>
+          {jobs.length > 0 && (
+            <Box sx={{ mb: 2, borderBottom: 1, borderColor: "divider" }}>
+              <Tabs
+                value={jobStatusTab}
+                onChange={(_, value) => setJobStatusTab(value)}
+                variant="scrollable"
+                allowScrollButtonsMobile
+                textColor="primary"
+                indicatorColor="primary"
+              >
+                {JOB_STATUS_TABS.map((tab) => (
+                  <Tab
+                    key={tab.key}
+                    value={tab.key}
+                    label={`${tab.label} (${tabCounts[tab.key] ?? 0})`}
+                  />
+                ))}
+              </Tabs>
+            </Box>
+          )}
+
           {jobsLoading && (
             <Stack
               direction="row"
@@ -544,12 +611,16 @@ const PillowFight: React.FC = () => {
             </Stack>
           )}
 
-          {jobs.length === 0 && !jobsLoading ? (
+          {filteredJobs.length === 0 && !jobsLoading ? (
             <Alert severity="info">
-              No pillow fight jobs found. Start one to begin tracking.
+              {jobs.length === 0
+                ? "No pillow fight jobs found. Start one to begin tracking."
+                : `No ${activeTabLabel.toLowerCase()} jobs right now.`}
             </Alert>
           ) : (
-            <Stack spacing={2}>{jobs.map((job) => renderJobCard(job))}</Stack>
+            <Stack spacing={2}>
+              {filteredJobs.map((job) => renderJobCard(job))}
+            </Stack>
           )}
         </Grid>
       </Grid>
