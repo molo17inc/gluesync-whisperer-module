@@ -209,7 +209,10 @@ class PostgreSQLDatabaseService(DatabaseServiceBase):
                 foreign_keys=[]
             )
             
-            logger.info(f"PostgreSQL: Retrieved schema for table '{table_name}' with {len(columns)} columns and {len(primary_keys)} primary keys")
+            logger.info(
+                f"PostgreSQL: Retrieved schema for table '{table_name}' "
+                f"with {len(columns_dict)} columns and {len(primary_keys)} primary keys"
+            )
             return schema_response
             
         except Exception as e:

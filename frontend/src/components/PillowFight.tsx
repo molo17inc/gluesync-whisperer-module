@@ -66,20 +66,42 @@ const getStatusColor = (status?: string) =>
 const OPERATION_KEYS = ["insert", "update", "delete"] as const;
 type OperationKey = (typeof OPERATION_KEYS)[number];
 
+const JOB_STATUS_VALUES = [
+  "pending",
+  "running",
+  "completed",
+  "stopped",
+  "error",
+] as const;
+type JobStatusValue = (typeof JOB_STATUS_VALUES)[number];
+
 const JOB_STATUS_TABS = [
-  { key: "running", label: "Running", statuses: ["running", "pending"] },
+  {
+    key: "running",
+    label: "Running",
+    statuses: ["running", "pending"] as JobStatusValue[],
+  },
   {
     key: "errorStopped",
     label: "Error / Stopped",
-    statuses: ["error", "stopped"],
+    statuses: ["error", "stopped"] as JobStatusValue[],
   },
-  { key: "completed", label: "Completed", statuses: ["completed"] },
+  {
+    key: "completed",
+    label: "Completed",
+    statuses: ["completed"] as JobStatusValue[],
+  },
   { key: "all", label: "All Jobs", statuses: null },
 ] as const;
 
 type JobStatusTabKey = (typeof JOB_STATUS_TABS)[number]["key"];
 
-const normalizeStatus = (status?: string) => status?.toLowerCase() || "";
+const normalizeStatus = (status?: string): JobStatusValue | "" => {
+  const normalized = (status ?? "").toLowerCase() as JobStatusValue | "";
+  return JOB_STATUS_VALUES.includes(normalized as JobStatusValue)
+    ? normalized
+    : "";
+};
 
 const PillowFight: React.FC = () => {
   const [connections, setConnections] = useState<Connection[]>([]);
@@ -300,7 +322,7 @@ const PillowFight: React.FC = () => {
     jobs.forEach((job) => {
       const status = normalizeStatus(job.status);
       JOB_STATUS_TABS.forEach((tab) => {
-        if (!tab.statuses || tab.statuses.includes(status)) {
+        if (!tab.statuses || (status && tab.statuses.includes(status))) {
           counts[tab.key] += 1;
         }
       });
@@ -313,8 +335,11 @@ const PillowFight: React.FC = () => {
     if (!selectedTab || !selectedTab.statuses) {
       return jobs;
     }
-    const allowed = new Set(selectedTab.statuses);
-    return jobs.filter((job) => allowed.has(normalizeStatus(job.status)));
+    const allowed = new Set<JobStatusValue>(selectedTab.statuses);
+    return jobs.filter((job) => {
+      const status = normalizeStatus(job.status);
+      return status ? allowed.has(status) : false;
+    });
   }, [jobs, jobStatusTab]);
 
   const activeTabLabel =
