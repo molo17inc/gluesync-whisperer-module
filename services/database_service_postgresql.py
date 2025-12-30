@@ -178,18 +178,18 @@ class PostgreSQLDatabaseService(DatabaseServiceBase):
             if not column_rows:
                 raise ValueError(f"No column metadata returned for {target_schema}.{table_name}")
             
-            columns = []
+            columns_dict: Dict[str, Dict[str, Any]] = {}
             for row in column_rows:
-                column_name = _row_value(row, "column_name")
+                column_name = str(_row_value(row, "column_name"))
                 data_type = _row_value(row, "data_type", "udt_name")
                 is_nullable = (_row_value(row, "is_nullable") or "").upper() == "YES"
                 is_pk_flag = _row_value(row, "is_primary_key", "primary_key", "pk", "pk_flag")
-                columns.append({
+                columns_dict[column_name] = {
                     "name": column_name,
                     "type": data_type,
                     "nullable": is_nullable,
                     "primary_key": bool(is_pk_flag),
-                })
+                }
             
             # Get primary keys
             pk_sql = self.sql_statements.get_primary_keys_statement(schema_name, table_name)
@@ -204,7 +204,7 @@ class PostgreSQLDatabaseService(DatabaseServiceBase):
             schema_response = TableSchemaResponse(
                 table_name=table_name,
                 schema_name=target_schema,
-                columns=columns,
+                columns=columns_dict,
                 primary_keys=primary_keys,
                 foreign_keys=[]
             )
