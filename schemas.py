@@ -23,7 +23,7 @@
 
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Union
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 from models import OperationType, DatabaseType, ConnectionStatus
 
@@ -154,8 +154,14 @@ class TableSchemaResponse(BaseModel):
 
 # Metadata DTOs for object browser
 class MetadataObject(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     name: str
-    schema: str
+    schema_name: str = Field(
+        alias="schema",
+        validation_alias="schema",
+        serialization_alias="schema",
+    )
     type: str  # table, view, materialized_view, procedure, function, other
     has_children: bool = False
 
