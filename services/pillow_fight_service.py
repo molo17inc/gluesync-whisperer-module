@@ -299,6 +299,15 @@ class PillowFightService:
             except Exception:
                 return default
     
+    def _coerce_value_for_column(self, column_info: Optional[Dict[str, Any]], value: Any) -> Any:
+        """Return a best-effort typed value based on column metadata (used for PK comparisons)."""
+        if value is None or not column_info:
+            return value
+        col_type = str(column_info.get("type", "")).lower()
+        if any(token in col_type for token in ("int", "serial", "bigint", "smallint")):
+            return self._safe_int(value, 0)
+        return value
+    
     @staticmethod
     def _first_non_none_value(row: Any) -> Optional[Any]:
         """Return the first non-None scalar value from supported row containers."""
@@ -1137,7 +1146,8 @@ class PillowFightService:
             for pk in primary_keys:
                 if pk in existing_record:
                     where_clauses.append(f"{pk} = ?")
-                    where_values.append(existing_record[pk])
+                    pk_info = columns_dict.get(pk)
+                    where_values.append(self._coerce_value_for_column(pk_info, existing_record[pk]))
             
             if not where_clauses:
                 logger.error(f"No primary key values found for record in {table.table_name}")
@@ -1194,7 +1204,8 @@ class PillowFightService:
                     # Cache the schema
                     self._schema_cache[cache_key] = schema_info
                 
-                # Access primary_keys as an attribute of the TableSchemaResponse object
+                # Access schema attributes
+                columns_dict = schema_info.columns
                 primary_keys = schema_info.primary_keys
             except Exception as e:
                 logger.error(f"Error getting table schema for {table.schema_name}.{table.table_name}: {str(e)}")

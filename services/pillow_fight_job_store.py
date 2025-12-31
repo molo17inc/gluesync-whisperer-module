@@ -147,6 +147,7 @@ class PillowFightJobStore:
         last_operation_at: Optional[str] = None,
         resume_cursor: Optional[str] = None,
         error_message: Optional[str] = None,
+        warning_message: Optional[str] = None,
     ) -> None:
         now = self._now()
         self.db.execute(
@@ -154,7 +155,8 @@ class PillowFightJobStore:
             UPDATE pillow_fight_job_tables
             SET status = ?, last_operation_at = COALESCE(?, last_operation_at),
                 resume_cursor = COALESCE(?, resume_cursor),
-                error_count = CASE WHEN ? THEN error_count + 1 ELSE error_count END
+                error_count = CASE WHEN ? THEN error_count + 1 ELSE error_count END,
+                warning_count = CASE WHEN ? THEN COALESCE(warning_count, 0) + 1 ELSE warning_count END
             WHERE job_id = ? AND table_config_id = ?
             """,
             (
@@ -162,6 +164,7 @@ class PillowFightJobStore:
                 last_operation_at,
                 resume_cursor,
                 True if error_message else False,
+                True if warning_message else False,
                 job_id,
                 table_id,
             ),
@@ -170,6 +173,28 @@ class PillowFightJobStore:
         if error_message:
             # update job level error message to keep history
             self.update_job_error(job_id, error_message)
+        if warning_message:
+            self.append_job_warning(job_id, warning_message)
+
+    def append_job_warning(self, job_id: str, warning_message: str) -> None:
+        """Append a warning to the job record (stored in error_message field for now)."""
+        now = self._now()
+        existing = self.db.query_one(
+            "SELECT warning_message FROM pillow_fight_jobs WHERE job_id = ?",
+            (job_id,),
+        )
+        combined = warning_message
+        if existing and existing.get("warning_message"):
+            combined = f"{existing['warning_message']}\n{warning_message}"
+
+        self.db.execute(
+            """
+            UPDATE pillow_fight_jobs
+            SET warning_message = ?, updated_at = ?
+            WHERE job_id = ?
+            """,
+            (combined, now, job_id),
+        )
 
     def increment_operation(self, job_id: str, table_id: int, op_type: str, count: int = 1) -> None:
         op_column = {

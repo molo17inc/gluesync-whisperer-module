@@ -153,6 +153,7 @@ class Database:
                     completed_at TEXT,
                     last_heartbeat TEXT,
                     error_message TEXT,
+                    warning_message TEXT,
                     FOREIGN KEY (connection_id) REFERENCES database_connections (id) ON DELETE CASCADE
                 )
                 ''')
@@ -167,12 +168,31 @@ class Database:
                     update_count INTEGER NOT NULL DEFAULT 0,
                     delete_count INTEGER NOT NULL DEFAULT 0,
                     error_count INTEGER NOT NULL DEFAULT 0,
+                    warning_count INTEGER NOT NULL DEFAULT 0,
                     last_operation_at TEXT,
                     resume_cursor TEXT,
                     FOREIGN KEY (job_id) REFERENCES pillow_fight_jobs (job_id) ON DELETE CASCADE,
                     FOREIGN KEY (table_config_id) REFERENCES table_configs (id) ON DELETE CASCADE
                 )
                 ''')
+
+                # Ensure warning_message column exists on pillow_fight_jobs
+                cursor.execute("PRAGMA table_info(pillow_fight_jobs)")
+                job_columns = [column[1] for column in cursor.fetchall()]
+                if 'warning_message' not in job_columns:
+                    logger.info("Adding warning_message column to pillow_fight_jobs table")
+                    cursor.execute('''
+                    ALTER TABLE pillow_fight_jobs ADD COLUMN warning_message TEXT
+                    ''')
+
+                # Ensure warning_count column exists on pillow_fight_job_tables
+                cursor.execute("PRAGMA table_info(pillow_fight_job_tables)")
+                job_table_columns = [column[1] for column in cursor.fetchall()]
+                if 'warning_count' not in job_table_columns:
+                    logger.info("Adding warning_count column to pillow_fight_job_tables table")
+                    cursor.execute('''
+                    ALTER TABLE pillow_fight_job_tables ADD COLUMN warning_count INTEGER NOT NULL DEFAULT 0
+                    ''')
 
                 cursor.execute('''
                 CREATE INDEX IF NOT EXISTS idx_pillow_fight_job_tables_job 
