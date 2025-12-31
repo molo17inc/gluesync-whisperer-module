@@ -159,5 +159,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Expose port
 EXPOSE 1717
 
+# Default entrypoint
+ENTRYPOINT ["./entrypoint.sh"]
+
 # Command to run the application
 CMD ["python3", "app.py"]
