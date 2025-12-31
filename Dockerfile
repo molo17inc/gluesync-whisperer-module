@@ -72,6 +72,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     DEFAULT_OPERATION_DELAY=1.0 \
     DEFAULT_BATCH_SIZE=1 \
     MAX_OPERATIONS=1000 \
+    FRONTEND_BASE_PATH=/ \
     # Gluesync SDK settings using default paths \
     GLUESYNC_LICENSE_FILE=/opt/gluesync/data/gs-license.dat \
     SSL_ENABLED=False \

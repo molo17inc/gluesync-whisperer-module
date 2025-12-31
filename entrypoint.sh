@@ -19,6 +19,84 @@ set -e
 # Create data directory if it doesn't exist
 mkdir -p /app/data
 
+# Adjust frontend bundle paths according to FRONTEND_BASE_PATH at runtime
+STATIC_DIR="/app/static"
+if [ -d "$STATIC_DIR" ]; then
+    python3 <<'PY'
+import json
+import os
+import re
+from pathlib import Path
+
+static_dir = Path("/app/static")
+base_path = os.environ.get("FRONTEND_BASE_PATH", "/") or "/"
+base_path = base_path.strip()
+if not base_path:
+    base_path = "/"
+if not base_path.startswith("/"):
+    base_path = "/" + base_path
+if len(base_path) > 1 and base_path.endswith("/"):
+    base_path = base_path[:-1]
+
+def ensure_template(path: Path) -> Path | None:
+    if not path.exists():
+        return None
+    template_path = path.with_suffix(path.suffix + ".template")
+    if not template_path.exists():
+        template_path.write_text(path.read_text())
+    return template_path
+
+def apply_html(path: Path):
+    template = ensure_template(path)
+    if template is None:
+        return
+    html = template.read_text()
+    if base_path == "/":
+        path.write_text(html)
+        return
+
+    pattern = re.compile(r'(?P<attr>(?:href|src)=)"(?P<path>/[^" >]*)"')
+
+    def repl(match: re.Match):
+        original_path = match.group("path")
+        if original_path.startswith("//"):
+            return match.group(0)
+        new_path = f"{base_path}{original_path}"
+        return f'{match.group("attr")}"{new_path}"'
+
+    path.write_text(pattern.sub(repl, html))
+
+def apply_manifest(path: Path):
+    template = ensure_template(path)
+    if template is None:
+        return
+    if base_path == "/":
+        path.write_text(template.read_text())
+        return
+
+    data = json.loads(template.read_text())
+
+    def rewrite(value):
+        if isinstance(value, dict):
+            return {k: rewrite(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [rewrite(v) for v in value]
+        if isinstance(value, str) and value.startswith("/") and not value.startswith("//"):
+            return f"{base_path}{value}"
+        return value
+
+    path.write_text(json.dumps(rewrite(data), indent=2))
+
+index_file = static_dir / "index.html"
+if index_file.exists():
+    apply_html(index_file)
+
+manifest_file = static_dir / "site.webmanifest"
+if manifest_file.exists():
+    apply_manifest(manifest_file)
+PY
+fi
+
 # Wait for CoreHub to be available if CORE_HUB_URL is set
 if [ -n "$CORE_HUB_URL" ]; then
     echo "Waiting for CoreHub to be available at $CORE_HUB_URL..."

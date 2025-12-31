@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     # Default delay between database operations (in seconds)
     DEFAULT_OPERATION_DELAY: float = float(os.getenv("DEFAULT_OPERATION_DELAY", "1.0"))
     
+    # Frontend configuration
+    FRONTEND_BASE_PATH: str = os.getenv("FRONTEND_BASE_PATH", "/")
+    
     # Default batch size for operations (how many operations to perform in a batch)
     DEFAULT_BATCH_SIZE: int = int(os.getenv("DEFAULT_BATCH_SIZE", "1"))
     
