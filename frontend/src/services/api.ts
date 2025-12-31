@@ -1,41 +1,5 @@
 import axios from 'axios';
-
-const normalizePath = (path?: string | null): string => {
-  if (!path) {
-    return '';
-  }
-  const trimmed = path.trim();
-  if (!trimmed) {
-    return '';
-  }
-  const withLeading = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
-  return withLeading.endsWith('/') && withLeading !== '/' ? withLeading.slice(0, -1) : withLeading;
-};
-
-const detectContextBasePath = (): string => {
-  const envBasePath = import.meta?.env?.VITE_APP_BASE_PATH?.trim();
-  if (envBasePath) {
-    return normalizePath(envBasePath);
-  }
-
-  if (typeof window === 'undefined') {
-    return '';
-  }
-
-  const path = window.location.pathname || '';
-  const segments = path.split('/').filter(Boolean);
-  if (!segments.length) {
-    return '';
-  }
-
-  const firstSegment = segments[0];
-  const knownPrefixes = ['whisperer'];
-  if (knownPrefixes.includes(firstSegment)) {
-    return `/${firstSegment}`;
-  }
-
-  return '';
-};
+import { detectBasePath } from '../utils/basePath';
 
 const resolveApiBaseUrl = (): string => {
   const envUrl = import.meta?.env?.VITE_API_BASE_URL?.trim();
@@ -44,11 +8,12 @@ const resolveApiBaseUrl = (): string => {
     return normalized.includes('/api') ? normalized : `${normalized}/api`;
   }
 
-  const basePath = detectContextBasePath();
+  const basePath = detectBasePath();
+  const effectiveBase = basePath && basePath !== '/' ? basePath : '';
 
   if (typeof window !== 'undefined') {
     const origin = window.location.origin;
-    return basePath ? `${origin}${basePath}/api` : `${origin}/api`;
+    return effectiveBase ? `${origin}${effectiveBase}/api` : `${origin}/api`;
   }
 
   // Fallback for non-browser contexts (e.g., tests)

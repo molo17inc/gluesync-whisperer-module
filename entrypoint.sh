@@ -64,7 +64,14 @@ def apply_html(path: Path):
         new_path = f"{base_path}{original_path}"
         return f'{match.group("attr")}"{new_path}"'
 
-    path.write_text(pattern.sub(repl, html))
+    rewritten = pattern.sub(repl, html)
+    runtime_base = "" if base_path == "/" else base_path
+    config_script = f'<script>window.__FRONTEND_BASE_PATH__ = "{runtime_base}";</script>'
+    if "</head>" in rewritten:
+        rewritten = rewritten.replace("</head>", f"{config_script}\n</head>", 1)
+    else:
+        rewritten = f"{config_script}\n{rewritten}"
+    path.write_text(rewritten)
 
 def apply_manifest(path: Path):
     template = ensure_template(path)
