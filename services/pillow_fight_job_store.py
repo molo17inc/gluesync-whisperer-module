@@ -285,12 +285,17 @@ class PillowFightJobStore:
     def find_active_table_conflicts(self, table_ids: List[int]) -> List[int]:
         if not table_ids:
             return []
+
+        placeholders = ",".join(["?"] * len(table_ids))
         rows = self.db.query(
-            """
-            SELECT table_config_id FROM pillow_fight_job_tables
-            WHERE table_config_id IN ({})
-              AND status IN ('pending', 'running')
-            """.format(",".join(["?"] * len(table_ids))),
+            f"""
+            SELECT jt.table_config_id
+            FROM pillow_fight_job_tables jt
+            JOIN pillow_fight_jobs j ON j.job_id = jt.job_id
+            WHERE jt.table_config_id IN ({placeholders})
+              AND jt.status IN ('pending', 'running')
+              AND j.status IN ('pending', 'running')
+            """,
             table_ids,
         )
         return [row["table_config_id"] for row in rows]
