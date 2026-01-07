@@ -75,6 +75,9 @@ class PillowFightService:
         self._job_lock = threading.Lock()
         self._resumed = False
         self.error_threshold = int(os.getenv("PILLOW_FIGHT_TABLE_ERROR_THRESHOLD", "5"))
+        self.connection_retry_window = float(os.getenv("PILLOW_FIGHT_CONNECTION_RETRY_WINDOW", "60"))
+        self.connection_retry_base_delay = float(os.getenv("PILLOW_FIGHT_CONNECTION_RETRY_BASE_DELAY", "1"))
+        self.connection_retry_max_delay = float(os.getenv("PILLOW_FIGHT_CONNECTION_RETRY_MAX_DELAY", "8"))
     
     def _ensure_jdbc_connection(self, engine):
         """Ensure a JDBC-based engine has an active connection and return it."""
@@ -90,6 +93,78 @@ class PillowFightService:
         if not engine.connection:
             raise RuntimeError("JDBC engine failed to expose a valid connection after connect()")
         return engine.connection
+    
+    def _build_engine(self, connection: DatabaseConnection):
+        """Create a database engine/connector without retry logic."""
+        if connection.db_type in [DatabaseType.AS400, DatabaseType.MSSQL] or (
+            isinstance(connection.db_type, str)
+            and connection.db_type.upper() in ["AS400", "MSSQL"]
+        ):
+            from utils.db_connector import DatabaseConnector
+            
+            connector_db_type = connection.db_type
+            if isinstance(connection.db_type, str):
+                try:
+                    connector_db_type = DatabaseType[connection.db_type.upper()]
+                except (KeyError, AttributeError):
+                    logger.warning(f"Unknown database type string: {connection.db_type}")
+            
+            database_name = connection.database
+            db_connector = DatabaseConnector(
+                db_type=connector_db_type,
+                host=connection.host,
+                port=connection.port,
+                database=database_name,
+                username=connection.username,
+                password=connection.password,
+            )
+            if not db_connector.connect():
+                raise RuntimeError(f"Failed to establish JDBC connection for {connection.db_type}")
+            if not db_connector.connection or not hasattr(db_connector.connection, "cursor"):
+                raise RuntimeError(f"Connector for {connection.db_type} did not expose a cursor")
+            logger.info(f"Created direct JDBC connection for {connection.db_type} database")
+            return db_connector
+        
+        engine = self.db_service.get_engine(connection)
+        logger.info(f"Using DatabaseService engine for {connection.db_type}")
+        return engine
+    
+    def _connect_engine_with_retry(self, connection: DatabaseConnection, table: TableConfig):
+        """Attempt to create an engine with exponential backoff."""
+        start = time.monotonic()
+        attempt = 0
+        delay = self.connection_retry_base_delay
+        last_exc: Optional[Exception] = None
+        while True:
+            attempt += 1
+            try:
+                return self._build_engine(connection)
+            except Exception as exc:
+                last_exc = exc
+                elapsed = time.monotonic() - start
+                remaining = self.connection_retry_window - elapsed
+                if remaining <= 0:
+                    logger.error(
+                        "Failed to connect to %s.%s after %.1fs (%s attempts): %s",
+                        table.schema_name or "default",
+                        table.table_name,
+                        elapsed,
+                        attempt,
+                        exc,
+                    )
+                    raise
+                sleep_for = min(delay, remaining, self.connection_retry_max_delay)
+                jitter = random.uniform(0, sleep_for * 0.25)
+                logger.warning(
+                    "Connection attempt %s for %s.%s failed: %s. Retrying in %.1fs",
+                    attempt,
+                    table.schema_name or "default",
+                    table.table_name,
+                    exc,
+                    sleep_for + jitter,
+                )
+                time.sleep(sleep_for + jitter)
+                delay = min(delay * 2, self.connection_retry_max_delay)
     
     def _execute_sqlalchemy(
         self,
