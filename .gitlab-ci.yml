@@ -259,12 +259,12 @@ update_dockerhub_readme:
     - |
       set -euo pipefail
 
-      if [ -z "${CI_REGISTRY_USER:-}" ] || [ -z "${CI_REGISTRY_PASSWORD:-}" ] || [ -z "${APP_NAME:-}" ]; then
-        echo "CI_REGISTRY_USER, CI_REGISTRY_PASSWORD and APP_NAME variables must be set"
+      if [ -z "${CI_REGISTRY_USER:-}" ] || [ -z "${CI_REGISTRY_TOKEN:-}" ] || [ -z "${APP_NAME:-}" ]; then
+        echo "CI_REGISTRY_USER, CI_REGISTRY_TOKEN and APP_NAME variables must be set"
         exit 1
       fi
       export DOCKERHUB_USERNAME="${CI_REGISTRY_USER}"
-      export DOCKERHUB_TOKEN="${CI_REGISTRY_PASSWORD}"
+      export DOCKERHUB_TOKEN="${CI_REGISTRY_TOKEN}"
       if [[ "${APP_NAME}" == */* ]]; then
         export DOCKERHUB_REPO="${APP_NAME}"
       else
