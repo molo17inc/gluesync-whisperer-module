@@ -266,6 +266,9 @@ update_dockerhub_readme:
       export DOCKERHUB_USERNAME="${CI_REGISTRY_USER}"
       export DOCKERHUB_TOKEN="${CI_REGISTRY_PASSWORD}"
       export DOCKERHUB_REPO="molo17/${APP_NAME}"
+      echo "Docker Hub repo: ${DOCKERHUB_REPO}"
+      echo "Docker Hub username: ${DOCKERHUB_USERNAME}"
+      echo "Docker Hub token length: ${#DOCKERHUB_TOKEN}"
     - |
       python3 - <<'PY' > dockerhub-readme.json
       import json
@@ -287,6 +290,7 @@ update_dockerhub_readme:
         echo "Failed to obtain Docker Hub token"
         exit 1
       fi
+      echo "Docker Hub API token acquired (length ${#TOKEN})."
 
       echo "Updating Docker Hub description from DOCKER_IMAGE_README.md..."
       RESPONSE_CODE=$(curl -s -o dockerhub-response.json -w "%{http_code}" \
