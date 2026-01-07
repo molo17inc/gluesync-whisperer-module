@@ -268,13 +268,13 @@ update_dockerhub_readme:
       export DOCKERHUB_REPO="molo17/${APP_NAME}"
     - |
       python3 - <<'PY' > dockerhub-readme.json
-import json
-from pathlib import Path
+      import json
+      from pathlib import Path
 
-readme_path = Path("DOCKER_IMAGE_README.md")
-content = readme_path.read_text(encoding="utf-8")
-print(json.dumps({"full_description": content}))
-PY
+      readme_path = Path("DOCKER_IMAGE_README.md")
+      content = readme_path.read_text(encoding="utf-8")
+      print(json.dumps({"full_description": content}))
+      PY
     - |
       set -euo pipefail
 
