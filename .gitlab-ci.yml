@@ -265,7 +265,11 @@ update_dockerhub_readme:
       fi
       export DOCKERHUB_USERNAME="${CI_REGISTRY_USER}"
       export DOCKERHUB_TOKEN="${CI_REGISTRY_PASSWORD}"
-      export DOCKERHUB_REPO="molo17/${APP_NAME}"
+      if [[ "${APP_NAME}" == */* ]]; then
+        export DOCKERHUB_REPO="${APP_NAME}"
+      else
+        export DOCKERHUB_REPO="molo17/${APP_NAME}"
+      fi
       echo "Docker Hub repo: ${DOCKERHUB_REPO}"
       echo "Docker Hub username: ${DOCKERHUB_USERNAME}"
       echo "Docker Hub token length: ${#DOCKERHUB_TOKEN}"
