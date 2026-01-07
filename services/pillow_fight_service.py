@@ -553,6 +553,7 @@ class PillowFightService:
                 "delete": 0,
                 "errors": 0,
             },
+            "error_streak": 0,
         }
         
         self.job_store.update_table_status(job_id, table.id, PillowFightTableStatus.RUNNING)
@@ -817,6 +818,7 @@ class PillowFightService:
                     )
                 
                 batch_operations = 0
+                status_entry = self.status.get(key, {})
                 for _ in range(batch_size):
                     if stop_event.is_set():
                         break
@@ -828,17 +830,22 @@ class PillowFightService:
                             self._perform_insert(engine, connection, table)
                             self.status[key]["operations"]["insert"] += 1
                             self.job_store.increment_operation(job_id, table.id, "insert")
+                            self.job_store.reset_error_count(job_id, table.id)
                         elif op_type_upper == "UPDATE":
                             self._perform_update(engine, connection, table)
                             self.status[key]["operations"]["update"] += 1
                             self.job_store.increment_operation(job_id, table.id, "update")
+                            self.job_store.reset_error_count(job_id, table.id)
                         elif op_type_upper == "DELETE":
                             self._perform_delete(engine, connection, table)
                             self.status[key]["operations"]["delete"] += 1
                             self.job_store.increment_operation(job_id, table.id, "delete")
+                            self.job_store.reset_error_count(job_id, table.id)
                         
                         now_iso = datetime.utcnow().isoformat()
                         self.status[key]["last_operation_time"] = now_iso
+                        if status_entry is not None:
+                            status_entry["error_streak"] = 0
                         self.job_store.update_table_status(
                             job_id,
                             table.id,
@@ -850,6 +857,11 @@ class PillowFightService:
                     except Exception as op_exc:
                         logger.error(f"Error performing {op_type_upper} on {table.table_name}: {op_exc}")
                         self.status[key]["operations"]["errors"] += 1
+                        if status_entry is not None:
+                            status_entry["error_streak"] = status_entry.get("error_streak", 0) + 1
+                            error_count = status_entry["error_streak"]
+                        else:
+                            error_count = self.status[key]["operations"]["errors"]
                         self.job_store.increment_error(job_id, table.id)
                         self.job_store.update_table_status(
                             job_id,
@@ -858,7 +870,6 @@ class PillowFightService:
                             last_operation_at=datetime.utcnow().isoformat(),
                             error_message=str(op_exc),
                         )
-                        error_count = self.status[key]["operations"]["errors"]
                         if error_count >= self.error_threshold:
                             threshold_message = (
                                 f"Reached error threshold ({self.error_threshold}) for "

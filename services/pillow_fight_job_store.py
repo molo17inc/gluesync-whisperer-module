@@ -282,6 +282,16 @@ class PillowFightJobStore:
             (job_id, table_id),
         )
 
+    def reset_error_count(self, job_id: str, table_id: int) -> None:
+        self.db.execute(
+            """
+            UPDATE pillow_fight_job_tables
+            SET error_count = 0
+            WHERE job_id = ? AND table_config_id = ?
+            """,
+            (job_id, table_id),
+        )
+
     def find_active_table_conflicts(self, table_ids: List[int]) -> List[int]:
         if not table_ids:
             return []
