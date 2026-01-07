@@ -259,8 +259,8 @@ update_dockerhub_readme:
     - |
       set -euo pipefail
 
-      if [ -z "${DOCKERHUB_USERNAME:-}" ] || [ -z "${DOCKERHUB_TOKEN:-}" ] || [ -z "${DOCKERHUB_REPO:-}" ]; then
-        echo "DOCKERHUB_USERNAME, DOCKERHUB_TOKEN and DOCKERHUB_REPO variables must be set"
+      if [ -z "${CI_REGISTRY_USER:-}" ] || [ -z "${CI_REGISTRY_PASSWORD:-}" ] || [ -z "${APP_NAME:-}" ]; then
+        echo "CI_REGISTRY_USER, CI_REGISTRY_PASSWORD and APP_NAME variables must be set"
         exit 1
       fi
     - |
@@ -278,7 +278,7 @@ update_dockerhub_readme:
       echo "Authenticating with Docker Hub..."
       TOKEN=$(curl -s -X POST https://hub.docker.com/v2/users/login/ \
         -H "Content-Type: application/json" \
-        -d "{\"username\":\"${DOCKERHUB_USERNAME}\",\"password\":\"${DOCKERHUB_TOKEN}\"}" | jq -r '.token')
+        -d "{\"username\":\"${CI_REGISTRY_USER}\",\"password\":\"${CI_REGISTRY_PASSWORD}\"}" | jq -r '.token')
 
       if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
         echo "Failed to obtain Docker Hub token"
@@ -287,7 +287,7 @@ update_dockerhub_readme:
 
       echo "Updating Docker Hub description from DOCKER_IMAGE_README.md..."
       RESPONSE_CODE=$(curl -s -o dockerhub-response.json -w "%{http_code}" \
-        -X PATCH "https://hub.docker.com/v2/repositories/${DOCKERHUB_REPO}" \
+        -X PATCH "https://hub.docker.com/v2/repositories/${APP_NAME}" \
         -H "Authorization: JWT ${TOKEN}" \
         -H "Content-Type: application/json" \
         -d @dockerhub-readme.json)
