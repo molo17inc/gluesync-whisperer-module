@@ -292,6 +292,26 @@ class PillowFightJobStore:
             (job_id, table_id),
         )
 
+    def clear_job_error_if_no_active_errors(self, job_id: str) -> None:
+        row = self.db.query_one(
+            """
+            SELECT SUM(error_count) AS total_errors
+            FROM pillow_fight_job_tables
+            WHERE job_id = ?
+            """,
+            (job_id,),
+        )
+        total_errors = row["total_errors"] if row and row.get("total_errors") is not None else 0
+        if not total_errors:
+            self.db.execute(
+                """
+                UPDATE pillow_fight_jobs
+                SET error_message = NULL
+                WHERE job_id = ?
+                """,
+                (job_id,),
+            )
+
     def find_active_table_conflicts(self, table_ids: List[int]) -> List[int]:
         if not table_ids:
             return []

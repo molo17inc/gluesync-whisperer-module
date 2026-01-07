@@ -831,16 +831,19 @@ class PillowFightService:
                             self.status[key]["operations"]["insert"] += 1
                             self.job_store.increment_operation(job_id, table.id, "insert")
                             self.job_store.reset_error_count(job_id, table.id)
+                            self.job_store.clear_job_error_if_no_active_errors(job_id)
                         elif op_type_upper == "UPDATE":
                             self._perform_update(engine, connection, table)
                             self.status[key]["operations"]["update"] += 1
                             self.job_store.increment_operation(job_id, table.id, "update")
                             self.job_store.reset_error_count(job_id, table.id)
+                            self.job_store.clear_job_error_if_no_active_errors(job_id)
                         elif op_type_upper == "DELETE":
                             self._perform_delete(engine, connection, table)
                             self.status[key]["operations"]["delete"] += 1
                             self.job_store.increment_operation(job_id, table.id, "delete")
                             self.job_store.reset_error_count(job_id, table.id)
+                            self.job_store.clear_job_error_if_no_active_errors(job_id)
                         
                         now_iso = datetime.utcnow().isoformat()
                         self.status[key]["last_operation_time"] = now_iso
