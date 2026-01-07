@@ -107,12 +107,12 @@ const PillowFight: React.FC = () => {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [tableConfigs, setTableConfigs] = useState<TableConfig[]>([]);
   const [jobs, setJobs] = useState<PillowFightJobStatus[]>([]);
-  const [jobsLoading, setJobsLoading] = useState(false);
   const [jobStatusTab, setJobStatusTab] = useState<JobStatusTabKey>("running");
   const [loadingData, setLoadingData] = useState(false);
-
-  const [jobSearchInput, setJobSearchInput] = useState("");
+  const [jobsLoading, setJobsLoading] = useState(false);
+  const [showJobsLoader, setShowJobsLoader] = useState(false);
   const [jobSearch, setJobSearch] = useState("");
+  const [jobSearchInput, setJobSearchInput] = useState("");
 
   const [startDialogOpen, setStartDialogOpen] = useState(false);
   const [selectedConnection, setSelectedConnection] = useState<number | "">("");
@@ -140,6 +140,16 @@ const PillowFight: React.FC = () => {
     }, 4000);
     return () => clearInterval(interval);
   }, [jobSearch]);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    if (jobsLoading) {
+      timer = setTimeout(() => setShowJobsLoader(true), 300);
+    } else {
+      timer = setTimeout(() => setShowJobsLoader(false), 150);
+    }
+    return () => clearTimeout(timer);
+  }, [jobsLoading]);
 
   const loadInitialData = async () => {
     try {
@@ -541,7 +551,7 @@ const PillowFight: React.FC = () => {
           >
             Refresh jobs
           </Button>
-          {jobsLoading && (
+          {showJobsLoader && (
             <Stack
               direction="row"
               spacing={1}

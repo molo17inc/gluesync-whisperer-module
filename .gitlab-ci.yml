@@ -248,3 +248,57 @@ update_budibase_version:
     - if: "$CI_COMMIT_TAG =~ /^release-/"
     - if: "$CI_COMMIT_TAG =~ /^beta-/"
     - if: "$CI_COMMIT_TAG =~ /^tag-/"
+
+update_dockerhub_readme:
+  stage: deploy
+  image: alpine:latest
+  needs:
+    - job: deploy
+  script:
+    - apk add --no-cache curl jq python3
+    - |
+      set -euo pipefail
+
+      if [ -z "${DOCKERHUB_USERNAME:-}" ] || [ -z "${DOCKERHUB_TOKEN:-}" ] || [ -z "${DOCKERHUB_REPO:-}" ]; then
+        echo "DOCKERHUB_USERNAME, DOCKERHUB_TOKEN and DOCKERHUB_REPO variables must be set"
+        exit 1
+      fi
+    - |
+      python3 - <<'PY' > dockerhub-readme.json
+      import json
+      from pathlib import Path
+
+      readme_path = Path("DOCKER_IMAGE_README.md")
+      content = readme_path.read_text(encoding="utf-8")
+      print(json.dumps({"full_description": content}))
+      PY
+    - |
+      set -euo pipefail
+
+      echo "Authenticating with Docker Hub..."
+      TOKEN=$(curl -s -X POST https://hub.docker.com/v2/users/login/ \
+        -H "Content-Type: application/json" \
+        -d "{\"username\":\"${DOCKERHUB_USERNAME}\",\"password\":\"${DOCKERHUB_TOKEN}\"}" | jq -r '.token')
+
+      if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+        echo "Failed to obtain Docker Hub token"
+        exit 1
+      fi
+
+      echo "Updating Docker Hub description from DOCKER_IMAGE_README.md..."
+      RESPONSE_CODE=$(curl -s -o dockerhub-response.json -w "%{http_code}" \
+        -X PATCH "https://hub.docker.com/v2/repositories/${DOCKERHUB_REPO}" \
+        -H "Authorization: JWT ${TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d @dockerhub-readme.json)
+
+      cat dockerhub-response.json
+
+      if [ "$RESPONSE_CODE" -lt 200 ] || [ "$RESPONSE_CODE" -ge 300 ]; then
+        echo "Failed to update Docker Hub README (HTTP $RESPONSE_CODE)"
+        exit 1
+      fi
+
+      echo "Docker Hub README updated successfully."
+  rules:
+    - if: $CI_COMMIT_TAG
