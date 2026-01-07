@@ -287,7 +287,7 @@ update_dockerhub_readme:
 
       echo "Updating Docker Hub description from DOCKER_IMAGE_README.md..."
       RESPONSE_CODE=$(curl -s -o dockerhub-response.json -w "%{http_code}" \
-        -X PATCH "https://hub.docker.com/v2/repositories/${APP_NAME}" \
+        -X PATCH "https://hub.docker.com/v2/repositories/${APP_NAME}/" \
         -H "Authorization: JWT ${TOKEN}" \
         -H "Content-Type: application/json" \
         -d @dockerhub-readme.json)
