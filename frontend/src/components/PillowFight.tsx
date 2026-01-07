@@ -523,7 +523,7 @@ const PillowFight: React.FC = () => {
             and stop jobs individually.
           </Typography>
         </Box>
-        <Stack direction="row" spacing={1}>
+        <Stack direction="row" spacing={1} alignItems="center">
           <Button
             variant="contained"
             color="success"
@@ -541,6 +541,19 @@ const PillowFight: React.FC = () => {
           >
             Refresh jobs
           </Button>
+          {jobsLoading && (
+            <Stack
+              direction="row"
+              spacing={1}
+              alignItems="center"
+              sx={{ ml: 1 }}
+            >
+              <CircularProgress size={18} />
+              <Typography variant="caption" color="text.secondary">
+                Polling…
+              </Typography>
+            </Stack>
+          )}
         </Stack>
       </Stack>
 
@@ -620,20 +633,6 @@ const PillowFight: React.FC = () => {
                 ))}
               </Tabs>
             </Box>
-          )}
-
-          {jobsLoading && (
-            <Stack
-              direction="row"
-              spacing={1}
-              alignItems="center"
-              sx={{ mb: 2 }}
-            >
-              <CircularProgress size={20} />
-              <Typography variant="body2" color="text.secondary">
-                Loading jobs...
-              </Typography>
-            </Stack>
           )}
 
           {filteredJobs.length === 0 && !jobsLoading ? (

@@ -1223,12 +1223,38 @@ class PillowFightService:
                 return
             
             # Build the where clause for the primary keys
-            where_clauses = []
-            where_values = []
+            def _lookup_column_info(column_name: str) -> Optional[Dict[str, Any]]:
+                if not isinstance(columns_dict, dict):
+                    return None
+                if column_name in columns_dict:
+                    return columns_dict[column_name]
+                lower = column_name.lower()
+                for candidate in columns_dict.keys():
+                    if isinstance(candidate, str) and candidate.lower() == lower:
+                        return columns_dict[candidate]
+                return None
+
+            where_clauses: List[str] = []
+            where_values: List[Any] = []
             for pk in primary_keys:
-                if pk in existing_record:
-                    where_clauses.append(f"{pk} = ?")
-                    where_values.append(existing_record[pk])
+                record_key = pk
+                if record_key not in existing_record:
+                    # Try case-insensitive lookup if column names were normalized differently
+                    lower_keys = {str(k).lower(): k for k in existing_record.keys()}
+                    record_key = lower_keys.get(str(pk).lower())
+                if record_key is None or record_key not in existing_record:
+                    logger.warning(
+                        "Primary key %s not found in fetched record for %s.%s",
+                        pk,
+                        table.schema_name,
+                        table.table_name,
+                    )
+                    continue
+
+                where_clauses.append(f"{pk} = ?")
+                pk_info = _lookup_column_info(pk)
+                coerced_value = self._coerce_value_for_column(pk_info, existing_record[record_key])
+                where_values.append(coerced_value)
             
             if not where_clauses:
                 logger.error(f"No primary key values found for record in {table.table_name}")

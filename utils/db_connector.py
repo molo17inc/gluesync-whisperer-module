@@ -35,6 +35,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from models import DatabaseType
 from utils.sql import get_sql_statements
+from utils.jdbc_utils import initialize_jvm
 
 # Configure logging
 logging.basicConfig(
@@ -218,8 +219,10 @@ class DatabaseConnector:
             
             # Initialize JVM if not already started
             if not jpype.isJVMStarted():
-                jpype.startJVM(jpype.getDefaultJVMPath(), '-Djava.class.path=' + os.pathsep.join(jdbc_jars))
+                initialize_jvm(jdbc_jars)
                 logger.info("JVM started for JDBC connections")
+            else:
+                logger.debug("Reusing existing JVM for JDBC connections")
             
             # Create JDBC connection
             logger.info(f"Connecting to {jdbc_url} using {driver_class}")
