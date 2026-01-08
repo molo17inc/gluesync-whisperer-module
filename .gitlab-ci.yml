@@ -249,18 +249,18 @@ update_budibase_version:
     - if: "$CI_COMMIT_TAG =~ /^beta-/"
     - if: "$CI_COMMIT_TAG =~ /^tag-/"
 
-update_dockerhub_readme:
-  stage: deploy
-  image: sheogorath/readme-to-dockerhub:latest
-  needs:
-    - job: deploy
-  variables:
-    DOCKERHUB_USERNAME: $CI_REGISTRY_USER
-    DOCKERHUB_PASSWORD: $CI_REGISTRY_TOKEN
-    DOCKERHUB_REPO_PREFIX: molo17
-    DOCKERHUB_REPO_NAME: $APP_NAME
-  script:
-    - mkdir -p /data
-    - cp DOCKER_IMAGE_README.md /data/README.md
-  rules:
-    - if: $CI_COMMIT_TAG
+# update_dockerhub_readme:
+#   stage: deploy
+#   image: sheogorath/readme-to-dockerhub:latest
+#   needs:
+#     - job: deploy
+#   variables:
+#     DOCKERHUB_USERNAME: $CI_REGISTRY_USER
+#     DOCKERHUB_PASSWORD: $CI_REGISTRY_TOKEN
+#     DOCKERHUB_REPO_PREFIX: molo17
+#     DOCKERHUB_REPO_NAME: $APP_NAME
+#   script:
+#     - mkdir -p /data
+#     - cp DOCKER_IMAGE_README.md /data/README.md
+#   rules:
+#     - if: $CI_COMMIT_TAG
