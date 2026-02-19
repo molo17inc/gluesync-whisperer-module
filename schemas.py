@@ -23,7 +23,7 @@
 
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Union
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, AliasChoices
 
 from models import OperationType, DatabaseType, ConnectionStatus
 
@@ -158,8 +158,7 @@ class MetadataObject(BaseModel):
 
     name: str
     schema_name: str = Field(
-        alias="schema",
-        validation_alias="schema",
+        validation_alias=AliasChoices("schema", "schema_name"),
         serialization_alias="schema",
     )
     type: str  # table, view, materialized_view, procedure, function, other
