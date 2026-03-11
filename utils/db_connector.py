@@ -1331,6 +1331,7 @@ class DatabaseConnector:
         if not self.connection:
             raise RuntimeError("Not connected to database")
         
+        cursor = None
         try:
             query = _sanitize_sql(query)
             logger.debug(f"Executing query via JDBC for {self.db_type.value}: {query}")
@@ -1379,52 +1380,62 @@ class DatabaseConnector:
             if self.db_type == DatabaseType.MSSQL:
                 logger.debug(f"JDBC params for query: {jdbc_params}")
             
-            try:
-                # Execute the query with parameters
-                cursor.execute(query, jdbc_params)
-                
-                # Check if this is a SELECT query or a DML query (INSERT, UPDATE, DELETE)
-                is_select_query = query.strip().upper().startswith("SELECT")
-                
-                if is_select_query and cursor.description:
-                    try:
-                        # Fetch results (limited by max_rows)
-                        result_set = cursor.fetchmany(max_rows) if max_rows else cursor.fetchall()
-                        
-                        # Get column names from cursor description and ensure they are Python strings
-                        column_names = []
-                        if cursor.description:
-                            for desc in cursor.description:
-                                # Convert Java String to Python string or use a default name
-                                col_name = str(desc[0]) if desc[0] else f'column_{len(column_names)}'
-                                column_names.append(col_name)
-                        
-                        # Convert results to dictionaries
-                        results = []
-                        for row in result_set:
-                            row_dict = {}
-                            for i, col_name in enumerate(column_names):
-                                # Convert Java objects to Python types
-                                row_dict[col_name] = str(row[i]) if row[i] is not None else None
-                            results.append(row_dict)
-                        
-                        return results
-                    except Exception as e:
-                        logger.warning(f"Error fetching results: {str(e)}")
-                        # Return empty results if fetching fails
-                        return []
-                else:
-                    # For INSERT, UPDATE, DELETE queries, just return an empty list
-                    # No need to fetch results for these operations
+            # Execute the query with parameters
+            cursor.execute(query, jdbc_params)
+            
+            # Check if this is a SELECT query or a DML query (INSERT, UPDATE, DELETE)
+            is_select_query = query.strip().upper().startswith("SELECT")
+            
+            if is_select_query and cursor.description:
+                try:
+                    # Fetch results (limited by max_rows)
+                    result_set = cursor.fetchmany(max_rows) if max_rows else cursor.fetchall()
+                    
+                    # Get column names from cursor description and ensure they are Python strings
+                    column_names = []
+                    if cursor.description:
+                        for desc in cursor.description:
+                            # Convert Java String to Python string or use a default name
+                            col_name = str(desc[0]) if desc[0] else f'column_{len(column_names)}'
+                            column_names.append(col_name)
+                    
+                    # Convert results to dictionaries
+                    results = []
+                    for row in result_set:
+                        row_dict = {}
+                        for i, col_name in enumerate(column_names):
+                            # Convert Java objects to Python types
+                            row_dict[col_name] = str(row[i]) if row[i] is not None else None
+                        results.append(row_dict)
+                    
+                    return results
+                except Exception as e:
+                    logger.warning(f"Error fetching results: {str(e)}")
+                    # Return empty results if fetching fails
                     return []
-            except Exception as e:
-                logger.error(f"Error executing query: {str(e)}")
-                if cursor:
-                    cursor.close()
-                raise
+            else:
+                # For INSERT, UPDATE, DELETE queries, make sure we commit the transaction
+                try:
+                    self.connection.commit()
+                except Exception:
+                    # Some drivers autocommit; ignore commit errors
+                    pass
+                return []
         except Exception as e:
+            # Roll back the transaction for DML failures to keep connection consistent
+            try:
+                if self.connection:
+                    self.connection.rollback()
+            except Exception:
+                pass
             logger.error(f"Error executing query: {str(e)}")
             raise
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
     
     def getMetaData(self):
         """Get database metadata, delegating to the JDBC connection."""
