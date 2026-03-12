@@ -84,7 +84,7 @@ class OracleDatabaseService(DatabaseServiceBase):
             logger.error(f"Error getting Oracle schemas: {exc}")
             raise
 
-    def get_tables(self, connection_id: int, schema: str = None) -> List[str]:
+    def get_tables(self, connection_id: int, schema: str = None) -> List[Dict[str, str]]:
         connection = self.get_connection(connection_id)
         if not connection:
             raise ValueError(f"Connection with ID {connection_id} not found")
@@ -95,11 +95,15 @@ class OracleDatabaseService(DatabaseServiceBase):
 
         try:
             result = connector.execute_query(sql, params=params)
-            tables = []
+            tables: List[Dict[str, str]] = []
+            schema_value = schema or connection.database or connection.username or ""
             for row in result:
                 table_name = self._get_row_value(row, "table_name")
                 if table_name:
-                    tables.append(str(table_name))
+                    tables.append({
+                        "name": str(table_name),
+                        "schema_name": str(schema_value)
+                    })
             return tables
         except Exception as exc:
             logger.error(f"Error getting Oracle tables: {exc}")
