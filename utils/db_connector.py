@@ -192,14 +192,24 @@ class DatabaseConnector:
             return False
             
         try:
-            # Try a simple query to check if the connection is still valid
+            # Try a lightweight query to check if the connection is still valid
             cursor = self.connection.cursor()
-            cursor.execute("SELECT 1")
-            cursor.close()
+            health_queries = {
+                DatabaseType.ORACLE: "SELECT 1 FROM DUAL",
+                DatabaseType.AS400: "SELECT 1 FROM SYSIBM.SYSDUMMY1",
+            }
+            query = health_queries.get(self.db_type, "SELECT 1")
+            cursor.execute(query)
             return True
         except Exception as e:
             logger.warning(f"Connection check failed: {str(e)}")
             return False
+        finally:
+            try:
+                if cursor:
+                    cursor.close()
+            except Exception:
+                pass
     
     def connect(self):
         """Connect to the database using direct JDBC."""
