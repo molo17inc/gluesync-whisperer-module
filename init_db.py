@@ -22,8 +22,8 @@
 """
 
 import logging
-
-from database import Database
+from database import engine, Base
+from models import DatabaseConnection, TableConfig, OperationLog
 
 # Configure logging
 logging.basicConfig(
@@ -34,10 +34,9 @@ logger = logging.getLogger(__name__)
 
 
 def init_db():
-    """Initialize the internal SQLite database using the JDBC-ready Database wrapper."""
-    logger.info("Initializing internal database...")
-    Database()
-    logger.info("Database initialized successfully!")
+    logger.info("Creating database tables...")
+    Base.metadata.create_all(bind=engine)
+    logger.info("Database tables created successfully!")
 
 
 if __name__ == "__main__":
