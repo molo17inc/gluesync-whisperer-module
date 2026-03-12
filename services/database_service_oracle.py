@@ -126,7 +126,7 @@ class OracleDatabaseService(DatabaseServiceBase):
             logger.error(f"Error getting Oracle columns: {exc}")
             raise
 
-        columns: List[Dict[str, Any]] = []
+        columns_map: Dict[str, Dict[str, Any]] = {}
         for row in column_rows:
             row_lower = {k.lower(): v for k, v in row.items()}
             name = row_lower.get('column_name')
@@ -139,12 +139,13 @@ class OracleDatabaseService(DatabaseServiceBase):
             pk_flag = str(row_lower.get('is_primary_key', '0')).upper()
             is_primary = pk_flag in ('1', 'TRUE', 'YES', 'Y')
 
-            columns.append({
-                'name': str(name),
+            column_name = str(name)
+            columns_map[column_name] = {
+                'name': column_name,
                 'type': str(data_type) if data_type is not None else '',
                 'nullable': is_nullable,
                 'primary_key': is_primary,
-            })
+            }
 
         pk_sql = self.sql_statements.get_primary_keys_statement(schema_name, table_name)
         pk_params = {"table": table_name}
@@ -165,14 +166,15 @@ class OracleDatabaseService(DatabaseServiceBase):
 
         pk_set = set(primary_keys)
         if pk_set:
-            for column in columns:
-                if column['name'] in pk_set:
+            for pk_name in pk_set:
+                column = columns_map.get(pk_name)
+                if column:
                     column['primary_key'] = True
 
         schema_response = TableSchemaResponse(
             table_name=table_name,
             schema_name=schema_name,
-            columns=columns,
+            columns=columns_map,
             primary_keys=primary_keys,
             foreign_keys=[]
         )
