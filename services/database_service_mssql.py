@@ -85,32 +85,16 @@ class MSSQLDatabaseService(DatabaseServiceBase):
                 raise Exception(f"Failed to connect to database: {str(e)}")
         
         try:
-            # Get JDBC metadata
-            if hasattr(engine, 'jconn') and engine.jconn:
-                logger.info(f"Fetching schemas for connection {connection_id}")
-                metadata = engine.jconn.getMetaData()
-                rs = metadata.getSchemas()
-
-                schemas = []
-                while rs.next():
-                    schema_name = rs.getString("TABLE_SCHEM")
-                    # Convert Java String to Python string
-                    schema_name_str = str(schema_name)
-                    schemas.append(schema_name_str)
-                    logger.debug(f"Found schema: {schema_name_str}")
-
-                rs.close()
-                logger.info(f"Retrieved {len(schemas)} schemas for connection {connection_id}")
-
-                # If no schemas found, this is an error condition
-                if not schemas:
-                    logger.warning(f"No schemas found in database for connection {connection_id}")
-                    raise Exception(f"No schemas found in database. The database may be empty or inaccessible.")
-
+            # Use the DatabaseConnector's built-in get_schemas which handles
+            # MSSQL-specific filtering and fallback logic properly
+            if hasattr(engine, 'get_schemas'):
+                logger.info(f"Fetching schemas for connection {connection_id} using DatabaseConnector")
+                schemas = engine.get_schemas()
+                logger.info(f"Retrieved {len(schemas)} schemas for connection {connection_id}: {schemas}")
                 return schemas
             else:
-                logger.error("No JDBC connection available")
-                raise Exception("Failed to establish JDBC connection")
+                logger.error("Engine does not support get_schemas")
+                raise Exception("Failed to get schemas: engine does not support schema retrieval")
         except Exception as e:
             logger.error(f"Error getting schemas: {str(e)}")
             raise Exception(f"Failed to get schemas: {str(e)}")

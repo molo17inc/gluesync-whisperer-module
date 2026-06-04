@@ -31,6 +31,12 @@ class MsSqlSqlStatements(BaseSqlStatements):
         return """
         SELECT schema_name
         FROM information_schema.schemata
+        WHERE schema_name NOT IN (
+            'information_schema', 'sys',
+            'db_accessadmin', 'db_backupoperator', 'db_datareader', 'db_datawriter',
+            'db_ddladmin', 'db_denydatareader', 'db_denydatawriter', 'db_owner',
+            'db_securityadmin', 'guest'
+        )
         ORDER BY schema_name
         """
     
