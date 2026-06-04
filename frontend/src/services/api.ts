@@ -1,35 +1,35 @@
-import axios from 'axios';
-import { detectBasePath } from '../utils/basePath';
+import axios from "axios";
+import { detectBasePath } from "../utils/basePath";
 
 const resolveApiBaseUrl = (): string => {
   const envUrl = import.meta?.env?.VITE_API_BASE_URL?.trim();
   if (envUrl) {
-    const normalized = envUrl.endsWith('/') ? envUrl.slice(0, -1) : envUrl;
-    return normalized.includes('/api') ? normalized : `${normalized}/api`;
+    const normalized = envUrl.endsWith("/") ? envUrl.slice(0, -1) : envUrl;
+    return normalized.includes("/api") ? normalized : `${normalized}/api`;
   }
 
   const basePath = detectBasePath();
-  const effectiveBase = basePath && basePath !== '/' ? basePath : '';
+  const effectiveBase = basePath && basePath !== "/" ? basePath : "";
 
-  if (typeof window !== 'undefined') {
+  if (typeof window !== "undefined") {
     const origin = window.location.origin;
     return effectiveBase ? `${origin}${effectiveBase}/api` : `${origin}/api`;
   }
 
   // Fallback for non-browser contexts (e.g., tests)
-  return 'http://localhost:8000/api';
+  return "http://localhost:8000/api";
 };
 
 export const metadataApi = {
   // List objects (tables/views/procs) for a connection and optional schema
   listObjects: async (
     connectionId: number,
-    schema?: string
+    schema?: string,
   ): Promise<MetadataObject[]> => {
     const params = schema ? { schema } : {};
     const response = await api.get(
       `/connections/${connectionId}/metadata/objects`,
-      { params }
+      { params },
     );
     return response.data;
   },
@@ -38,12 +38,12 @@ export const metadataApi = {
   getTableMetadata: async (
     connectionId: number,
     tableName: string,
-    schema?: string
+    schema?: string,
   ): Promise<TableMetadata> => {
     const params = schema ? { schema } : {};
     const response = await api.get(
       `/connections/${connectionId}/metadata/tables/${tableName}`,
-      { params }
+      { params },
     );
     return response.data;
   },
@@ -55,19 +55,19 @@ const API_BASE_URL = resolveApiBaseUrl();
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
-    'Content-Type': 'application/json',
+    "Content-Type": "application/json",
   },
 });
 
 // Database types
 type SupportedDbType =
-  | 'mssql'
-  | 'as400'
-  | 'sqlite'
-  | 'mysql'
-  | 'mariadb'
-  | 'postgresql'
-  | 'oracle';
+  | "mssql"
+  | "as400"
+  | "sqlite"
+  | "mysql"
+  | "mariadb"
+  | "postgresql"
+  | "oracle";
 
 export interface Connection {
   id?: number;
@@ -91,7 +91,7 @@ export interface Schema {
 
 export interface Table {
   name: string;
-  schema: string;
+  schema_name: string;
 }
 
 export interface MetadataObject {
@@ -118,14 +118,14 @@ export interface TableConfig {
   batch_size: number;
   enabled: boolean;
   connection_id: number;
-  operation_type?: 'all' | 'insert' | 'update' | 'delete';
+  operation_type?: "all" | "insert" | "update" | "delete";
 }
 
 export interface PillowFightJobRequest {
   connection_id: number;
   table_ids: number[];
-  operation_type?: 'all' | 'insert' | 'update' | 'delete';
-  operation_types?: Array<'all' | 'insert' | 'update' | 'delete'>;
+  operation_type?: "all" | "insert" | "update" | "delete";
+  operation_types?: Array<"all" | "insert" | "update" | "delete">;
   operation_delay?: number;
   batch_size?: number;
 }
@@ -177,13 +177,13 @@ export interface ConnectionTestResponse {
 export const connectionApi = {
   // Create a new connection
   create: async (connection: Connection): Promise<Connection> => {
-    const response = await api.post('/connections', connection);
+    const response = await api.post("/connections", connection);
     return response.data;
   },
 
   // List all connections
   list: async (): Promise<Connection[]> => {
-    const response = await api.get('/connections/');
+    const response = await api.get("/connections/");
     return response.data;
   },
 
@@ -226,7 +226,7 @@ export const connectionApi = {
 export const tableApi = {
   // Create table configuration
   create: async (config: TableConfig): Promise<TableConfig> => {
-    const response = await api.post('/tables', config);
+    const response = await api.post("/tables", config);
     return response.data;
   },
 
@@ -243,20 +243,22 @@ export const tableApi = {
 
   // List table configurations
   list: async (): Promise<TableConfig[]> => {
-    const response = await api.get('/tables');
+    const response = await api.get("/tables");
     return response.data;
   },
 };
 
 export const pillowFightApi = {
-  startJob: async (request: PillowFightJobRequest): Promise<PillowFightJobStatus> => {
-    const response = await api.post('/v1/pillow-fight/jobs', request);
+  startJob: async (
+    request: PillowFightJobRequest,
+  ): Promise<PillowFightJobStatus> => {
+    const response = await api.post("/v1/pillow-fight/jobs", request);
     return response.data;
   },
 
   listJobs: async (search?: string): Promise<PillowFightJobStatusResponse> => {
     const params = search ? { search } : undefined;
-    const response = await api.get('/v1/pillow-fight/jobs', { params });
+    const response = await api.get("/v1/pillow-fight/jobs", { params });
     return response.data;
   },
 
@@ -270,8 +272,13 @@ export const pillowFightApi = {
     return response.data;
   },
 
-  stopTable: async (jobId: string, tableId: number): Promise<PillowFightJobStatus> => {
-    const response = await api.post(`/v1/pillow-fight/jobs/${jobId}/tables/${tableId}/stop`);
+  stopTable: async (
+    jobId: string,
+    tableId: number,
+  ): Promise<PillowFightJobStatus> => {
+    const response = await api.post(
+      `/v1/pillow-fight/jobs/${jobId}/tables/${tableId}/stop`,
+    );
     return response.data;
   },
 };
@@ -279,7 +286,10 @@ export const pillowFightApi = {
 export const automationApi = {
   // Execute SQL query
   executeQuery: async (request: QueryRequest): Promise<any> => {
-    const response = await api.post(`/v1/automation/connections/${request.connection_id}/query`, request);
+    const response = await api.post(
+      `/v1/automation/connections/${request.connection_id}/query`,
+      request,
+    );
     return response.data;
   },
 
@@ -292,15 +302,19 @@ export const automationApi = {
     include_all_rows?: boolean;
     max_rows?: number;
   }): Promise<Blob> => {
-    const response = await api.post(`/v1/automation/connections/${request.connection_id}/query/export-csv`, {
-      query: request.query,
-      schema_name: request.schema_name,
-      params: request.params,
-      include_all_rows: request.include_all_rows,
-      max_rows: request.max_rows,
-    }, {
-      responseType: 'blob'
-    });
+    const response = await api.post(
+      `/v1/automation/connections/${request.connection_id}/query/export-csv`,
+      {
+        query: request.query,
+        schema_name: request.schema_name,
+        params: request.params,
+        include_all_rows: request.include_all_rows,
+        max_rows: request.max_rows,
+      },
+      {
+        responseType: "blob",
+      },
+    );
     return response.data;
   },
 
@@ -310,10 +324,13 @@ export const automationApi = {
     table_name: string;
     schema_name?: string;
   }): Promise<Blob> => {
-    const response = await api.get(`/v1/automation/connections/${request.connection_id}/tables/${request.table_name}/export-csv`, {
-      params: request.schema_name ? { schema_name: request.schema_name } : {},
-      responseType: 'blob'
-    });
+    const response = await api.get(
+      `/v1/automation/connections/${request.connection_id}/tables/${request.table_name}/export-csv`,
+      {
+        params: request.schema_name ? { schema_name: request.schema_name } : {},
+        responseType: "blob",
+      },
+    );
     return response.data;
   },
 
@@ -325,14 +342,18 @@ export const automationApi = {
     file: File;
   }): Promise<{ success: boolean; inserted_rows: number }> => {
     const formData = new FormData();
-    formData.append('file', request.file);
-    
-    const response = await api.post(`/v1/automation/connections/${request.connection_id}/tables/${request.table_name}/import-csv`, formData, {
-      params: request.schema_name ? { schema_name: request.schema_name } : {},
-      headers: {
-        'Content-Type': 'multipart/form-data',
+    formData.append("file", request.file);
+
+    const response = await api.post(
+      `/v1/automation/connections/${request.connection_id}/tables/${request.table_name}/import-csv`,
+      formData,
+      {
+        params: request.schema_name ? { schema_name: request.schema_name } : {},
+        headers: {
+          "Content-Type": "multipart/form-data",
+        },
       },
-    });
+    );
     return response.data;
   },
 };

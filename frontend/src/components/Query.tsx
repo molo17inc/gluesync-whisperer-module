@@ -152,7 +152,7 @@ const Query: React.FC = () => {
   });
   const [history, setHistory] = useState<QueryHistoryEntry[]>([]);
   const [sampleMenuAnchor, setSampleMenuAnchor] = useState<null | HTMLElement>(
-    null
+    null,
   );
   const [historyExpanded, setHistoryExpanded] = useState(false);
   const [metadataBySchema, setMetadataBySchema] = useState<
@@ -165,11 +165,11 @@ const Query: React.FC = () => {
   const [tableDetailsBySchemaAndTable, setTableDetailsBySchemaAndTable] =
     useState<Record<string, Record<string, TableMetadata>>>({});
   const [tableDetailsLoading, setTableDetailsLoading] = useState<string | null>(
-    null
+    null,
   );
   const [metadataFilter, setMetadataFilter] = useState("");
   const [tableMetadata, setTableMetadata] = useState<TableMetadata | null>(
-    null
+    null,
   );
   const [tableMetadataLoading, setTableMetadataLoading] = useState(false);
   const [selectedMetadataObject, setSelectedMetadataObject] =
@@ -189,7 +189,7 @@ const Query: React.FC = () => {
 
   const currentQuery = useMemo(
     () => queryTabs[activeTab]?.query ?? "",
-    [queryTabs, activeTab]
+    [queryTabs, activeTab],
   );
 
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -203,7 +203,7 @@ const Query: React.FC = () => {
     (message: string, severity: "success" | "error" | "warning") => {
       setSnackbar({ open: true, message, severity });
     },
-    []
+    [],
   );
 
   const handleCloseSnackbar = () => {
@@ -229,7 +229,7 @@ const Query: React.FC = () => {
       const nextId: number | "" =
         savedId && data.some((conn) => conn.id === savedId)
           ? savedId
-          : data[0]?.id ?? "";
+          : (data[0]?.id ?? "");
 
       setSelectedConnection(nextId);
       if (nextId === "") {
@@ -256,7 +256,7 @@ const Query: React.FC = () => {
         setAllSchemas([]);
       }
     },
-    [showSnackbar]
+    [showSnackbar],
   );
 
   const loadMetadataForSchema = useCallback(
@@ -273,7 +273,7 @@ const Query: React.FC = () => {
         setMetadataLoadingSchema(null);
       }
     },
-    [metadataBySchema, showSnackbar]
+    [metadataBySchema, showSnackbar],
   );
 
   const loadTableMetadata = useCallback(
@@ -283,7 +283,7 @@ const Query: React.FC = () => {
         const data = await metadataApi.getTableMetadata(
           connectionId,
           tableName,
-          schema
+          schema,
         );
         setTableMetadata(data);
       } catch (error) {
@@ -293,7 +293,7 @@ const Query: React.FC = () => {
         setTableMetadataLoading(false);
       }
     },
-    [showSnackbar]
+    [showSnackbar],
   );
 
   const loadTableDetails = useCallback(
@@ -305,7 +305,7 @@ const Query: React.FC = () => {
         const data = await metadataApi.getTableMetadata(
           Number(selectedConnection),
           table,
-          schema
+          schema,
         );
         setTableDetailsBySchemaAndTable((prev) => ({
           ...prev,
@@ -317,7 +317,7 @@ const Query: React.FC = () => {
         setTableDetailsLoading(null);
       }
     },
-    [selectedConnection, showSnackbar, tableDetailsBySchemaAndTable]
+    [selectedConnection, showSnackbar, tableDetailsBySchemaAndTable],
   );
 
   const handleSampleMenuToggle = (event: React.MouseEvent<HTMLElement>) => {
@@ -355,8 +355,8 @@ const Query: React.FC = () => {
 
           const tableSuggestions: Monaco.languages.CompletionItem[] =
             tables.map((table) => {
-              const qualifiedName = table.schema
-                ? `${table.schema}.${table.name}`
+              const qualifiedName = table.schema_name
+                ? `${table.schema_name}.${table.name}`
                 : table.name;
               return {
                 label: qualifiedName,
@@ -402,8 +402,8 @@ const Query: React.FC = () => {
           for (const rowDict of response.results) {
             rows.push(
               response.column_names.map(
-                (columnName: string) => rowDict[columnName]
-              )
+                (columnName: string) => rowDict[columnName],
+              ),
             );
           }
         }
@@ -415,8 +415,8 @@ const Query: React.FC = () => {
 
       setQueryTabs((prev) =>
         prev.map((tab, index) =>
-          index === activeTab ? { ...tab, result: transformedResult } : tab
-        )
+          index === activeTab ? { ...tab, result: transformedResult } : tab,
+        ),
       );
 
       const historyEntry: QueryHistoryEntry = {
@@ -431,7 +431,7 @@ const Query: React.FC = () => {
 
       showSnackbar(
         response.success ? "Query executed successfully" : "Query failed",
-        response.success ? "success" : "error"
+        response.success ? "success" : "error",
       );
     } catch (error: any) {
       const executionTime = Date.now() - startTime;
@@ -520,7 +520,7 @@ const Query: React.FC = () => {
 
       showSnackbar(
         `Table ${selectedMetadataObject.name} exported successfully`,
-        "success"
+        "success",
       );
     } catch (error: any) {
       const message =
@@ -563,7 +563,7 @@ const Query: React.FC = () => {
 
         showSnackbar(
           `Successfully imported ${result.inserted_rows} rows into ${selectedMetadataObject.name}`,
-          "success"
+          "success",
         );
       } catch (error: any) {
         const message =
@@ -579,22 +579,22 @@ const Query: React.FC = () => {
   const handleClear = () => {
     setQueryTabs((prev) =>
       prev.map((tab, index) =>
-        index === activeTab ? { ...tab, query: "" } : tab
-      )
+        index === activeTab ? { ...tab, query: "" } : tab,
+      ),
     );
   };
 
   const handleSampleQuery = (sampleQuery: string) => {
     setQueryTabs((prev) =>
       prev.map((tab, index) =>
-        index === activeTab ? { ...tab, query: sampleQuery } : tab
-      )
+        index === activeTab ? { ...tab, query: sampleQuery } : tab,
+      ),
     );
   };
 
   const handleTableSnippet = (table: Table) => {
-    const qualifiedName = table.schema
-      ? `${table.schema}.${table.name}`
+    const qualifiedName = table.schema_name
+      ? `${table.schema_name}.${table.name}`
       : table.name;
     const snippet = `SELECT *\nFROM ${qualifiedName}\nLIMIT 100;`;
     setQueryTabs((prev) =>
@@ -606,8 +606,8 @@ const Query: React.FC = () => {
                 ? `${prev[index].query.trim()}\n\n${snippet}`
                 : snippet,
             }
-          : tab
-      )
+          : tab,
+      ),
     );
   };
 
@@ -636,7 +636,7 @@ const Query: React.FC = () => {
 
   const handleMetadataContextMenu = (
     event: React.MouseEvent<HTMLElement>,
-    obj: MetadataObject
+    obj: MetadataObject,
   ) => {
     event.preventDefault();
     setSelectedMetadataObject(obj);
@@ -659,7 +659,7 @@ const Query: React.FC = () => {
       loadTableMetadata(
         Number(selectedConnection),
         selectedMetadataObject.name,
-        selectedMetadataObject.schema || ""
+        selectedMetadataObject.schema || "",
       );
     }
     handleMetadataMenuClose();
@@ -676,7 +676,7 @@ const Query: React.FC = () => {
         ? items.filter(
             (m) =>
               m.name.toLowerCase().includes(q) ||
-              (m.type || "").toLowerCase().includes(q)
+              (m.type || "").toLowerCase().includes(q),
           )
         : items;
     });
@@ -708,7 +708,7 @@ const Query: React.FC = () => {
       loadMetadataForSchema,
       selectedConnection,
       loadTableDetails,
-    ]
+    ],
   );
 
   const groupedByType = useCallback((items: MetadataObject[]) => {
@@ -724,8 +724,8 @@ const Query: React.FC = () => {
   const handleHistorySelect = (entry: QueryHistoryEntry) => {
     setQueryTabs((prev) =>
       prev.map((tab, index) =>
-        index === activeTab ? { ...tab, query: entry.query } : tab
-      )
+        index === activeTab ? { ...tab, query: entry.query } : tab,
+      ),
     );
   };
 
@@ -749,12 +749,12 @@ const Query: React.FC = () => {
         const value = editor.getValue();
         setQueryTabs((prev) =>
           prev.map((tab, index) =>
-            index === activeTab ? { ...tab, query: value } : tab
-          )
+            index === activeTab ? { ...tab, query: value } : tab,
+          ),
         );
       });
     },
-    [registerCompletionProvider, queryTabs, activeTab]
+    [registerCompletionProvider, queryTabs, activeTab],
   );
 
   useEffect(() => {
@@ -797,12 +797,12 @@ const Query: React.FC = () => {
     () => () => {
       completionDisposableRef.current?.dispose();
     },
-    []
+    [],
   );
 
   const selectedConnectionMeta = useMemo(
     () => connections.find((conn) => conn.id === Number(selectedConnection)),
-    [connections, selectedConnection]
+    [connections, selectedConnection],
   );
 
   return (
@@ -940,7 +940,7 @@ const Query: React.FC = () => {
                                 onContextMenu={(e) =>
                                   handleMetadataContextMenu(
                                     e as React.MouseEvent<HTMLElement>,
-                                    obj
+                                    obj,
                                   )
                                 }
                               >
@@ -961,7 +961,7 @@ const Query: React.FC = () => {
                                             }:table:${obj.name}:columns:${col}`}
                                             label={col}
                                           />
-                                        )
+                                        ),
                                       )}
                                     </TreeItem>
                                     <TreeItem
@@ -979,7 +979,7 @@ const Query: React.FC = () => {
                                             }:table:${obj.name}:pks:${pk}`}
                                             label={pk}
                                           />
-                                        )
+                                        ),
                                       )}
                                     </TreeItem>
                                     <TreeItem
@@ -997,7 +997,7 @@ const Query: React.FC = () => {
                                             }:table:${obj.name}:fks:${idx}`}
                                             label={`${fk.referenced_table}.${fk.referenced_column}`}
                                           />
-                                        )
+                                        ),
                                       )}
                                     </TreeItem>
                                   </>
@@ -1035,13 +1035,13 @@ const Query: React.FC = () => {
                                 onContextMenu={(e) =>
                                   handleMetadataContextMenu(
                                     e as React.MouseEvent<HTMLElement>,
-                                    obj
+                                    obj,
                                   )
                                 }
                               />
                             ))}
                           </TreeItem>
-                        )
+                        ),
                       )}
                       {items.length === 0 && (
                         <TreeItem
@@ -1320,10 +1320,10 @@ const Query: React.FC = () => {
                           queryTabs[activeTab].result!.columns!.forEach(
                             (col, colIdx) => {
                               rowObj[col] = row[colIdx];
-                            }
+                            },
                           );
                           return rowObj;
-                        }
+                        },
                       )}
                       columns={
                         queryTabs[activeTab].result!.columns?.map((column) => ({

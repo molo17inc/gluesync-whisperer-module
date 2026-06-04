@@ -158,7 +158,7 @@ class MSSQLDatabaseService(DatabaseServiceBase):
                     table_schema_str = str(table_schema)
                     tables.append({
                         "name": table_name_str,
-                        "schema": table_schema_str
+                        "schema_name": table_schema_str
                     })
                     logger.debug(f"Found table: {table_schema_str}.{table_name_str}")
 
