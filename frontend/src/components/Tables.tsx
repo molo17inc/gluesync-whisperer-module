@@ -28,12 +28,21 @@ import {
   Snackbar,
   Stack,
   LinearProgress,
+  Autocomplete,
+  Checkbox,
+  FormControlLabel,
+  List,
+  ListItem,
+  ListItemButton,
+  ListItemIcon,
+  ListItemText,
 } from "@mui/material";
 import {
   Add as AddIcon,
   Delete as DeleteIcon,
   TableChart as TableIcon,
   Edit as EditIcon,
+  Search as SearchIcon,
 } from "@mui/icons-material";
 import {
   Connection,
@@ -79,8 +88,11 @@ const Tables: React.FC = () => {
     message: string;
   } | null>(null);
   const [connectionFilter, setConnectionFilter] = useState<"all" | number>(
-    "all"
+    "all",
   );
+  const [schemaFilter, setSchemaFilter] = useState("");
+  const [tableFilter, setTableFilter] = useState("");
+  const [selectedTableNames, setSelectedTableNames] = useState<string[]>([]);
 
   useEffect(() => {
     loadData();
@@ -128,6 +140,9 @@ const Tables: React.FC = () => {
     setSelectedConnection(null);
     setSchemas([]);
     setTables([]);
+    setSchemaFilter("");
+    setTableFilter("");
+    setSelectedTableNames([]);
     setOpen(true);
   };
 
@@ -145,11 +160,14 @@ const Tables: React.FC = () => {
     setSelectedConnection(null);
     setSchemas([]);
     setTables([]);
+    setSchemaFilter("");
+    setTableFilter("");
+    setSelectedTableNames([]);
   };
 
   const handleConnectionChange = async (connectionId: number) => {
     const connection = (Array.isArray(connections) ? connections : []).find(
-      (c) => c.id === connectionId
+      (c) => c.id === connectionId,
     );
     if (!connection) return;
 
@@ -166,7 +184,7 @@ const Tables: React.FC = () => {
       console.log(
         "✅ Schemas loaded successfully:",
         schemasData?.length || 0,
-        "schemas found"
+        "schemas found",
       );
       // Convert string array to Schema objects for frontend compatibility
       const schemaObjects = schemasData.map((schema: string) => ({
@@ -203,7 +221,7 @@ const Tables: React.FC = () => {
       setSchemas([]);
       showSnackbar(
         connectionError?.message || "Failed to load schemas",
-        "error"
+        "error",
       );
     } finally {
       setLoadingSchemas(false);
@@ -214,11 +232,13 @@ const Tables: React.FC = () => {
     if (!selectedConnection) return;
 
     setFormData((prev) => ({ ...prev, schema_name: schemaName }));
+    setTableFilter("");
+    setSelectedTableNames([]);
 
     try {
       const tablesData = await connectionApi.getTables(
         selectedConnection.id!,
-        schemaName
+        schemaName,
       );
       setTables(tablesData);
     } catch (error: any) {
@@ -235,7 +255,7 @@ const Tables: React.FC = () => {
       ) {
         showSnackbar(
           `Cannot connect to database "${selectedConnection.name}". Please check connection settings.`,
-          "error"
+          "error",
         );
       } else {
         showSnackbar(`Failed to load tables: ${errorMessage}`, "error");
@@ -250,29 +270,47 @@ const Tables: React.FC = () => {
   };
 
   const handleSubmit = async () => {
-    if (
-      !formData.table_name ||
-      !formData.schema_name ||
-      !formData.connection_id
-    ) {
+    if (!formData.schema_name || !formData.connection_id) {
       showSnackbar("Please fill in all required fields", "error");
       return;
     }
 
     try {
-      const payload: TableConfig = {
-        ...(formData as TableConfig),
-        operation_type: formData.operation_type ?? "all",
-      };
-
       if (editingTable) {
-        // Update existing table configuration
+        if (!formData.table_name) {
+          showSnackbar("Please select a table", "error");
+          return;
+        }
+        const payload: TableConfig = {
+          ...(formData as TableConfig),
+          operation_type: formData.operation_type ?? "all",
+        };
         await tableApi.update(editingTable.id!, payload);
         showSnackbar("Table configuration updated successfully", "success");
       } else {
-        // Create new table configuration
-        await tableApi.create(payload);
-        showSnackbar("Table configuration created successfully", "success");
+        const tablesToCreate =
+          selectedTableNames.length > 0
+            ? selectedTableNames
+            : formData.table_name
+              ? [formData.table_name]
+              : [];
+
+        if (tablesToCreate.length === 0) {
+          showSnackbar("Please select at least one table", "error");
+          return;
+        }
+
+        const configs: TableConfig[] = tablesToCreate.map((tableName) => ({
+          ...(formData as TableConfig),
+          table_name: tableName,
+          operation_type: formData.operation_type ?? "all",
+        }));
+
+        await tableApi.batchCreate(configs);
+        showSnackbar(
+          `${tablesToCreate.length} table configuration(s) created successfully`,
+          "success",
+        );
       }
       handleCloseDialog();
       loadData();
@@ -285,7 +323,7 @@ const Tables: React.FC = () => {
   const handleDelete = async (id: number) => {
     if (
       window.confirm(
-        "Are you sure you want to delete this table configuration?"
+        "Are you sure you want to delete this table configuration?",
       )
     ) {
       try {
@@ -309,10 +347,13 @@ const Tables: React.FC = () => {
       enabled: tableConfig.enabled,
       connection_id: tableConfig.connection_id,
     });
+    setSelectedTableNames([tableConfig.table_name]);
+    setSchemaFilter("");
+    setTableFilter("");
 
     // Load the connection and its schemas
     const connection = (Array.isArray(connections) ? connections : []).find(
-      (c) => c.id === tableConfig.connection_id
+      (c) => c.id === tableConfig.connection_id,
     );
     if (connection) {
       setSelectedConnection(connection);
@@ -328,7 +369,7 @@ const Tables: React.FC = () => {
         // Load tables for the schema
         const tablesData = await connectionApi.getTables(
           connection.id!,
-          tableConfig.schema_name
+          tableConfig.schema_name,
         );
         setTables(tablesData);
       } catch (error: any) {
@@ -345,12 +386,12 @@ const Tables: React.FC = () => {
         ) {
           showSnackbar(
             `Cannot connect to database "${connection.name}". Please check connection settings.`,
-            "error"
+            "error",
           );
         } else {
           showSnackbar(
             `Failed to load data for editing: ${errorMessage}`,
-            "error"
+            "error",
           );
         }
 
@@ -379,7 +420,7 @@ const Tables: React.FC = () => {
       return configs;
     }
     return configs.filter(
-      (config) => config.connection_id === Number(connectionFilter)
+      (config) => config.connection_id === Number(connectionFilter),
     );
   }, [tableConfigs, connectionFilter]);
 
@@ -410,10 +451,26 @@ const Tables: React.FC = () => {
         if (connection.id != null) {
           map[connection.id] = palette[index % palette.length];
         }
-      }
+      },
     );
     return map;
   }, [connections]);
+
+  const filteredSchemas = useMemo(() => {
+    const all = Array.isArray(schemas) ? schemas : [];
+    if (!schemaFilter.trim()) return all;
+    const lower = schemaFilter.toLowerCase();
+    return all.filter((s) =>
+      (typeof s === "string" ? s : s.name).toLowerCase().includes(lower),
+    );
+  }, [schemas, schemaFilter]);
+
+  const filteredTables = useMemo(() => {
+    const all = Array.isArray(tables) ? tables : [];
+    if (!tableFilter.trim()) return all;
+    const lower = tableFilter.toLowerCase();
+    return all.filter((t) => t.name.toLowerCase().includes(lower));
+  }, [tables, tableFilter]);
 
   const connectionFilterChips = (
     <Stack direction="row" spacing={1} flexWrap="wrap" mb={2} rowGap={1}>
@@ -636,7 +693,7 @@ const Tables: React.FC = () => {
                 onChange={(e) => {
                   const value = e.target.value;
                   handleConnectionChange(
-                    typeof value === "string" ? parseInt(value, 10) : value
+                    typeof value === "string" ? parseInt(value, 10) : value,
                   );
                 }}
               >
@@ -648,59 +705,180 @@ const Tables: React.FC = () => {
                     >
                       {connection.name} ({connection.db_type})
                     </MenuItem>
-                  )
+                  ),
                 )}
               </Select>
             </FormControl>
 
             {schemas.length > 0 && (
-              <FormControl fullWidth>
-                <InputLabel>Schema</InputLabel>
-                <Select
-                  value={formData.schema_name}
-                  label="Schema"
-                  onChange={(e) => handleSchemaChange(e.target.value)}
-                >
-                  {(Array.isArray(schemas) ? schemas : []).map(
-                    (schema, index) => (
-                      <MenuItem
-                        key={`schema-${
-                          typeof schema === "string"
-                            ? schema
-                            : schema.name || `unnamed-${index}`
-                        }`}
-                        value={
-                          typeof schema === "string" ? schema : schema.name
-                        }
-                      >
-                        {typeof schema === "string" ? schema : schema.name}
-                      </MenuItem>
-                    )
-                  )}
-                </Select>
-              </FormControl>
+              <Autocomplete
+                options={filteredSchemas}
+                getOptionLabel={(option) =>
+                  typeof option === "string" ? option : option.name
+                }
+                value={
+                  formData.schema_name
+                    ? schemas.find(
+                        (s) =>
+                          (typeof s === "string" ? s : s.name) ===
+                          formData.schema_name,
+                      ) || null
+                    : null
+                }
+                onChange={(_event, newValue) => {
+                  if (newValue) {
+                    handleSchemaChange(
+                      typeof newValue === "string" ? newValue : newValue.name,
+                    );
+                  }
+                }}
+                inputValue={schemaFilter}
+                onInputChange={(_event, newInputValue) => {
+                  setSchemaFilter(newInputValue);
+                }}
+                renderInput={(params) => (
+                  <TextField {...params} label="Schema" variant="outlined" />
+                )}
+                fullWidth
+                clearOnEscape
+              />
             )}
 
             {tables.length > 0 && (
-              <FormControl fullWidth>
-                <InputLabel>Table</InputLabel>
-                <Select
-                  value={formData.table_name}
-                  label="Table"
-                  onChange={(e) =>
-                    handleInputChange("table_name", e.target.value)
-                  }
+              <Box>
+                <Typography variant="subtitle2" gutterBottom>
+                  {editingTable ? "Table" : "Tables"}
+                </Typography>
+                {!editingTable && (
+                  <>
+                    <TextField
+                      placeholder="Search tables..."
+                      value={tableFilter}
+                      onChange={(e) => setTableFilter(e.target.value)}
+                      fullWidth
+                      size="small"
+                      sx={{ mb: 1 }}
+                      InputProps={{
+                        startAdornment: (
+                          <SearchIcon sx={{ mr: 1, color: "text.secondary" }} />
+                        ),
+                      }}
+                    />
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          checked={
+                            filteredTables.length > 0 &&
+                            filteredTables.every((t) =>
+                              selectedTableNames.includes(t.name),
+                            )
+                          }
+                          indeterminate={
+                            filteredTables.some((t) =>
+                              selectedTableNames.includes(t.name),
+                            ) &&
+                            !filteredTables.every((t) =>
+                              selectedTableNames.includes(t.name),
+                            )
+                          }
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedTableNames((prev) => {
+                                const filteredNames = filteredTables.map(
+                                  (t) => t.name,
+                                );
+                                return Array.from(
+                                  new Set([...prev, ...filteredNames]),
+                                );
+                              });
+                            } else {
+                              setSelectedTableNames((prev) =>
+                                prev.filter(
+                                  (name) =>
+                                    !filteredTables.some(
+                                      (t) => t.name === name,
+                                    ),
+                                ),
+                              );
+                            }
+                          }}
+                        />
+                      }
+                      label={`Select All (${filteredTables.length} visible)`}
+                      sx={{ mb: 1 }}
+                    />
+                  </>
+                )}
+                <Paper
+                  variant="outlined"
+                  sx={{
+                    maxHeight: 240,
+                    overflow: "auto",
+                  }}
                 >
-                  {(Array.isArray(tables) ? tables : []).map((table, index) => (
-                    <MenuItem
-                      key={`table-${table.name || `unnamed-${index}`}`}
-                      value={table.name}
-                    >
-                      {table.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
+                  {editingTable ? (
+                    <List dense>
+                      {filteredTables.map((table) => (
+                        <ListItem key={`table-${table.name}`} disablePadding>
+                          <ListItemButton
+                            selected={formData.table_name === table.name}
+                            onClick={() =>
+                              handleInputChange("table_name", table.name)
+                            }
+                          >
+                            <ListItemText primary={table.name} />
+                          </ListItemButton>
+                        </ListItem>
+                      ))}
+                    </List>
+                  ) : (
+                    <List dense>
+                      {filteredTables.map((table) => (
+                        <ListItem key={`table-${table.name}`} disablePadding>
+                          <ListItemButton
+                            onClick={() => {
+                              setSelectedTableNames((prev) => {
+                                if (prev.includes(table.name)) {
+                                  return prev.filter((n) => n !== table.name);
+                                }
+                                return [...prev, table.name];
+                              });
+                            }}
+                          >
+                            <ListItemIcon sx={{ minWidth: 36 }}>
+                              <Checkbox
+                                edge="start"
+                                checked={selectedTableNames.includes(
+                                  table.name,
+                                )}
+                                tabIndex={-1}
+                                disableRipple
+                              />
+                            </ListItemIcon>
+                            <ListItemText primary={table.name} />
+                          </ListItemButton>
+                        </ListItem>
+                      ))}
+                      {filteredTables.length === 0 && (
+                        <Box sx={{ p: 2, textAlign: "center" }}>
+                          <Typography variant="body2" color="text.secondary">
+                            No tables match your search
+                          </Typography>
+                        </Box>
+                      )}
+                    </List>
+                  )}
+                </Paper>
+                {!editingTable && selectedTableNames.length > 0 && (
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ mt: 0.5, display: "block" }}
+                  >
+                    {selectedTableNames.length} table(s) selected
+                  </Typography>
+                )}
+              </Box>
             )}
 
             <Box sx={{ display: "flex", gap: 2 }}>
@@ -712,7 +890,7 @@ const Tables: React.FC = () => {
                   onChange={(e) =>
                     handleInputChange(
                       "operation_delay",
-                      parseFloat(e.target.value) || 1
+                      parseFloat(e.target.value) || 1,
                     )
                   }
                   fullWidth
@@ -727,7 +905,7 @@ const Tables: React.FC = () => {
                   onChange={(e) =>
                     handleInputChange(
                       "batch_size",
-                      parseInt(e.target.value) || 1
+                      parseInt(e.target.value) || 1,
                     )
                   }
                   fullWidth
@@ -757,12 +935,19 @@ const Tables: React.FC = () => {
             onClick={handleSubmit}
             variant="contained"
             disabled={
-              !formData.table_name ||
+              (!editingTable &&
+                selectedTableNames.length === 0 &&
+                !formData.table_name) ||
+              (editingTable && !formData.table_name) ||
               !formData.schema_name ||
               !formData.connection_id
             }
           >
-            {editingTable ? "Update Configuration" : "Configure Table"}
+            {editingTable
+              ? "Update Configuration"
+              : selectedTableNames.length > 1
+                ? `Configure ${selectedTableNames.length} Tables`
+                : "Configure Table"}
           </Button>
         </DialogActions>
       </Dialog>

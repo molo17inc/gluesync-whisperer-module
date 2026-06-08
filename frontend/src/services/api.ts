@@ -230,6 +230,16 @@ export const tableApi = {
     return response.data;
   },
 
+  // Batch create table configurations
+  batchCreate: async (configs: TableConfig[]): Promise<TableConfig[]> => {
+    const results: TableConfig[] = [];
+    for (const config of configs) {
+      const response = await api.post("/tables", config);
+      results.push(response.data);
+    }
+    return results;
+  },
+
   // Update table configuration
   update: async (id: number, config: TableConfig): Promise<TableConfig> => {
     const response = await api.put(`/tables/${id}`, config);
