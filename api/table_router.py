@@ -160,11 +160,89 @@ def get_tables_for_connection(
 
 
 @router.get("/tables", response_model=List[TableConfigResponse])
-def get_tables(skip: int = 0, limit: int = 100, db = Depends(get_db)):
-    """Get all table configurations."""
+def get_tables(skip: int = 0, db = Depends(get_db)):
+    """Get all table configurations (no hard cap)."""
     table_service = TableService(db)
-    tables = table_service.get_tables(skip=skip, limit=limit)
+    tables = table_service.get_tables(skip=skip)
     return tables
+
+
+@router.post("/tables/batch", response_model=List[TableConfigResponse], status_code=status.HTTP_201_CREATED)
+def batch_create_table_configs(tables: List[TableConfigCreate], db = Depends(get_db)):
+    """Batch-create multiple table configurations efficiently.
+
+    Validates all tables in one round-trip per (connection, schema) group instead
+    of once per table, and inserts everything in a single transaction.
+    """
+    from collections import defaultdict
+
+    if not tables:
+        return []
+
+    table_service = TableService(db)
+    db_service = DatabaseService(db)
+
+    # Group by (connection_id, schema_name) to minimise source-DB round-trips
+    groups: dict = defaultdict(list)
+    for t in tables:
+        groups[(t.connection_id, t.schema_name)].append(t)
+
+    all_results = []
+
+    for (connection_id, schema_name), group in groups.items():
+        connection = db_service.get_connection(connection_id)
+        if not connection:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Connection {connection_id} not found",
+            )
+
+        # ONE source-DB call to fetch available tables for this group
+        try:
+            db_tables = db_service.get_tables(connection_id, schema=schema_name)
+            table_names_set = {
+                t["name"] if isinstance(t, dict) else t for t in db_tables
+            }
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error fetching tables for connection {connection_id}: {str(e)}",
+            )
+
+        # Filter out already-configured and non-existent tables
+        to_create = []
+        for t in group:
+            if t.table_name not in table_names_set:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Table '{t.table_name}' not found in the database",
+                )
+            existing = table_service.get_table_by_name_and_connection(
+                connection_id=connection_id, table_name=t.table_name
+            )
+            if not existing:
+                to_create.append(t)
+
+        if not to_create:
+            continue
+
+        # Fetch schema for each table (sequential but only once per table)
+        schemas_map: dict = {}
+        for t in to_create:
+            try:
+                schema = db_service.get_table_schema(
+                    connection_id=connection_id,
+                    table_name=t.table_name,
+                    schema_name=schema_name,
+                )
+                schemas_map[t.table_name] = (schema.columns, schema.primary_keys)
+            except Exception:
+                schemas_map[t.table_name] = ({}, [])
+
+        results = table_service.batch_create_tables(to_create, schemas_map)
+        all_results.extend(results)
+
+    return all_results
 
 
 @router.get("/tables/{table_id}", response_model=TableConfigResponse)

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
+import { FixedSizeList, ListChildComponentProps } from "react-window";
 import {
   Box,
   Typography,
@@ -31,8 +32,6 @@ import {
   Autocomplete,
   Checkbox,
   FormControlLabel,
-  List,
-  ListItem,
   ListItemButton,
   ListItemIcon,
   ListItemText,
@@ -58,8 +57,8 @@ const Tables: React.FC = () => {
   const [tableConfigs, setTableConfigs] = useState<TableConfig[]>([]);
   const [schemas, setSchemas] = useState<Schema[]>([]);
   const [tables, setTables] = useState<DBTable[]>([]);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [loadingSchemas, setLoadingSchemas] = useState(false);
+  const [loadingTables, setLoadingTables] = useState(false);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [editingTable, setEditingTable] = useState<TableConfig | null>(null);
@@ -234,7 +233,9 @@ const Tables: React.FC = () => {
     setFormData((prev) => ({ ...prev, schema_name: schemaName }));
     setTableFilter("");
     setSelectedTableNames([]);
+    setTables([]);
 
+    setLoadingTables(true);
     try {
       const tablesData = await connectionApi.getTables(
         selectedConnection.id!,
@@ -262,6 +263,8 @@ const Tables: React.FC = () => {
       }
 
       setTables([]);
+    } finally {
+      setLoadingTables(false);
     }
   };
 
@@ -744,7 +747,13 @@ const Tables: React.FC = () => {
               />
             )}
 
-            {tables.length > 0 && (
+            {loadingTables && (
+              <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
+                <CircularProgress size={24} />
+              </Box>
+            )}
+
+            {!loadingTables && tables.length > 0 && (
               <Box>
                 <Typography variant="subtitle2" gutterBottom>
                   {editingTable ? "Table" : "Tables"}
@@ -809,18 +818,26 @@ const Tables: React.FC = () => {
                     />
                   </>
                 )}
-                <Paper
-                  variant="outlined"
-                  sx={{
-                    maxHeight: 240,
-                    overflow: "auto",
-                  }}
-                >
-                  {editingTable ? (
-                    <List dense>
-                      {filteredTables.map((table) => (
-                        <ListItem key={`table-${table.name}`} disablePadding>
+                <Paper variant="outlined">
+                  {filteredTables.length === 0 ? (
+                    <Box sx={{ p: 2, textAlign: "center" }}>
+                      <Typography variant="body2" color="text.secondary">
+                        No tables match your search
+                      </Typography>
+                    </Box>
+                  ) : editingTable ? (
+                    <FixedSizeList
+                      height={240}
+                      itemCount={filteredTables.length}
+                      itemSize={40}
+                      width="100%"
+                    >
+                      {({ index, style }: ListChildComponentProps) => {
+                        const table = filteredTables[index];
+                        return (
                           <ListItemButton
+                            key={`table-${table.name}`}
+                            style={style}
                             selected={formData.table_name === table.name}
                             onClick={() =>
                               handleInputChange("table_name", table.name)
@@ -828,45 +845,43 @@ const Tables: React.FC = () => {
                           >
                             <ListItemText primary={table.name} />
                           </ListItemButton>
-                        </ListItem>
-                      ))}
-                    </List>
+                        );
+                      }}
+                    </FixedSizeList>
                   ) : (
-                    <List dense>
-                      {filteredTables.map((table) => (
-                        <ListItem key={`table-${table.name}`} disablePadding>
+                    <FixedSizeList
+                      height={240}
+                      itemCount={filteredTables.length}
+                      itemSize={40}
+                      width="100%"
+                    >
+                      {({ index, style }: ListChildComponentProps) => {
+                        const table = filteredTables[index];
+                        return (
                           <ListItemButton
+                            key={`table-${table.name}`}
+                            style={style}
                             onClick={() => {
-                              setSelectedTableNames((prev) => {
-                                if (prev.includes(table.name)) {
-                                  return prev.filter((n) => n !== table.name);
-                                }
-                                return [...prev, table.name];
-                              });
+                              setSelectedTableNames((prev) =>
+                                prev.includes(table.name)
+                                  ? prev.filter((n) => n !== table.name)
+                                  : [...prev, table.name],
+                              );
                             }}
                           >
                             <ListItemIcon sx={{ minWidth: 36 }}>
                               <Checkbox
                                 edge="start"
-                                checked={selectedTableNames.includes(
-                                  table.name,
-                                )}
+                                checked={selectedTableNames.includes(table.name)}
                                 tabIndex={-1}
                                 disableRipple
                               />
                             </ListItemIcon>
                             <ListItemText primary={table.name} />
                           </ListItemButton>
-                        </ListItem>
-                      ))}
-                      {filteredTables.length === 0 && (
-                        <Box sx={{ p: 2, textAlign: "center" }}>
-                          <Typography variant="body2" color="text.secondary">
-                            No tables match your search
-                          </Typography>
-                        </Box>
-                      )}
-                    </List>
+                        );
+                      }}
+                    </FixedSizeList>
                   )}
                 </Paper>
                 {!editingTable && selectedTableNames.length > 0 && (

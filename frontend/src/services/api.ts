@@ -230,14 +230,10 @@ export const tableApi = {
     return response.data;
   },
 
-  // Batch create table configurations
+  // Batch create table configurations (single request)
   batchCreate: async (configs: TableConfig[]): Promise<TableConfig[]> => {
-    const results: TableConfig[] = [];
-    for (const config of configs) {
-      const response = await api.post("/tables", config);
-      results.push(response.data);
-    }
-    return results;
+    const response = await api.post("/tables/batch", configs);
+    return response.data;
   },
 
   // Update table configuration

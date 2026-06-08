@@ -116,11 +116,16 @@ class TableService:
         
         return db_table
 
-    def get_tables(self, skip: int = 0, limit: int = 100) -> List[TableConfig]:
+    def get_tables(self, skip: int = 0, limit: Optional[int] = None) -> List[TableConfig]:
         """Get all table configurations."""
-        query = f"SELECT * FROM table_configs LIMIT ? OFFSET ?"
-        cursor = self.db.cursor()
-        cursor.execute(query, [limit, skip])
+        if limit is not None:
+            query = "SELECT * FROM table_configs LIMIT ? OFFSET ?"
+            cursor = self.db.cursor()
+            cursor.execute(query, [limit, skip])
+        else:
+            query = "SELECT * FROM table_configs"
+            cursor = self.db.cursor()
+            cursor.execute(query)
         
         tables = []
         for row in cursor.fetchall():
@@ -298,6 +303,61 @@ class TableService:
         cursor = self.db.cursor()
         cursor.execute(query, [table_id])
         cursor.commit()  # Use the cursor's commit method
+
+    def batch_create_tables(
+        self,
+        tables: List["TableConfigCreate"],
+        schemas_map: Dict[str, Any],
+    ) -> List[TableConfig]:
+        """Insert multiple table configs in a single transaction."""
+        import json
+        cursor = self.db.cursor()
+        results: List[TableConfig] = []
+
+        for table in tables:
+            col_defs, pkeys = schemas_map.get(table.table_name, ({}, []))
+            col_defs_json = json.dumps(col_defs)
+            pkeys_json = json.dumps(pkeys)
+
+            query = """
+            INSERT INTO table_configs
+            (connection_id, table_name, schema_name, operation_type, operation_delay,
+             batch_size, enabled, column_definitions, primary_keys, cascade_delete,
+             created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """
+            params = [
+                table.connection_id,
+                table.table_name,
+                table.schema_name,
+                table.operation_type.value if hasattr(table.operation_type, "value") else table.operation_type,
+                table.operation_delay,
+                table.batch_size,
+                1 if table.enabled else 0,
+                col_defs_json,
+                pkeys_json,
+                1 if table.cascade_delete else 0,
+            ]
+            cursor.execute(query, params)
+            table_id = cursor.lastrowid
+            results.append(
+                TableConfig(
+                    id=table_id,
+                    connection_id=table.connection_id,
+                    table_name=table.table_name,
+                    schema_name=table.schema_name,
+                    operation_type=table.operation_type,
+                    operation_delay=table.operation_delay,
+                    batch_size=table.batch_size,
+                    enabled=table.enabled,
+                    column_definitions=col_defs,
+                    primary_keys=pkeys,
+                    cascade_delete=table.cascade_delete,
+                )
+            )
+
+        cursor.commit()
+        return results
 
     def start_operations(self, operation_request: TableOperationRequest) -> None:
         """Start automated operations on tables."""
